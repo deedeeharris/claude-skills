@@ -5,7 +5,7 @@ description: Use when asked to hunt bugs, find and fix bugs, audit code quality,
 
 # Bug Hunter
 
-Scan any repo for bugs across 6 categories, verify with 5-judge majority vote, deduplicate, prove, fix in batches with TDD, run conventions + code review + DoD gate, regression-check, commit, and re-scan until clean.
+Scan any repo for bugs across 6 categories, verify with weighted expert voting (3 specialist judges with domain-weighted confidence scoring and expert veto), deduplicate, prove, fix in batches with TDD, run conventions + code review + DoD gate, regression-check, commit, and re-scan until clean.
 
 ## CRITICAL RULES — BABYSITTER ENFORCEMENT
 
@@ -27,7 +27,7 @@ If you find yourself doing ANY of these, you are short-circuiting babysitter. ST
 | Running an Agent to scan AND then running another Agent to verify in the same session | Post scan results via task:post, STOP. Babysitter dispatches verify on next iteration. |
 | Fixing bugs directly after seeing scan results | Post scan results via task:post, STOP. Let babysitter drive dedup -> verify -> prove -> fix pipeline. |
 | Calling run:iterate, performing the task, AND calling run:iterate again in the same session | Perform ONE task, post result, STOP. Hook triggers next iteration. |
-| Deciding "the remaining phases aren't needed" | ALL phases exist for a reason. The 5-judge vote catches false positives. Regression checks catch broken fixes. You cannot skip them. |
+| Deciding "the remaining phases aren't needed" | ALL phases exist for a reason. The weighted expert vote catches false positives. Regression checks catch broken fixes. You cannot skip them. |
 | "I'll just do the fixes quickly since I already have the results" | The process has dedup, 5-judge verify, prove, TDD, conventions, review, DoD, regression check, and build gates between scan and fix. Skipping them defeats the entire purpose. |
 
 ### The Rule: One Task Per Session
@@ -97,7 +97,7 @@ BRANCH PRE-CHECK
 → DETECT
 → SCAN (6 categories IN PARALLEL)
 → DEDUP
-→ VERIFY (5-judge vote)
+→ VERIFY (weighted expert vote)
 → PROVE
 → [BREAKPOINT if interactive]
 → TDD: write failing test that reproduces the exact bug (RED)
@@ -133,6 +133,33 @@ Before anything else, verify:
 - No unresolved merge conflicts
 
 If any check fails: report and halt. Do not proceed with a dirty state.
+
+---
+
+### Weighted Expert Voting (Verify Phase)
+
+Replaces simple majority voting with domain-weighted confidence scoring. Three specialist judges evaluate each finding independently:
+
+| Judge | Expertise | Expert Categories |
+|-------|-----------|-------------------|
+| **Software Engineer** | Code correctness, logic, edge cases, error handling, test coverage | logic, error-handling, test-gaps, conventions, contract-drift |
+| **Data/Infrastructure Engineer** | Data integrity, SQL, pipelines, resource configuration | sql-logic, data-integrity, resource-config, pipeline-logic |
+| **Security & Systems Specialist** | Security, memory safety, concurrency, performance | security, memory-lifecycle, performance, thread-safety |
+
+**Scoring**: Each judge assigns a confidence score (0-100) per finding. The judge whose expertise matches the finding's category gets **double weight (×2)**.
+
+**Classification**:
+
+| Condition | Result | Action |
+|-----------|--------|--------|
+| Domain expert scores ≥80 | **Verified** (expert veto) | Proceeds to PROVE, regardless of other scores |
+| Weighted average ≥50 | **Verified** | Proceeds to PROVE |
+| Weighted average 30-49 | **Needs Attention** | Included in report with expert reasoning, but NOT auto-fixed |
+| Weighted average <30 | **Dismissed** | Filtered out as false positive |
+
+**Why 3 judges instead of 5**: Using 3 specialized judges with domain weighting produces better signal than 5 generalist perspectives simulated by a single agent. The expert veto mechanism ensures that a domain specialist's high-confidence finding cannot be overruled by non-experts, solving the key weakness of simple majority voting where critical domain-specific bugs get dismissed.
+
+**Evidence requirement**: Each verified finding still requires 2+ independent evidence signals (code reading, caller analysis, framework docs, test coverage).
 
 ---
 

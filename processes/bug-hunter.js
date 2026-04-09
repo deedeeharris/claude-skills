@@ -1,8 +1,8 @@
 /**
  * @process generic/bug-hunter
- * @description Generic bug hunter: scan any repo with parallel agents, 5-judge majority-vote verification, dedup, prove, fix (max 8/batch), fix-confidence scoring with convergence loop, regression check, hard build gate, commit with bug IDs, re-scan modified files only until done.
+ * @description Generic bug hunter: scan any repo with parallel agents, weighted expert voting verification (3 specialist judges with domain-weighted confidence scoring and expert veto), dedup, prove, fix (max 8/batch), fix-confidence scoring with convergence loop, regression check, hard build gate, commit with bug IDs, re-scan modified files only until done.
  * @inputs { projectDir: string, buildCmd?: string, testCmd?: string, maxIterations?: number, categories?: string[], maxBatchSize?: number, autoFix?: boolean, fixConfidenceTarget?: number, maxFixAttempts?: number }
- * @outputs { success: boolean, totalFound: number, falsePositives: number, verified: number, fixed: number, remaining: number, iterations: number, fixConfidenceScores: object[] }
+ * @outputs { success: boolean, totalFound: number, falsePositives: number, needsAttention: number, verified: number, fixed: number, remaining: number, iterations: number, fixConfidenceScores: object[] }
  */
 
 import { defineTask } from '@a5c-ai/babysitter-sdk';
@@ -37,6 +37,7 @@ export async function process(inputs, ctx) {
 
   let allFixedBugs = [];
   let allFalsePositives = [];
+  let allNeedsAttention = [];
   let allFixConfidenceScores = [];
   let totalFound = 0;
   let iteration = 0;
@@ -61,12 +62,14 @@ export async function process(inputs, ctx) {
 
     totalFound += allFindings.length;
 
-    // --- Phase 3: Verify all findings with 5-judge majority vote ---
-    const verificationResult = await ctx.task(verifyAllFindingsTask, { projectDir, findings: allFindings });
+    // --- Phase 3: Verify all findings with weighted expert voting ---
+    const verificationResult = await ctx.task(verifyAllFindingsTask, { projectDir, findings: allFindings, categories });
     const verifiedFindings = verificationResult.verified || [];
-    const falsePositives = verificationResult.falsePositives || [];
+    const needsAttentionFindings = verificationResult.needsAttention || [];
+    const falsePositives = verificationResult.dismissed || [];
 
     allFalsePositives.push(...falsePositives);
+    allNeedsAttention.push(...needsAttentionFindings);
 
     if (verifiedFindings.length === 0) break;
 
@@ -216,12 +219,14 @@ export async function process(inputs, ctx) {
     projectDir,
     totalFound,
     falsePositives: allFalsePositives.length,
-    verified: totalFound - allFalsePositives.length,
+    needsAttention: allNeedsAttention.length,
+    verified: totalFound - allFalsePositives.length - allNeedsAttention.length,
     fixed: allFixedBugs.length,
-    remaining: (totalFound - allFalsePositives.length) - allFixedBugs.length,
+    remaining: (totalFound - allFalsePositives.length - allNeedsAttention.length) - allFixedBugs.length,
     iterations: iteration,
     fixedBugs: allFixedBugs,
     falsePositivesList: allFalsePositives,
+    needsAttentionList: allNeedsAttention,
     fixConfidenceScores: allFixConfidenceScores,
     avgFixConfidence: avgConfidence,
     fixConfidenceTarget,
@@ -231,9 +236,10 @@ export async function process(inputs, ctx) {
     success: true,
     totalFound,
     falsePositives: allFalsePositives.length,
-    verified: totalFound - allFalsePositives.length,
+    needsAttention: allNeedsAttention.length,
+    verified: totalFound - allFalsePositives.length - allNeedsAttention.length,
     fixed: allFixedBugs.length,
-    remaining: (totalFound - allFalsePositives.length) - allFixedBugs.length,
+    remaining: (totalFound - allFalsePositives.length - allNeedsAttention.length) - allFixedBugs.length,
     iterations: iteration,
     fixConfidenceScores: allFixConfidenceScores,
     avgFixConfidence: avgConfidence,
@@ -404,22 +410,64 @@ export const deduplicateFindingsTask = defineTask('deduplicate-findings', (args)
   },
 }));
 
+const CATEGORY_TO_EXPERT = {
+  'logic': 'software-engineer',
+  'security': 'security-specialist',
+  'memory-lifecycle': 'systems-engineer',
+  'error-handling': 'software-engineer',
+  'performance': 'systems-engineer',
+  'thread-safety': 'systems-engineer',
+  'sql-logic': 'data-engineer',
+  'data-integrity': 'data-engineer',
+  'resource-config': 'systems-engineer',
+  'pipeline-logic': 'pipeline-architect',
+  'test-gaps': 'software-engineer',
+  'conventions': 'software-engineer',
+  'contract-drift': 'software-engineer',
+};
+
+const EXPERT_WEIGHT_MULTIPLIER = 2;
+const VERIFIED_THRESHOLD = 50;
+const NEEDS_ATTENTION_THRESHOLD = 30;
+const EXPERT_VETO_THRESHOLD = 80;
+
 export const verifyAllFindingsTask = defineTask('verify-all-findings', (args) => ({
   kind: 'agent',
-  title: `Verify ${args.findings.length} findings with 5-judge majority vote`,
+  title: `Verify ${args.findings.length} findings with weighted expert voting (3 specialist judges)`,
   agent: {
     name: 'general-purpose',
     prompt: {
-      role: 'Panel of 5 independent senior code reviewers performing majority-vote bug verification',
-      task: `For each of the ${args.findings.length} reported bugs, simulate 5 independent judges. Each judge independently evaluates whether the bug is real. A finding passes if 3+ judges vote "real".`,
+      role: 'Panel of 3 specialist judges performing weighted expert voting on bug verification',
+      task: `For each of the ${args.findings.length} reported bugs, evaluate using 3 specialist judges with weighted confidence scoring. Each judge scores their confidence (0-100) that each finding is a real bug. The domain expert for each finding's category gets double weight.`,
       instructions: [
-        'You are simulating a panel of 5 independent code reviewers.',
+        'You are simulating a panel of 3 SPECIALIST judges, each with a distinct expertise:',
+        '',
+        'JUDGE 1 — Software Engineer:',
+        '  Focus: code correctness, logic errors, edge cases, error handling, test coverage gaps',
+        '  Expert categories: logic, error-handling, test-gaps, conventions, contract-drift',
+        '',
+        'JUDGE 2 — Data/Infrastructure Engineer:',
+        '  Focus: data integrity, SQL correctness, pipeline dependencies, resource configuration',
+        '  Expert categories: sql-logic, data-integrity, resource-config, pipeline-logic',
+        '',
+        'JUDGE 3 — Security & Systems Specialist:',
+        '  Focus: security vulnerabilities, memory safety, concurrency, performance bottlenecks',
+        '  Expert categories: security, memory-lifecycle, performance, thread-safety',
         '',
         'FOR EACH FINDING:',
         '1. Read the actual source file at the reported location',
-        '2. Evaluate from 5 different perspectives (optimistic, pessimistic, practical, security-focused, architecture-focused)',
-        '3. Each perspective votes independently: is this a real bug?',
-        '4. Count votes: >=3 "real" = verified bug, <3 = false positive',
+        '2. Each judge independently scores their CONFIDENCE (0-100) that this is a real bug',
+        '3. The judge whose expertise matches the finding category gets DOUBLE WEIGHT (×2)',
+        '4. Compute weighted average: sum(score × weight) / sum(weights)',
+        '',
+        'CLASSIFICATION RULES:',
+        `- Expert Veto: If the domain expert scores ≥${EXPERT_VETO_THRESHOLD}, the finding is VERIFIED regardless of other scores`,
+        `- Weighted average ≥${VERIFIED_THRESHOLD}: VERIFIED`,
+        `- Weighted average ${NEEDS_ATTENTION_THRESHOLD}-${VERIFIED_THRESHOLD - 1}: NEEDS ATTENTION (borderline — include expert reasoning)`,
+        `- Weighted average <${NEEDS_ATTENTION_THRESHOLD}: DISMISSED`,
+        '',
+        'Category-to-expert mapping:',
+        JSON.stringify(CATEGORY_TO_EXPERT, null, 2),
         '',
         `Project root: ${args.projectDir}`,
         '',
@@ -430,12 +478,12 @@ export const verifyAllFindingsTask = defineTask('verify-all-findings', (args) =>
         '- The "bug" is actually intentional behavior',
         '- The finding is a style preference, not a bug',
         '',
-        'REQUIRE 2+ INDEPENDENT EVIDENCE SIGNALS per finding:',
+        'REQUIRE 2+ INDEPENDENT EVIDENCE SIGNALS per verified finding:',
         '- Evidence from reading the code at the reported location',
         '- Evidence from reading callers/consumers of the code',
         '- Evidence from framework documentation or language spec',
         '- Evidence from test coverage (or lack thereof)',
-        'A single "the code looks wrong" is NOT sufficient. Each verified bug must have evidence from at least 2 different sources.',
+        'A single "the code looks wrong" is NOT sufficient.',
         '',
         'FINDINGS TO VERIFY:',
         JSON.stringify(args.findings, null, 2),
@@ -446,7 +494,11 @@ export const verifyAllFindingsTask = defineTask('verify-all-findings', (args) =>
         'Do ONLY verification. Do NOT fix bugs or take any other action.',
         '',
         'Return ONLY JSON (no markdown):',
-        '{"verified": [<findings that got >=3/5 votes, with added "votes" and "evidence" fields>], "falsePositives": [<findings that got <3/5 votes, with added "votes" and "reason" fields>]}',
+        '{',
+        '  "verified": [<findings with weightedAverage >= 50 OR expert veto, with added fields: "judgeScores": {"softwareEngineer": N, "dataEngineer": N, "securitySpecialist": N}, "expertJudge": "which judge is expert", "weightedAverage": N, "expertVeto": bool, "evidence": "...">],',
+        '  "needsAttention": [<findings with weightedAverage 30-49, same fields plus "expertReasoning": "why the expert flagged this">],',
+        '  "dismissed": [<findings with weightedAverage < 30, with "judgeScores" and "reason" fields>]',
+        '}',
       ],
       outputFormat: 'JSON',
     },
@@ -763,7 +815,8 @@ export const finalReportTask = defineTask('final-report', (args) => ({
         `Project: ${args.projectDir}`,
         `Iterations: ${args.iterations}`,
         `Total findings: ${args.totalFound}`,
-        `False positives removed: ${args.falsePositives}`,
+        `Dismissed (false positives): ${args.falsePositives}`,
+        `Needs attention (borderline): ${args.needsAttention || 0}`,
         `Verified bugs: ${args.verified}`,
         `Fixed: ${args.fixed}`,
         `Remaining: ${args.remaining}`,
@@ -771,8 +824,11 @@ export const finalReportTask = defineTask('final-report', (args) => ({
         'FIXED BUGS:',
         JSON.stringify(args.fixedBugs?.map(b => ({ id: b.id, title: b.title, file: b.file, severity: b.severity, category: b.category })) || []),
         '',
-        'FALSE POSITIVES (discarded):',
-        JSON.stringify(args.falsePositivesList?.map(b => ({ id: b.id, title: b.title, file: b.file, votes: b.votes, reason: b.reason })) || []),
+        'NEEDS ATTENTION (borderline findings — expert flagged but below verification threshold):',
+        JSON.stringify(args.needsAttentionList?.map(b => ({ id: b.id, title: b.title, file: b.file, category: b.category, weightedAverage: b.weightedAverage, expertJudge: b.expertJudge, expertReasoning: b.expertReasoning })) || []),
+        '',
+        'DISMISSED (false positives):',
+        JSON.stringify(args.falsePositivesList?.map(b => ({ id: b.id, title: b.title, file: b.file, reason: b.reason })) || []),
         '',
         args.avgFixConfidence != null ? `Average fix confidence: ${args.avgFixConfidence}/100 (target: ${args.fixConfidenceTarget})` : '',
         '',
@@ -785,12 +841,13 @@ export const finalReportTask = defineTask('final-report', (args) => ({
         })) || []),
         '',
         'Write a clean markdown report with:',
-        '1. Summary stats table (include avg fix confidence)',
+        '1. Summary stats table (include avg fix confidence, needs-attention count)',
         '2. Fixed bugs grouped by severity with bug IDs and per-bug confidence scores',
-        '3. Fix confidence convergence history (attempts per batch, score progression)',
-        '4. False positives that were correctly filtered',
-        '5. Any remaining issues',
-        '6. Recommendations (flag any fixes with confidence < 70 as needing manual review)',
+        '3. Needs Attention section — borderline findings with expert reasoning (these were NOT auto-fixed but deserve human review)',
+        '4. Fix confidence convergence history (attempts per batch, score progression)',
+        '5. Dismissed findings (false positives correctly filtered)',
+        '6. Any remaining verified issues',
+        '7. Recommendations (flag any fixes with confidence < 70 as needing manual review)',
         '',
         'Save the report to: ' + args.projectDir + '/BUG-HUNT-REPORT.md',
         '',
