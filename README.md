@@ -32,6 +32,7 @@ Symlinks everything into the right locations. `git pull` to update — no re-ins
 | `bh-forever` | `/bh-forever` | Continuous bug hunting loop until convergence score ≥ 90 |
 | `codex-cli` | `/codex-cli` | Codex CLI integration |
 | `gemini` | `/gemini` | Gemini CLI integration |
+| `deep-plan` | `/deep-plan` | Deep Plan Verification — runs iterative plan QA (6-dimension scan → dedup → prove gaps → self-answer → 3-judge review → quality score 95/100) without any coding |
 
 ### Processes
 
