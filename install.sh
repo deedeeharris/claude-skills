@@ -1,56 +1,88 @@
 #!/usr/bin/env bash
 # install.sh — set up claude-skills on any machine
 # Usage: ./install.sh
-# Symlinks skills and processes from this repo into the right locations.
+# Symlinks skills, processes, agents, hooks, and commands from this repo.
 
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_TARGET="${HOME}/.claude/skills"
 PROCESSES_TARGET="${HOME}/.a5c/processes"
+AGENTS_TARGET="${HOME}/.a5c/agents"
+HOOKS_TARGET="${HOME}/.claude/hooks"
+COMMANDS_TARGET="${HOME}/.claude/commands"
 
 echo "=> claude-skills installer"
 echo "   repo: $REPO_DIR"
 echo ""
 
-# Create target directories if they don't exist
-mkdir -p "$SKILLS_TARGET"
-mkdir -p "$PROCESSES_TARGET"
+mkdir -p "$SKILLS_TARGET" "$PROCESSES_TARGET" "$AGENTS_TARGET" "$HOOKS_TARGET" "$COMMANDS_TARGET"
 
-# Symlink each skill
-echo "=> linking skills..."
-for skill_dir in "$REPO_DIR/skills"/*/; do
-  skill_name="$(basename "$skill_dir")"
-  target="$SKILLS_TARGET/$skill_name"
-
+# ── helper ──────────────────────────────────────────────────────────────────
+link_dir() {
+  local src="$1" target="$2" label="$3"
   if [ -L "$target" ]; then
-    echo "   already linked: $skill_name"
+    echo "   already linked: $label"
   elif [ -d "$target" ]; then
-    echo "   ⚠️  $skill_name exists as a real directory — skipping (remove it manually to link)"
+    echo "   ⚠️  $label exists as real directory — skipping (remove manually to link)"
   else
-    ln -s "$skill_dir" "$target"
-    echo "   linked: $skill_name -> $target"
+    ln -s "$src" "$target"
+    echo "   linked: $label"
   fi
-done
+}
 
-# Symlink each process
-echo ""
-echo "=> linking processes..."
-for process_file in "$REPO_DIR/processes"/*.js; do
-  [ -f "$process_file" ] || continue
-  process_name="$(basename "$process_file")"
-  target="$PROCESSES_TARGET/$process_name"
-
+link_file() {
+  local src="$1" target="$2" label="$3"
   if [ -L "$target" ]; then
-    echo "   already linked: $process_name"
+    echo "   already linked: $label"
   elif [ -f "$target" ]; then
-    echo "   ⚠️  $process_name exists as a real file — skipping (remove it manually to link)"
+    echo "   ⚠️  $label exists as real file — skipping (remove manually to link)"
   else
-    ln -s "$process_file" "$target"
-    echo "   linked: $process_name -> $target"
+    ln -s "$src" "$target"
+    echo "   linked: $label"
   fi
+}
+# ────────────────────────────────────────────────────────────────────────────
+
+echo "=> skills (~/.claude/skills/)"
+for d in "$REPO_DIR/skills"/*/; do
+  [ -d "$d" ] || continue
+  name="$(basename "$d")"
+  link_dir "$d" "$SKILLS_TARGET/$name" "$name"
 done
 
 echo ""
-echo "✓ Done. Skills and processes are live in Claude Code."
-echo "  To update: git pull (symlinks auto-reflect changes)"
+echo "=> processes (~/.a5c/processes/)"
+for f in "$REPO_DIR/processes"/*.js; do
+  [ -f "$f" ] || continue
+  name="$(basename "$f")"
+  link_file "$f" "$PROCESSES_TARGET/$name" "$name"
+done
+
+echo ""
+echo "=> agents (~/.a5c/agents/)"
+for d in "$REPO_DIR/agents"/*/; do
+  [ -d "$d" ] || continue
+  name="$(basename "$d")"
+  link_dir "$d" "$AGENTS_TARGET/$name" "$name"
+done
+
+echo ""
+echo "=> hooks (~/.claude/hooks/)"
+for f in "$REPO_DIR/hooks"/*; do
+  [ -f "$f" ] || continue
+  name="$(basename "$f")"
+  link_file "$f" "$HOOKS_TARGET/$name" "$name"
+done
+
+echo ""
+echo "=> commands (~/.claude/commands/)"
+for f in "$REPO_DIR/commands"/*.md; do
+  [ -f "$f" ] || continue
+  name="$(basename "$f")"
+  link_file "$f" "$COMMANDS_TARGET/$name" "$name"
+done
+
+echo ""
+echo "Done. Everything is live in Claude Code."
+echo "To update on this machine: git pull"
