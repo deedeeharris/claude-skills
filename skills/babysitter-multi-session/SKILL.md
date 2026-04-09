@@ -39,7 +39,7 @@ Use this exact template, substituting `PROJECT_PATH` and the `SESSIONS` array:
 #   bash run-sessions.sh "C:/path/to/project"   # override path
 # ============================================================
 
-set -uo pipefail
+set -euo pipefail
 
 PROJECT_PATH="${1:-__PROJECT_PATH__}"
 
@@ -49,6 +49,7 @@ __SESSIONS_ARRAY__
 
 STOP_ON_FAILURE=true
 SLEEP_BETWEEN_SESSIONS=1800   # seconds (30 min); set to 0 to disable
+START_FROM=1                  # set > 1 to resume from a specific session
 
 # ── runner ──────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -63,6 +64,7 @@ LOG_FILE="$LOG_DIR/sessions-$(date +%Y%m%d-%H%M%S).log"
 command -v claude &>/dev/null || { echo -e "${RED}ERROR: 'claude' CLI not found in PATH${NC}"; exit 1; }
 
 mkdir -p "$LOG_DIR"
+cd "$PROJECT_PATH"
 
 echo "" | tee -a "$LOG_FILE"
 echo -e "${BOLD}============================================${NC}" | tee -a "$LOG_FILE"
@@ -79,17 +81,24 @@ PASSED=0; FAILED=0
 for i in "${!SESSIONS[@]}"; do
   SESSION_NUM=$((i + 1))
   PROMPT="${SESSIONS[$i]}"
+
+  # Resume support: skip sessions before START_FROM
+  if [ "$SESSION_NUM" -lt "$START_FROM" ]; then
+    echo -e "${YELLOW}>>> Skipping session $SESSION_NUM (START_FROM=$START_FROM)${NC}" | tee -a "$LOG_FILE"
+    continue
+  fi
+
   SESSION_START=$(date +%s)
+  PREVIEW="${PROMPT:0:100}$( [ ${#PROMPT} -gt 100 ] && echo '...' )"
 
   echo "" | tee -a "$LOG_FILE"
   echo -e "${BOLD}${BLUE}>>> Session $SESSION_NUM / $TOTAL${NC}"           | tee -a "$LOG_FILE"
   echo -e "    Started: $(date '+%Y-%m-%d %H:%M:%S')"                     | tee -a "$LOG_FILE"
-  echo -e "    Prompt : ${PROMPT:0:100}..."                                | tee -a "$LOG_FILE"
+  echo -e "    Prompt : $PREVIEW"                                          | tee -a "$LOG_FILE"
   echo "" | tee -a "$LOG_FILE"
 
-  cd "$PROJECT_PATH"
-  EXIT_CODE=0
-  claude --dangerously-skip-permissions -p "/babysitter:yolo $PROMPT" 2>&1 | tee -a "$LOG_FILE" || EXIT_CODE=$?
+  claude --dangerously-skip-permissions -p "/babysitter:yolo $PROMPT" 2>&1 | tee -a "$LOG_FILE"
+  EXIT_CODE=${PIPESTATUS[0]}
 
   DURATION=$(( $(date +%s) - SESSION_START ))
 
@@ -137,13 +146,13 @@ Replace:
   "Second session: full detailed prompt here."
 ```
 
-Each prompt is a single bash string in double-quotes. If the prompt contains double-quotes, escape them as `\"`. Multi-line prompts are fine inside double-quotes.
+Each prompt is a single bash string in double-quotes. If the prompt contains double-quotes, escape them as `\"`. **Avoid multi-line prompts** — bash arrays don't reliably handle embedded newlines in double-quoted strings. Keep each prompt on one line, or use `$'line1\nline2'` syntax for explicit newlines.
 
 ### Step 4: Make executable and confirm
 
 After writing the file, run:
 ```bash
-chmod +x <output_path>/run-sessions.sh
+chmod +x "$PROJECT_PATH/run-sessions.sh"
 ```
 
 Then tell the user:
