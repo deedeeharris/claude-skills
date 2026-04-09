@@ -38,6 +38,7 @@ Symlinks everything into the right locations. `git pull` to update — no re-ins
 | Process | Description |
 |---------|-------------|
 | `bug-hunter.js` | Babysitter process driving the full BH pipeline |
+| `deep-plan-verification.js` | Phase 0 plan verifier: 6-dimension parallel gap scan → dedup → prove gaps → self-answer → 3-judge review → consistency gate → quality score (target 95/100) |
 
 ## Adding something new
 
