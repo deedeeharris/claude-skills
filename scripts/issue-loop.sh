@@ -100,7 +100,7 @@ run_session() {
   log ""
 
   local session_start; session_start=$(date +%s)
-  claude --dangerously-skip-permissions -p "/babysitter:yolo $prompt" 2>&1 | tee -a "$LOG_FILE"
+  stdbuf -oL -eL claude --dangerously-skip-permissions -p "/babysitter:yolo $prompt" 2>&1 | tee -a "$LOG_FILE"
   local exit_code=${PIPESTATUS[0]}
   local duration=$(( $(date +%s) - session_start ))
 
