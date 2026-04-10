@@ -28,6 +28,7 @@ set -euo pipefail
 command -v jq     &>/dev/null || { echo "ERROR: 'jq' not found in PATH. Install jq and re-run."; exit 1; }
 command -v gh     &>/dev/null || { echo "ERROR: 'gh' not found in PATH. Install GitHub CLI and re-run."; exit 1; }
 command -v claude &>/dev/null || { echo "ERROR: 'claude' not found in PATH. Install Claude CLI and re-run."; exit 1; }
+command -v winpty &>/dev/null || { echo "ERROR: 'winpty' not found. On non-Windows systems, replace 'winpty claude' with 'claude' in run_session()."; exit 1; }
 
 # ── auto-detect repo root ────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,7 +101,7 @@ run_session() {
   log ""
 
   local session_start; session_start=$(date +%s)
-  stdbuf -oL -eL claude --dangerously-skip-permissions -p "/babysitter:yolo $prompt" 2>&1 | tee -a "$LOG_FILE"
+  winpty claude --dangerously-skip-permissions -p "/babysitter:yolo $prompt" 2>&1 | tee -a "$LOG_FILE"
   local exit_code=${PIPESTATUS[0]}
   local duration=$(( $(date +%s) - session_start ))
 
