@@ -41,6 +41,14 @@ Symlinks everything into the right locations. `git pull` to update — no re-ins
 | `bug-hunter.js` | Babysitter process driving the full BH pipeline |
 | `deep-plan-verification.js` | Phase 0 plan verifier: 6-dimension parallel gap scan → dedup → prove gaps → self-answer → 3-judge review → consistency gate → quality score (target 95/100) |
 
+### Scripts
+
+Standalone bash scripts — copy to any git repo root and run directly. No install needed.
+
+| Script | Description |
+|--------|-------------|
+| `scripts/issue-loop.sh` | Auto-fix GitHub issues in a loop: for each open issue, runs a plan+deep-verify babysitter session, sleeps 15 min, then runs a TDD implementation session. Closes issues on success, labels `needs-review` on failure. Stops when no open issues remain. Works on any git repo with `gh` + `claude` + `jq`. |
+
 ## Adding something new
 
 **New skill:**
