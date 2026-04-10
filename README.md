@@ -47,7 +47,7 @@ Standalone bash scripts — copy to any git repo root and run directly. No insta
 
 | Script | Description |
 |--------|-------------|
-| `scripts/issue-loop.sh` | Auto-fix GitHub issues in a loop: for each open issue, runs a plan+deep-verify babysitter session, sleeps 15 min, then runs a TDD implementation session. Closes issues on success, labels `needs-review` on failure. Stops when no open issues remain. Works on any git repo with `gh` + `claude` + `jq` + `winpty` (Windows Git Bash). Output streams live to terminal and log. |
+| `scripts/issue-loop.sh` | Auto-fix GitHub issues in a loop using a 3-session babysitter pipeline: Session 1 writes a spec + runs `/deep-verify-plan` (≥95/100), Session 2 uses `/writing-plans` to produce a TDD task list, Session 3 implements with TDD + `/verification-before-completion` then commits and pushes. Quality gates validate each artifact. Rate limits are detected by multi-pattern regex, sleep until reset (parsed from Claude's output), and retry up to 5×. Rate-limit exhaustion skips the issue without marking it failed. Closes issues on success, labels `needs-review` on session failure. Stops when no open issues remain. Works on any git repo with `gh` + `claude` + `jq` + `python3`. |
 
 ## Adding something new
 
