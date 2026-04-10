@@ -81,10 +81,9 @@ warn_dep() {
 SP_BASE=$(ls -d "$HOME/.claude/plugins/cache/claude-plugins-official/superpowers"/*/skills 2>/dev/null \
            | sort -V | tail -1 || echo "")
 
-warn_dep "superpowers:writing-plans"                "${SP_BASE}/writing-plans/SKILL.md"
+warn_dep "superpowers:writing-plans"                  "${SP_BASE}/writing-plans/SKILL.md"
 warn_dep "superpowers:verification-before-completion" "${SP_BASE}/verification-before-completion/SKILL.md"
-warn_dep "deep-verify-plan skill"                  "$HOME/.claude/skills/deep-verify-plan/SKILL.md"
-warn_dep "babysitter:deep-plan-verification"       "$HOME/.a5c/processes/deep-plan-verification.js"
+warn_dep "/deep-verify-plan skill"                    "$HOME/.claude/skills/deep-verify-plan/SKILL.md"
 
 # ── ensure labels exist in repo ──────────────────────────────
 for label in "$LABEL_IN_PROGRESS" "$LABEL_DONE" "$LABEL_FAILED"; do
