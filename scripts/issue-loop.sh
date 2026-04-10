@@ -12,20 +12,28 @@
 #
 # USAGE (Git Bash / WSL):
 #   bash issue-loop.sh              # auto-detects repo root
-#   bash issue-loop.sh 2            # start from issue loop iteration 2
 #
 # Copy this script to the root of any git repo and run it.
 # Requires: claude CLI, gh CLI, jq
+#
+# WARNING: This script runs Claude with --dangerously-skip-permissions,
+# which bypasses all permission prompts and gives Claude full access
+# to read, write, and execute files on this machine. Only run this
+# in a trusted environment on code you own.
 # ============================================================
 
 set -euo pipefail
+
+# ── dependency checks ────────────────────────────────────────
+command -v jq     &>/dev/null || { echo "ERROR: 'jq' not found in PATH. Install jq and re-run."; exit 1; }
+command -v gh     &>/dev/null || { echo "ERROR: 'gh' not found in PATH. Install GitHub CLI and re-run."; exit 1; }
+command -v claude &>/dev/null || { echo "ERROR: 'claude' not found in PATH. Install Claude CLI and re-run."; exit 1; }
 
 # ── auto-detect repo root ────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_PATH="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || { echo "ERROR: Not inside a git repo"; exit 1; })"
 REPO_SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "ERROR: gh not configured or no remote"; exit 1; })"
 
-START_FROM_ITERATION="${1:-1}"
 SLEEP_BETWEEN_SESSIONS=900   # 15 min between plan session and implement session
 LABEL_IN_PROGRESS="in-progress"
 LABEL_DONE="implemented"
@@ -84,7 +92,6 @@ label_issue() {
 run_session() {
   local session_label=$1
   local prompt=$2
-  local log_prefix=$3
 
   log ""
   log "${BOLD}${BLUE}  ▶ $session_label${NC}"
@@ -114,12 +121,6 @@ LOOP_START=$(date +%s)
 
 while true; do
   ITERATION=$((ITERATION + 1))
-
-  # Resume support
-  if [ "$ITERATION" -lt "$START_FROM_ITERATION" ]; then
-    log "${YELLOW}>>> Skipping iteration $ITERATION (START_FROM=$START_FROM_ITERATION)${NC}"
-    continue
-  fi
 
   log ""
   log "${BOLD}════════════════════════════════════════════${NC}"
@@ -163,7 +164,7 @@ while true; do
   # Pass file paths instead of raw content — safe from escaping issues
   SESSION1_PROMPT="You are fixing GitHub issue #${ISSUE_NUM} from repo ${REPO_SLUG}. The issue summary is in the file ${BRIEF_FILE}. Your task for this session: (1) Read the brief at ${BRIEF_FILE} and the full issue with: gh issue view ${ISSUE_NUM} (2) Thoroughly explore the codebase to understand the root cause. (3) Write a comprehensive implementation plan to ${PLAN_FILE}. The plan must include: root cause analysis, exact files and line numbers to change, specific code changes needed, TDD test strategy (what tests to write first), edge cases, and rollback plan. (4) Run /deep-verify-plan on the plan iteratively until the quality score reaches 95/100. Keep improving the plan until it passes. Save the final verified plan back to ${PLAN_FILE}."
 
-  if run_session "Session 1 / Issue #${ISSUE_NUM}: Plan + Deep-Verify" "$SESSION1_PROMPT" "s1"; then
+  if run_session "Session 1 / Issue #${ISSUE_NUM}: Plan + Deep-Verify" "$SESSION1_PROMPT"; then
     SESSION1_OK=true
   else
     SESSION1_OK=false
@@ -185,7 +186,7 @@ while true; do
   # ── SESSION 2: TDD implementation ──────────────────────────
   SESSION2_PROMPT="You are implementing the fix for GitHub issue #${ISSUE_NUM} from repo ${REPO_SLUG}. The issue summary is at ${BRIEF_FILE}. The verified implementation plan is at ${PLAN_FILE}. Your task: (1) Read ${BRIEF_FILE} and ${PLAN_FILE} carefully. (2) Read the full issue with: gh issue view ${ISSUE_NUM} (3) Implement using strict TDD: write a failing test first, then implement the fix to make it pass, for each change. (4) Commit after each passing test group with a clear message referencing issue #${ISSUE_NUM}. (5) Push after every commit. (6) Maintain babysitter quality score above 95. (7) Run the full test suite before finishing. (8) All changes must be production-ready, with no regressions. Do not close the issue yourself — the runner will close it on success."
 
-  if run_session "Session 2 / Issue #${ISSUE_NUM}: TDD Implementation" "$SESSION2_PROMPT" "s2"; then
+  if run_session "Session 2 / Issue #${ISSUE_NUM}: TDD Implementation" "$SESSION2_PROMPT"; then
     ISSUE_DURATION=$(( $(date +%s) - ISSUE_START ))
     log ""
     log "${GREEN}${BOLD}  ✓ Issue #${ISSUE_NUM} FIXED${NC} in ${ISSUE_DURATION}s"
