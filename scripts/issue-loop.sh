@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================
 # issue-loop.sh — Auto-fix GitHub issues with babysitter + TDD
 #
@@ -10,7 +10,7 @@
 # On failure  → labels "needs-review", continues to next issue
 # Stops when  → no more open issues (excluding needs-review/in-progress)
 #
-# USAGE (Git Bash / WSL):
+# USAGE (Git Bash / WSL / Linux / macOS):
 #   bash issue-loop.sh              # auto-detects repo root
 #
 # Copy this script to the root of any git repo and run it.
@@ -51,7 +51,7 @@ PLANS_DIR="$PROJECT_PATH/.a5c/plans"
 mkdir -p "$LOG_DIR" "$PLANS_DIR"
 cd "$PROJECT_PATH"
 
-log() { echo -e "$1" | tee -a "$LOG_FILE"; }
+log() { printf "%b\n" "$1" | tee -a "$LOG_FILE"; }
 
 log ""
 log "${BOLD}============================================${NC}"
