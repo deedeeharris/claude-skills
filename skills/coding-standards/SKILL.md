@@ -85,6 +85,18 @@ Go through this before considering work complete:
 ### Boy Scout Rule
 - [ ] The code I touched is cleaner than before I arrived
 
+### Run the Toolchain
+After self-review, run the actual tools — don't just think about them:
+
+| Language | Type-check | Lint | Tests |
+|---|---|---|---|
+| TypeScript | `npx tsc --noEmit` | `npx eslint <file>` | `npm test` |
+| Python | `mypy <file>` | `ruff check <file>` | `pytest` |
+| Go | `go build ./...` | `golangci-lint run` | `go test ./...` |
+| Other | check project README | check project README | check project README |
+
+**Fix every failure before considering work complete.** Do not move on with known lint errors or type errors — they compound and become harder to fix later.
+
 ---
 
 ## PHASE 4 — Git Commits
