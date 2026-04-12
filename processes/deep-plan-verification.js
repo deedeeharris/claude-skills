@@ -162,6 +162,11 @@ export async function process(inputs, ctx) {
       answers: reviewedAnswers, iteration, previousHistory: verificationHistory
     });
 
+    // Step C.2: Synthesize plan — reorganize into a coherent, well-structured document
+    await ctx.task(synthesizePlanTask, {
+      planFile, projectRoot, iteration, planUpdate
+    });
+
     // Step C.5: Consistency gate — catch contradictions introduced by this iteration's additions
     const consistency = await ctx.task(consistencyGateTask, {
       planFile, projectRoot, planUpdate, iteration
@@ -770,15 +775,15 @@ export const updatePlanTask = defineTask('update-plan', (args, taskCtx) => ({
         '',
         `There are ${args.answers?.rejectedCount || 0} rejected answers — do NOT write these to the plan. They did not pass quality review.`,
         '',
-        '1. REPLACE vague/ambiguous language with specific decisions from approved answers.',
-        '2. ADD missing details in the right section.',
-        '3. RESOLVE conflicts by updating contradictory sections.',
-        `4. ADD "### Iteration ${args.iteration} Decisions" section at the bottom with a summary of changes.`,
+        '1. REPLACE vague/ambiguous language with specific decisions from approved answers — edit in place.',
+        '2. ADD missing details directly inside the section they belong to (not at the bottom).',
+        '3. RESOLVE conflicts by updating contradictory sections in place.',
+        '4. DO NOT add any "Iteration N Decisions" section, changelog, or summary block.',
         '5. DO NOT remove existing content unless it directly conflicts with an approved decision.',
-        '6. DO NOT restructure — make targeted edits only.',
+        '6. DO NOT restructure — make targeted inline edits only, one section at a time.',
         '7. Read file AFTER editing to verify changes applied correctly.',
         '',
-        'Use Edit tool with exact old_string/new_string. Minimal, targeted changes.'
+        'Use Edit tool with exact old_string/new_string. Minimal, surgical, inline changes.'
       ],
       outputFormat: 'JSON with changesApplied (number), changes (array of {section, description, type}), skippedRejectedAnswers (number), planUpdated (boolean), summary (string)'
     },
@@ -792,6 +797,65 @@ export const updatePlanTask = defineTask('update-plan', (args, taskCtx) => ({
     outputJsonPath: `tasks/${taskCtx.effectId}/result.json`
   },
   labels: ['verification', 'update', `iteration-${args.iteration}`]
+}));
+
+// ============================================================================
+// TASK DEFINITIONS — PHASE 2, STEP C.2: PLAN SYNTHESIS (reorganize after each iteration)
+// ============================================================================
+
+export const synthesizePlanTask = defineTask('synthesize-plan', (args, taskCtx) => ({
+  kind: 'agent',
+  title: `Synthesize plan into clean structure (iteration ${args.iteration})`,
+  agent: {
+    name: 'general-purpose',
+    prompt: {
+      role: 'Senior technical writer and architect. You turn messy, decision-laden documents into clean, navigable implementation plans.',
+      task: `Iteration ${args.iteration} just integrated new decisions into the plan. Rewrite the plan as a single, well-organized document that reads like a proper plan — not a Q&A log or decision dump.`,
+      context: {
+        planFile: args.planFile,
+        projectRoot: args.projectRoot,
+        iteration: args.iteration,
+        changesApplied: args.planUpdate?.changesApplied || 0
+      },
+      instructions: [
+        `Read the CURRENT plan file: "${args.projectRoot}/${args.planFile}"`,
+        '',
+        'YOUR GOAL: Rewrite the plan as a clean, organized document. Preserve 100% of the decisions and information — just organize it properly.',
+        '',
+        'STRUCTURE TO USE (adapt as needed for the plan\'s content):',
+        '  ## Overview — 2-3 sentences: what this plan does and why',
+        '  ## Context & Constraints — key facts about the codebase, limitations, non-negotiables',
+        '  ## Architecture / Design Decisions — all key decisions made, presented as statements (not Q&A)',
+        '  ## Implementation Steps — ordered phases or tasks with enough detail to execute',
+        '  ## Edge Cases & Error Handling — specific scenarios and how each is handled',
+        '  ## Security Considerations — auth, validation, injection risks addressed',
+        '  ## Testing Strategy — what to test, how, specific scenarios',
+        '  ## Deployment & Migration — steps, rollback, ordering',
+        '  ## Open Questions — only items still unresolved (should be empty by score 95)',
+        '',
+        'RULES:',
+        '1. DO NOT lose any information — every decision must appear somewhere in the rewritten plan.',
+        '2. DO NOT invent new decisions — only reorganize what is already there.',
+        '3. Remove redundancy — if the same point appears multiple times, keep the most specific version.',
+        '4. Write in clear, direct prose. Use bullet points for lists, numbered steps for ordered actions.',
+        '5. No section should contain Q&A format, "Iteration N" labels, or decision-log phrasing.',
+        '6. If a section has nothing to say, omit it entirely.',
+        '',
+        'Write the complete rewritten plan using the Write tool to replace the file entirely.',
+        'Read the file after writing to confirm it looks correct.'
+      ],
+      outputFormat: 'JSON with sectionsWritten (array of string section names), linesWritten (number), informationLost (boolean), summary (string)'
+    },
+    outputSchema: {
+      type: 'object',
+      required: ['sectionsWritten', 'informationLost', 'summary']
+    }
+  },
+  io: {
+    inputJsonPath: `tasks/${taskCtx.effectId}/input.json`,
+    outputJsonPath: `tasks/${taskCtx.effectId}/result.json`
+  },
+  labels: ['verification', 'synthesis', `iteration-${args.iteration}`]
 }));
 
 // ============================================================================
