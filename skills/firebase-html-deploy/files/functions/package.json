@@ -1,0 +1,13 @@
+{
+  "name": "firebase-html-deploy-functions",
+  "description": "Token-gated HTML page serving",
+  "scripts": { "test": "jest", "deploy": "firebase deploy --only functions" },
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "firebase-functions": "^6.0.0"
+  },
+  "devDependencies": { "jest": "^29.0.0" },
+  "private": true
+}

@@ -1,0 +1,26 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [
+      {
+        "source": "/pages/**",
+        "headers": [
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *; img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; script-src * 'unsafe-inline' 'unsafe-eval'; frame-src *;"
+          }
+        ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/pages/**",
+        "function": "servePage",
+        "region": "us-central1"
+      }
+    ]
+  },
+  "storage": { "rules": "storage.rules" },
+  "functions": { "source": "functions" }
+}
