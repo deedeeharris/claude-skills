@@ -23,7 +23,7 @@ Extract from the raw args:
 - **`--review`**: use `codex exec review` subcommand instead of `codex exec`
 - **`--uncommitted`**: (review mode only) review staged/unstaged/untracked changes
 - **`--base <branch>`**: (review mode only) review diff against a base branch
-- **`--model <name>`**: model to use (e.g. `o3`, `o4-mini`, `gpt-4.1`) — defaults to Codex's auto
+- **`--model <name>`**: model to use — defaults to Codex's auto. See [Supported Models](#supported-models) below for valid IDs. **Never guess or hallucinate a model name** — always use the list below or check the live docs first.
 - **`--sandbox <mode>`**: `read-only`, `workspace-write`, or `danger-full-access` (default: `workspace-write` for tasks, `read-only` for review)
 - **`--json`**: if present, also capture all JSONL events to `<save-file>.events.jsonl`
 
@@ -136,6 +136,26 @@ After Codex completes (background notification) or finishes (foreground):
 - Show the path to the saved output file
 - If GitHub issues were created, list their URLs if available in the output
 - Do not re-summarize Codex's output — just confirm completion and point to the file
+
+## Supported Models
+
+> **Live docs:** https://developers.openai.com/codex/models — check here for the latest list before using a model.
+> **NEVER hallucinate a model ID.** If the user asks for a model you're unsure about, look it up first.
+
+Models available as of April 2026 (pass as `-m <id>`):
+
+| Model ID | Description |
+|---|---|
+| `gpt-5.5` | Newest frontier — complex coding, computer use, research |
+| `gpt-5.4` | Flagship — strong reasoning + agentic workflows |
+| `gpt-5.4-mini` | Fast/cheap mini variant for responsive tasks and subagents |
+| `gpt-5.3-codex` | Industry-leading coding model for complex software engineering |
+| `gpt-5.3-codex-spark` | Text-only research preview, near-instant iteration |
+| `gpt-5.2` | Previous general-purpose model for coding and agentic tasks |
+
+Default (no `-m`): Codex picks automatically based on task complexity.
+
+Codex also accepts any model from providers supporting the OpenAI Chat Completions or Responses API, via `--provider`.
 
 ## Notes
 
