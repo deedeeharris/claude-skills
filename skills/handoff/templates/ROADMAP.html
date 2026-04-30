@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TASK_NAME}} — PM Roadmap</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+        fontSize: '13px',
+        primaryColor: '#fff',
+        primaryBorderColor: '#cbd5e1',
+        lineColor: '#94a3b8'
+      },
+      flowchart: { htmlLabels: true, curve: 'basis', padding: 14, nodeSpacing: 30, rankSpacing: 60 }
+    });
+  </script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --muted: #64748b;
+      --accent: #4f46e5;
+      --done: #10b981;
+      --hot: #ef4444;
+      --research: #3b82f6;
+      --awaiting: #f59e0b;
+      --blocked: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 24px;
+      line-height: 1.5;
+    }
+    header { max-width: 1500px; margin: 0 auto 24px; }
+    h1 { margin: 0 0 4px; font-size: 28px; }
+    .subtitle { color: var(--muted); font-size: 14px; }
+    .meta-bar { display: flex; gap: 12px; margin-top: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+    .meta-bar span { background: var(--card); padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); }
+    main { max-width: 1500px; margin: 0 auto; }
+    h2 { font-size: 18px; margin: 28px 0 12px; color: var(--text); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 18px; }
+
+    /* Two-column highlights */
+    .highlights-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;
+    }
+    .highlight {
+      padding: 16px 20px; border-radius: 10px; border: 1px solid var(--border);
+    }
+    .highlight-current {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white; border: none;
+    }
+    .highlight-next {
+      background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); color: white; border: none;
+    }
+    .highlight .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.85; font-weight: 700; }
+    .highlight .text { font-size: 18px; font-weight: 600; margin-top: 4px; }
+    .highlight .why { font-size: 13px; opacity: 0.9; margin-top: 6px; line-height: 1.5; }
+
+    /* KPIs */
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+    .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .kpi-value { font-size: 28px; font-weight: 600; margin-top: 4px; color: var(--text); }
+    .kpi-detail { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* Horizontal timeline */
+    .timeline {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 60px 32px 28px; margin-bottom: 24px; gap: 8px;
+    }
+    .phase {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      position: relative; text-align: center; min-width: 0;
+    }
+    .phase-dot {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--border); border: 3px solid var(--card);
+      box-shadow: 0 0 0 2px var(--blocked);
+      margin-bottom: 14px; position: relative; z-index: 2;
+    }
+    .phase-done    .phase-dot { background: var(--done);     box-shadow: 0 0 0 2px var(--done); }
+    .phase-active  .phase-dot { background: var(--accent);   box-shadow: 0 0 0 2px var(--accent); }
+    .phase-next    .phase-dot { background: var(--research); box-shadow: 0 0 0 2px var(--research); }
+    .phase-pending .phase-dot { background: var(--card);     box-shadow: 0 0 0 2px var(--blocked); }
+    .phase-blocked .phase-dot { background: var(--card);     box-shadow: 0 0 0 2px var(--hot); }
+    .phase-future  .phase-dot { background: var(--card);     box-shadow: 0 0 0 2px var(--blocked); opacity: 0.55; }
+    .phase:not(:last-child)::after {
+      content: ''; position: absolute; top: 11px;
+      left: calc(50% + 14px); right: calc(-50% + 14px);
+      height: 2px; background: var(--border); z-index: 1;
+    }
+    .phase-done::after   { background: var(--done); }
+    .phase-active::after { background: var(--research); }
+    .phase-next::after, .phase-pending::after, .phase-blocked::after {
+      background: repeating-linear-gradient(90deg, var(--border) 0 6px, transparent 6px 12px);
+    }
+    .phase-active .phase-dot::before {
+      content: ''; position: absolute; inset: -3px; border-radius: 50%;
+      background: var(--accent); opacity: 0.5;
+      animation: pulse-ring 2s ease-out infinite; z-index: -1;
+    }
+    @keyframes pulse-ring {
+      0%   { transform: scale(1);   opacity: 0.5; }
+      100% { transform: scale(2.4); opacity: 0; }
+    }
+    .here-marker {
+      position: absolute; top: -34px;
+      background: var(--accent); color: white;
+      padding: 5px 10px; border-radius: 4px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.06em; white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(79, 70, 229, 0.4);
+    }
+    .here-marker::after {
+      content: ''; position: absolute; bottom: -5px; left: 50%; transform: translateX(-50%);
+      border-left: 5px solid transparent; border-right: 5px solid transparent;
+      border-top: 5px solid var(--accent);
+    }
+    .phase-title { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.25; margin-bottom: 4px; }
+    .phase-sub { font-size: 11px; color: var(--muted); line-height: 1.4; max-width: 170px; }
+    .phase-blocked .phase-title { color: var(--hot); }
+    .phase-future  .phase-title { color: var(--muted); }
+
+    /* Mermaid wrap */
+    .mermaid-wrap {
+      background: #fafbfc; border: 1px dashed var(--border);
+      border-radius: 8px; padding: 24px 18px; overflow-x: auto;
+    }
+    .mermaid { display: flex; justify-content: center; min-width: 100%; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; margin-top: 12px; }
+    .legend-chip { display: inline-flex; align-items: center; gap: 6px; }
+    .legend-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+
+    /* Open questions table */
+    .questions-table table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .questions-table th {
+      text-align: left; padding: 10px 12px; background: #f1f5f9;
+      border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12px;
+    }
+    .questions-table td {
+      padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top;
+    }
+    .questions-table tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 600;
+    }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-final { background: #dcfce7; color: #14532d; }
+    .badge-rejected { background: #fee2e2; color: #7f1d1d; }
+    .badge-redirect { background: #ede9fe; color: #5b21b6; }
+    .question-text { font-weight: 500; }
+    .question-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    .note { font-size: 12px; color: var(--muted); margin-top: 8px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{TASK_NAME}} — PM Roadmap</h1>
+    <div class="subtitle">High-level visual map · maintained alongside HANDOFF.md</div>
+    <div class="meta-bar">
+      <span><strong>Last updated:</strong> {{LAST_UPDATED}}</span>
+      <span><strong>Branch:</strong> {{BRANCH}}</span>
+      <span><strong>Status:</strong> {{HEADLINE_STATUS}}</span>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- KPI row -->
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Items shipped</div><div class="kpi-value">0 / 0</div><div class="kpi-detail">—</div></div>
+      <div class="kpi"><div class="kpi-label">Active now</div><div class="kpi-value">0</div><div class="kpi-detail">—</div></div>
+      <div class="kpi"><div class="kpi-label">Awaiting external</div><div class="kpi-value">0</div><div class="kpi-detail">—</div></div>
+      <div class="kpi"><div class="kpi-label">Open questions</div><div class="kpi-value">0</div><div class="kpi-detail">—</div></div>
+    </div>
+
+    <!-- Two-column highlights -->
+    <div class="highlights-row">
+      <div class="highlight highlight-current">
+        <div class="label">📍 Current task</div>
+        <div class="text">{{CURRENT_TASK}}</div>
+        <div class="why">{{CURRENT_TASK_WHY}}</div>
+      </div>
+      <div class="highlight highlight-next">
+        <div class="label">⭐ Next task</div>
+        <div class="text">{{NEXT_TASK}}</div>
+        <div class="why">{{NEXT_TASK_WHY}}</div>
+      </div>
+    </div>
+
+    <!-- Horizontal timeline -->
+    <h2>Where we are now — and what's left in order</h2>
+    <div class="timeline">
+      <div class="phase phase-done">
+        <div class="phase-dot"></div>
+        <div class="phase-title">Phase 1</div>
+        <div class="phase-sub">{{PHASE_1_SUB}}</div>
+      </div>
+      <div class="phase phase-active">
+        <div class="here-marker">YOU ARE HERE</div>
+        <div class="phase-dot"></div>
+        <div class="phase-title">Phase 2</div>
+        <div class="phase-sub">{{PHASE_2_SUB}}</div>
+      </div>
+      <div class="phase phase-next">
+        <div class="phase-dot"></div>
+        <div class="phase-title">Phase 3</div>
+        <div class="phase-sub">{{PHASE_3_SUB}}</div>
+      </div>
+      <div class="phase phase-pending">
+        <div class="phase-dot"></div>
+        <div class="phase-title">Phase 4</div>
+        <div class="phase-sub">{{PHASE_4_SUB}}</div>
+      </div>
+      <div class="phase phase-future">
+        <div class="phase-dot"></div>
+        <div class="phase-title">Done</div>
+        <div class="phase-sub">{{PHASE_DONE_SUB}}</div>
+      </div>
+    </div>
+
+    <!-- Mermaid horizontal flowchart -->
+    <h2>📊 Progress map — what's done, what's left (LR diagram)</h2>
+    <div class="card">
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+flowchart LR
+  classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:2px
+  classDef hot fill:#fee2e2,stroke:#dc2626,color:#7f1d1d,stroke-width:3px
+  classDef research fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+  classDef awaiting fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
+  classDef blocked fill:#f1f5f9,stroke:#64748b,color:#334155,stroke-width:2px,stroke-dasharray:5 5
+
+  Start([Kickoff]):::done
+
+  subgraph S1 [✓ Done]
+    direction TB
+    D1[item 1]:::done
+  end
+
+  subgraph S2 [🔥 Hot — ship next]
+    H1[item 2]:::hot
+  end
+
+  subgraph S3 [🔬 Research]
+    direction TB
+    R1[item 3]:::research
+  end
+
+  subgraph S4 [⏸ Awaiting external]
+    direction TB
+    A1[item 4]:::awaiting
+  end
+
+  subgraph S5 [🚧 Blocked]
+    B1[item 5]:::blocked
+  end
+
+  End([Close]):::done
+
+  Start --> S1 --> S2 --> S3
+  S2 --> S4
+  S3 --> S5
+  S4 --> S5
+  S5 --> End
+        </pre>
+      </div>
+      <div class="legend">
+        <span class="legend-chip"><span class="legend-dot" style="background:#dcfce7;border:2px solid #16a34a;"></span> Done</span>
+        <span class="legend-chip"><span class="legend-dot" style="background:#fee2e2;border:2px solid #dc2626;"></span> Hot — ship now</span>
+        <span class="legend-chip"><span class="legend-dot" style="background:#dbeafe;border:2px solid #2563eb;"></span> In research</span>
+        <span class="legend-chip"><span class="legend-dot" style="background:#fef3c7;border:2px solid #d97706;"></span> Awaiting external</span>
+        <span class="legend-chip"><span class="legend-dot" style="background:#f1f5f9;border:2px dashed #64748b;"></span> Blocked</span>
+      </div>
+      <div class="note">
+        Mermaid via CDN. Open this HTML in a browser to view. Edit the Mermaid block when items move between states.
+      </div>
+    </div>
+
+    <!-- Open questions -->
+    <h2>❓ Open questions</h2>
+    <div class="card questions-table">
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 8%;">#</th>
+            <th style="width: 45%;">Question</th>
+            <th style="width: 12%;">Owner</th>
+            <th style="width: 15%;">Open since</th>
+            <th style="width: 20%;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Q1</strong></td>
+            <td>
+              <div class="question-text">{{QUESTION_TEXT}}</div>
+              <div class="question-meta">{{QUESTION_META}}</div>
+            </td>
+            <td>{{QUESTION_OWNER}}</td>
+            <td>{{QUESTION_DATE}}</td>
+            <td><span class="badge badge-pending">⏳ pending</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</body>
+</html>
