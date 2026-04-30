@@ -44,14 +44,26 @@ git diff --stat HEAD 2>/dev/null | head -20
 
 Use this to embed real paths and recent context into the prompt.
 
-### Step 3 — Build the command
+### Step 3 — Save prompt to file, then build the command
+
+**CRITICAL: Never pass the prompt as an inline shell argument.** Codex hangs waiting for stdin when the prompt is passed inline on some platforms. Always write the enriched prompt to a file first, then reference it with `--instructions-file`.
+
+**Prompt file location:** `.codex/prompts/<slug>-<timestamp>.md` (create dir if needed, never write to project root).
+
+```bash
+mkdir -p .codex/prompts
+PROMPT_FILE=".codex/prompts/<slug>-$(date +%Y%m%d-%H%M%S).md"
+cat > "$PROMPT_FILE" << 'PROMPT_EOF'
+<enriched_prompt>
+PROMPT_EOF
+```
 
 **Standard task (yolo, write mode):**
 ```bash
 codex exec --dangerously-bypass-approvals-and-sandbox \
   --sandbox workspace-write \
   -o "<save-file>" \
-  "<enriched_prompt>"
+  --instructions-file "$PROMPT_FILE"
 ```
 
 **With JSON events:**
@@ -60,7 +72,7 @@ codex exec --dangerously-bypass-approvals-and-sandbox \
   --sandbox workspace-write \
   -o "<save-file>" \
   --json \
-  "<enriched_prompt>" > "<save-file>.events.jsonl"
+  --instructions-file "$PROMPT_FILE" > "<save-file>.events.jsonl"
 ```
 
 **Review — uncommitted changes:**
@@ -69,7 +81,7 @@ codex exec review \
   --dangerously-bypass-approvals-and-sandbox \
   --uncommitted \
   -o "<save-file>" \
-  "<custom review instructions>"
+  --instructions-file "$PROMPT_FILE"
 ```
 
 **Review — against base branch:**
@@ -78,7 +90,7 @@ codex exec review \
   --dangerously-bypass-approvals-and-sandbox \
   --base <branch> \
   -o "<save-file>" \
-  "<custom review instructions>"
+  --instructions-file "$PROMPT_FILE"
 ```
 
 **With specific model:**
@@ -86,10 +98,13 @@ codex exec review \
 codex exec --dangerously-bypass-approvals-and-sandbox \
   -m <model> \
   -o "<save-file>" \
-  "<enriched_prompt>"
+  --instructions-file "$PROMPT_FILE"
 ```
 
-If no `--save` file is given, default to writing output to `codex-output.md` in the project root.
+**Output file location:** If no `--save` is specified, default to `audits/codex/<slug>-<timestamp>.md`. Never write output to the project root. Create the directory if needed:
+```bash
+mkdir -p audits/codex
+```
 
 ### Step 4 — Build a rich, detailed prompt
 
@@ -118,15 +133,22 @@ For `--review` mode: pass custom review instructions as the positional prompt ar
 
 Run in the **background** by default (Codex tasks take time). Use `run_in_background: true` on the Bash call.
 
+Always write the prompt to `.codex/prompts/` first (Step 3), then run:
+
 ```bash
 cd <project root>
+mkdir -p .codex/prompts audits/codex
+PROMPT_FILE=".codex/prompts/<slug>-$(date +%Y%m%d-%H%M%S).md"
+cat > "$PROMPT_FILE" << 'PROMPT_EOF'
+<enriched_prompt>
+PROMPT_EOF
 codex exec --dangerously-bypass-approvals-and-sandbox \
   --sandbox workspace-write \
   -o "<save-file>" \
-  "<enriched_prompt>"
+  --instructions-file "$PROMPT_FILE"
 ```
 
-Tell the user: "Codex is running in the background. Output will be saved to `<save-file>`."
+Tell the user: "Codex is running in the background. Prompt saved to `.codex/prompts/...`. Output will be saved to `<save-file>`."
 
 If the user explicitly asks to wait (`--wait`), run in the foreground instead and stream output.
 
@@ -167,3 +189,5 @@ Codex also accepts any model from providers supporting the OpenAI Chat Completio
 - If Codex is not authenticated, tell the user to run `! codex login`
 - `codex exec review` has built-in git-diff awareness — it automatically reads the diff; no need to describe changes
 - For large tasks (full codebase review, test generation), always run in background
+- **Prompt files** go in `.codex/prompts/` — never inline the prompt as a shell argument (causes stdin hang)
+- **Output files** go in `audits/codex/` by default — never write to the project root
