@@ -4,19 +4,39 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{TASK_NAME}} — PM Roadmap</title>
+  <!-- Mermaid loads from a CDN. KPI / timeline / highlight cards render fine offline; only the
+       progress-map graph needs the CDN. To vendor: download mermaid.min.js next to this file
+       and change src below to a relative path. -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script>
+    // Mobile rendering fix:
+    // LR flowcharts render unreadably on phone screens (mostly horizontal scroll).
+    // Before mermaid runs, swap `flowchart LR` → `flowchart TB` for narrow viewports
+    // and tighten spacing. We disable startOnLoad so we can patch first.
+    var IS_MOBILE = window.matchMedia('(max-width: 768px)').matches;
+    document.addEventListener('DOMContentLoaded', function () {
+      if (IS_MOBILE) {
+        document.querySelectorAll('pre.mermaid').forEach(function (el) {
+          el.textContent = el.textContent.replace(/flowchart\s+LR\b/i, 'flowchart TB');
+        });
+      }
+      if (window.mermaid && typeof window.mermaid.run === 'function') {
+        window.mermaid.run({ querySelector: 'pre.mermaid' });
+      }
+    });
     mermaid.initialize({
-      startOnLoad: true,
+      startOnLoad: false,        // we run() manually after the LR→TB swap above
       theme: 'base',
       themeVariables: {
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
-        fontSize: '13px',
+        fontSize: IS_MOBILE ? '14px' : '13px',
         primaryColor: '#fff',
         primaryBorderColor: '#cbd5e1',
         lineColor: '#94a3b8'
       },
-      flowchart: { htmlLabels: true, curve: 'basis', padding: 14, nodeSpacing: 30, rankSpacing: 60 }
+      flowchart: IS_MOBILE
+        ? { htmlLabels: true, curve: 'basis', padding: 8, nodeSpacing: 14, rankSpacing: 24, useMaxWidth: true }
+        : { htmlLabels: true, curve: 'basis', padding: 14, nodeSpacing: 30, rankSpacing: 60 }
     });
   </script>
   <style>
