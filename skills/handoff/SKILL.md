@@ -187,7 +187,8 @@ Wait for explicit "yes". Do not create files until approved.
    ```
 
 4. Create `<base>/<TASK>/inbox/` and `<base>/<TASK>/inbox/processed/` directories. Drop a `<base>/<TASK>/inbox/README.md` with the inbox contract (see § 4.7) so any engineering agent landing on the folder knows the format without reading this skill.
-5. Pre-fill what you know from § 3.1 (goal in § 1 Context, stakeholders in § 3 Open questions, etc.).
+5. **Do NOT copy the runner scripts into the task folder.** The runners (`templates/run.sh` and `templates/run.ps1`) are global — they live in the skill and are invoked by absolute path with the prompt + project root + task dir passed as arguments. This way every task immediately picks up runner improvements without per-task migration. See § 4.6.1 for the exact invocation pattern.
+6. Pre-fill what you know from § 3.1 (goal in § 1 Context, stakeholders in § 3 Open questions, etc.).
 
 After creation, switch to operational mode (§ 4).
 
@@ -307,6 +308,81 @@ When an item is ready for implementation, write a self-contained prompt for an e
 - **Includes a mandatory "Inbox writeback" section** — see § 4.7. Without this section, the PM has no way to learn what the agent did, and HANDOFF/ROADMAP go stale. This is non-negotiable for any prompt that is going to run in a separate session.
 
 The prompt should be runnable on its own — the engineering agent shouldn't need to read your scrollback to do the work.
+
+### 4.6.1 Optional: PM-spawned CC runner (opt-in, never automatic)
+
+🚨 **HARD RULE — never execute a babysitter prompt inside the PM session.** Not inline (your own Bash tool), not via the Agent tool / subagent dispatch, not via `Skill` invocation. The PM session must stay free of implementation context — that is the entire point of the inbox/cron architecture. The ONLY allowed execution path for a babysitter prompt is a **separate `claude` CLI subprocess** launched outside the PM session, either by the user manually pasting into a fresh `claude` session or by the PM spawning it via the runner described in this section. If the user asks you to "just run it here" or "use a subagent for it", refuse with this exact pushback:
+
+> Running it inline would pollute the PM session with implementation context — that's exactly what the inbox/cron architecture is designed to avoid. The two allowed paths are: (1) you paste the prompt into a fresh `claude` session yourself, or (2) I launch the runner script which spawns a separate `claude` CLI subprocess. Which do you want?
+
+Only after the user picks option 2 do you spawn — and even then, follow the confirmation rule below.
+
+After you finish writing a babysitter prompt, the user may prefer that you launch it via option 2 (the runner) instead of copy-pasting it into a new session themselves. This is a **shortcut**, not the default — the canonical flow is still "PM writes prompt → user runs in fresh session." Only spawn when the user explicitly asks ("run it", "fire it", "launch it", "spin it up").
+
+**Always confirm before spawning.** Even when invited, ask once with the concrete command line you're about to execute and the prompt path. The user must say yes (or an unambiguous synonym) before you launch. A request to "write the prompt" alone is **not** consent to launch it.
+
+**What the runner does:**
+1. Opens a new terminal window (headed) so progress is visible.
+2. Runs `claude -p --dangerously-skip-permissions --output-format stream-json --include-partial-messages --verbose "/babysitter:yolo <prompt>"`.
+3. Pipes the JSON stream through `jq` to render readable live output (text deltas + tool calls + tool results), AND tees both raw JSONL and pretty text to `<TASK>/runs/<timestamp>-<prompt-slug>.{jsonl,log}`.
+4. Sends Telegram bookend messages prefixed `🤖 Agent —` (kickoff + completion) so the user can distinguish PM updates (`🎩 PM —`) from spawned-agent updates in the same chat.
+5. **Liveness watcher (background subshell, in-script).** The runner is its own lifeguard for the spawned `claude`. Every 30s it polls the babysitter run dir on disk:
+   - Locates `<repo>/.a5c/runs/<runId>/` created after launch.
+   - Reads the newest `journal/NNNNNN.<ulid>.json` entry. If its `"type"` is `RUN_COMPLETED` / `RUN_FAILED` / `RUN_FATAL` → done, let claude exit naturally.
+   - Else checks the file's mtime. If no journal write in 8 minutes → kill the spawned `claude` (stuck on a broken stop hook, infinite loop, or stalled API call).
+   - After claude exits, post-mortems the journal: terminal event present → real success/failure; absent → "premature exit", surfaced in the banner with a hint to use `/babysitter:resume`.
+6. When `claude` exits cleanly the script prints the right banner (`✅ completed` / `⚠️ premature exit` / `🛑 stuck (watcher killed)` / `❌ failed`), sends the completion `/tg`, sleeps 5s, then exits → terminal auto-closes.
+7. If the user closes the terminal early, whatever made it into the inbox + journal is preserved; PM's cron loop picks up state from the next `/handoff update` tick.
+
+**Global runner location.** The runner is GLOBAL — it lives in this skill at `~/.claude/skills/handoff/templates/run.sh` (and `templates/run.ps1` on Windows). It is **NOT copied per task**. Tasks invoke it by absolute path with positional args, so updates to the skill propagate instantly to every task. The script's signature:
+
+```
+<skill>/templates/run.sh  <prompt-abs-path>  [<project-root>]  [<task-dir>]
+```
+
+- `<prompt-abs-path>` (required): absolute path to the babysitter prompt `.md`.
+- `<project-root>` (optional): repo root the agent should `cd` into. Default: `git rev-parse --show-toplevel` from the prompt's task dir, fallback to task dir.
+- `<task-dir>` (optional): PM task folder where `HANDOFF.md` / `inbox/` / `runs/` live. Default: grand-parent of the prompt (per skill convention `<TASK>/prompts/<file>.md`).
+- `PROJECT_ROOT` and `TASK_DIR` env vars override positional args.
+
+If you only need to override the third arg, pass an empty string for the second: `run.sh /abs/prompt.md '' /abs/task-dir`.
+
+**The exact phrasing to use when offering to spawn (after writing a prompt):**
+
+> Want me to launch this with the runner now? It spawns a new terminal window and starts the agent on the prompt. You'll see the live stream; it auto-closes when the agent finishes. Inbox + Telegram updates flow as usual.
+
+Wait for an explicit yes. If yes, use the platform-appropriate command from the table below — always with the **absolute** prompt path, not a per-task wrapper.
+
+Then surface the launched PID and log file paths so the user can monitor or kill if needed.
+
+**Platform notes (use the absolute path to the global runner — never a per-task copy).**
+
+| Platform | Terminal spawn |
+|---|---|
+| **Linux** | `setsid x-terminal-emulator -- bash -c "$HOME/.claude/skills/handoff/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'" < /dev/null > /dev/null 2>&1 & disown` |
+| **macOS** | `osascript -e 'tell app "Terminal" to do script "~/.claude/skills/handoff/templates/run.sh \"<PROMPT_ABS>\" \"<PROJECT_ROOT>\" \"<TASK_DIR>\""'` |
+| **Windows (native)** | `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\handoff\templates\run.ps1" -PromptPath '<PROMPT_ABS>' -ProjectRoot '<PROJECT_ROOT>' -TaskDir '<TASK_DIR>'` |
+| **Windows (manual, no new window)** | Inside Git Bash / WSL: `bash ~/.claude/skills/handoff/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'` |
+
+Linux tip: `x-terminal-emulator` is the Debian/Ubuntu standard wrapper; on GNOME it points to ptyxis or gnome-terminal.
+
+Detection rule: if `$OS == "Windows_NT"` (PowerShell/cmd) or `uname -o` returns `Msys`/`Cygwin`, the user is on Windows — use `run.ps1`. Otherwise check `uname -s` for `Darwin` (macOS) vs `Linux`. If you can't detect reliably, ask the user which OS they're on before spawning. Don't guess — a wrong launch line will leave a zombie shell or do nothing visible.
+
+**Dependencies the user must have installed (before any spawn):**
+- `claude` CLI (CC v2.1.51+ recommended — earlier versions don't support `--include-partial-messages` reliably). If `claude` isn't on the spawned shell's PATH (common when ptyxis/gnome-terminal don't source `~/.bashrc`), set `CLAUDE_BIN=/abs/path/to/claude` before launching, or rely on the runner's auto-detection of `~/.npm-global/bin/claude`, `/usr/local/bin/claude`, and `/opt/homebrew/bin/claude`.
+- `jq` (any version)
+- On Windows: WSL **or** Git Bash, plus Windows Terminal (`wt.exe`) for the spawned-tab variant
+
+**Terminal "hold on exit" gotcha (ptyxis / gnome-terminal).** When the runner finishes and exits, some terminal emulators keep the window open by default ("Hold the terminal open"). The runner's `sleep 5; exit` correctly returns control — the window staying open is a terminal-app preference, not a runner bug. To make windows auto-close after the run completes, set the terminal's profile preference to "Close window when command exits" (ptyxis: Settings → Default Profile → When command exits → Close).
+
+**Things the runner is NOT.** It does not track its own progress, replace the inbox, or skip the cron-driven `/handoff update` loop. The inbox is still the source of truth; the runner is just a convenience launcher.
+
+**Things to refuse to spawn:**
+- Any prompt that has not been finalized (still in draft, has TODOs, lacks the inbox writeback section).
+- Any prompt that touches production infra without explicit user authorization to run autonomously.
+- A second runner for the same task while one is already in flight (check `pgrep -fa "babysitter:yolo <prompt-name>"` first).
+
+If any of those apply, surface the issue and ask before launching.
 
 ### 4.7 Inbox protocol — how engineering agents report back to the PM
 
