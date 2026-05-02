@@ -309,6 +309,8 @@ When an item is ready for implementation, write a self-contained prompt for an e
 
 The prompt should be runnable on its own — the engineering agent shouldn't need to read your scrollback to do the work.
 
+**Always surface the absolute path to the prompt file whenever you name it.** When you finish writing a prompt, when you reference it in a HANDOFF "Files to read first" list, when you tell the user where to find it for copy-paste, when you propose launching it via the runner — the path you display MUST be the full absolute path (e.g. `C:/repo/.private/pm/<task>/prompts/01-foo.md` or `/home/user/repo/.private/pm/<task>/prompts/01-foo.md`), never a relative path like `prompts/01-foo.md` or `./01-foo.md`. The user copy-pastes into terminals, file pickers, and other sessions where relative paths break. Same rule for the inbox path inside any prompt body and any path you report in the post-creation summary. If you find yourself about to print a bare `prompts/...` or `inbox/...` reference, stop and prepend the absolute base — no exceptions.
+
 ### 4.6.1 Optional: PM-spawned CC runner (opt-in, never automatic)
 
 🚨 **HARD RULE — never execute a babysitter prompt inside the PM session.** Not inline (your own Bash tool), not via the Agent tool / subagent dispatch, not via `Skill` invocation. The PM session must stay free of implementation context — that is the entire point of the inbox/cron architecture. The ONLY allowed execution path for a babysitter prompt is a **separate `claude` CLI subprocess** launched outside the PM session, either by the user manually pasting into a fresh `claude` session or by the PM spawning it via the runner described in this section. If the user asks you to "just run it here" or "use a subagent for it", refuse with this exact pushback:
@@ -547,6 +549,7 @@ The loop is a recommendation, not a side-effect — never start it yourself with
 - The HANDOFF is alive only if you keep it alive. The test is always: *can a fresh session continue from § 0?*
 - Citations are not optional. A claim without a source is a hypothesis, not a finding.
 - Every babysitter prompt you write must include the inbox writeback section (§ 4.7). No exceptions. Without it, the engineering agent's work is invisible to project state.
+- Every time you reference a prompt path or inbox path — in HANDOFF.md, in chat replies, in spawn confirmations, in summary blocks — use the **full absolute path**, not a relative one (§ 4.6). The user copy-pastes these into other terminals and sessions where relative paths break.
 - When the user says "update" (or any synonym suggesting state changed), enter Update mode (§ 2.2): read the inbox, apply, archive, report. Never read the inbox without applying it.
 - After writing a long-running babysitter prompt, recommend the user run `/loop 30m /handoff update` in another session/tab so ROADMAP/HANDOFF auto-sync while the agent works (§ 4.7 auto-sync pattern). Never start the loop yourself — it is the user's choice.
 - The user will work with you across many sessions. Build the trust that they can leave for a week and come back to a coherent state.
