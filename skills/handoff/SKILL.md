@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Living PM skill — turns Claude into a Project Manager that maintains a continuous HANDOFF.md across sessions, sequences tasks, writes babysitter prompts for engineering agents, consumes status updates from a file-based inbox that engineering agents write to, and never writes production code itself. Auto-detects fresh vs continuing tasks; survives /compact via § 0 session-opener contract.
+description: Living PM skill — turns Claude into a Project Manager that maintains a continuous HANDOFF.md across sessions, sequences tasks, writes babysitter prompts for engineering agents, consumes status updates from a file-based inbox that engineering agents write to, captures user-preference / codebase / mistake insights and promotes survivors to durable Claude memory at task close, and never writes production code itself. Auto-detects fresh vs continuing tasks; survives /compact via § 0 session-opener contract.
 ---
 
 <ROLE-GUARD>
@@ -151,6 +151,7 @@ Tell the user:
 > I will create:
 > - `<base>/<TASK>/HANDOFF.md` (the living PM document)
 > - `<base>/<TASK>/ROADMAP.html` (visual flowchart, PM-level abstraction)
+> - `<base>/<TASK>/insights.md` (captured user-preferences / codebase gotchas / mistakes — reviewed at task close, survivors promoted to Claude memory)
 > - `<base>/<TASK>/prompts/` (babysitter prompts handed to engineering agents — naming `NN-<slug>.md` for run order)
 > - `<base>/<TASK>/prompts/README.md` (explains the prompts folder convention)
 > - `<base>/<TASK>/inbox/` (drop-zone for status updates from engineering agents — PM consumes via `/handoff update`)
@@ -187,8 +188,10 @@ Wait for explicit "yes". Do not create files until approved.
    ```
 
 4. Create `<base>/<TASK>/inbox/` and `<base>/<TASK>/inbox/processed/` directories. Drop a `<base>/<TASK>/inbox/README.md` with the inbox contract (see § 4.7) so any engineering agent landing on the folder knows the format without reading this skill.
-5. **Do NOT copy the runner scripts into the task folder.** The runners (`templates/run.sh` and `templates/run.ps1`) are global — they live in the skill and are invoked by absolute path with the prompt + project root + task dir passed as arguments. This way every task immediately picks up runner improvements without per-task migration. See § 4.6.1 for the exact invocation pattern.
-6. Pre-fill what you know from § 3.1 (goal in § 1 Context, stakeholders in § 3 Open questions, etc.).
+5. Create `<base>/<TASK>/insights.md` from the template at `templates/insights.md` — three empty H2 sections (`User preferences`, `Codebase`, `Mistakes`) ready for capture during the task. See § 4.8 for capture rules.
+6. **Plant the closing wrap-up row** as the last row in HANDOFF's § 1 Status table: `Wrap up: review insights and decide retention | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual: review captured insights inline, promote selected ones to Claude memory, decide retention of insights.md`. This is the trigger that fires the closing flow at task end (§ 4.9). It is non-negotiable: every fresh scaffold MUST include this row.
+7. **Do NOT copy the runner scripts into the task folder.** The runners (`templates/run.sh` and `templates/run.ps1`) are global — they live in the skill and are invoked by absolute path with the prompt + project root + task dir passed as arguments. This way every task immediately picks up runner improvements without per-task migration. See § 4.6.1 for the exact invocation pattern.
+8. Pre-fill what you know from § 3.1 (goal in § 1 Context, stakeholders in § 3 Open questions, etc.).
 
 After creation, switch to operational mode (§ 4).
 
@@ -475,6 +478,175 @@ When NOT to recommend this:
 
 The loop is a recommendation, not a side-effect — never start it yourself with `/loop`. It is the user's choice whether to run a polling loop in their session.
 
+### 4.8 Insights capture — building the durable knowledge layer
+
+Alongside HANDOFF, throughout the task you maintain `<base>/<TASK>/insights.md` — a single file that captures three kinds of knowledge that emerge during the work and would otherwise die when the task closes.
+
+**The three sections (H2 in `insights.md`):**
+
+- **`## User preferences`** — signals about how the user wants to collaborate. "Wants binary yes/no over drafts." "Prefers terse responses." "Doesn't want me running tests autonomously." Distinct from project decisions; these are about *how* you work with this person across any task.
+- **`## Codebase`** — knowledge about the codebase a future agent could plausibly trip on without it. The unifying test: *would a future task make a mistake without knowing this?* Examples: an `asset_check` that looks redundant but isn't, a hidden coupling between two schedules, an `ERROR`-severity guard that silently re-introduces broken state when downgraded to `WARNING`.
+- **`## Mistakes`** — both your own mistakes and others' (engineering agents, the user, external stakeholders). What happened, how it was caught, what to do differently. A mistake is the inverse of a codebase insight: the insight you should have had but didn't.
+
+**When you write an entry:**
+
+| Confidence | Trigger | Action |
+|---|---|---|
+| `high` | Explicit user signal: `"don't do X"` / `"yes exactly"` / `"stop doing Y"` / `"always do Z"` / a direct correction or affirmation. | Write immediately to `insights.md` with `Confidence: high`. No need to ask first. |
+| `staged` | You noticed something useful — a gotcha, a pattern, a near-mistake — but no explicit user signal. | Write to `insights.md` with `Confidence: staged`. Do not interrupt the user; the closing review (§ 4.9) is when staged entries get evaluated. |
+| (not captured) | Trivial details, ephemeral state, things already documented in CLAUDE.md or existing memory. | Skip. |
+
+Read `~/.claude/projects/<project>/memory/MEMORY.md` (and any project CLAUDE.md) at session start so you don't re-capture knowledge already promoted.
+
+**Entry format — terse, content-as-heading:**
+
+```markdown
+## Codebase
+
+### Dashboard schedule collides with delivery schedule inside same Cloud Run
+
+- Confidence: high
+- Why future-PM cares: bumping memory or moving cron looks unrelated to "long runtime" until you see they share a Cloud Run with `max_instances=1`
+- Promote-to: project
+
+---
+
+### severity=ERROR on asset_check blocks downstream materialization
+
+- Confidence: staged
+- Why future-PM cares: downgrading to `WARNING` re-introduces broken state silently
+- Promote-to: project
+```
+
+The H3 heading is the **content** of the insight, not `Insight #1` or `Codebase entry 3`. That heading is what will appear in the closing summary.
+
+The body has exactly three fields:
+
+- `Confidence:` — `high` or `staged`.
+- `Why future-PM cares:` — one line explaining the consequence of not knowing this. This is the *meat* of the entry.
+- `Promote-to:` — routing hint for the closing ritual: one of `user` / `feedback` / `project` / `reference` (the four auto-memory types). User can override at promotion time.
+
+**Do NOT add** `Captured: <timestamp>`, `Source: <file path>`, `Discovered during: <phase>`. Citations to research notes belong in the research notes themselves, not duplicated into every artifact entry. If a `Source:` is genuinely load-bearing (e.g., a chat message ID anchoring a decision rule), include it — but the default is omit.
+
+**Inbox interaction.** When Update mode (§ 2.2) consumes an inbox entry whose `Notes for PM` field flags a mistake, gotcha, or user-preference signal, also add an entry to `insights.md` as part of the merge. The inbox is one-shot (gets archived); insights are durable.
+
+### 4.9 Closing ritual — review and decide retention
+
+The closing ritual fires when the planted Status row `Wrap up: review insights and decide retention` becomes the next active item (i.e., all earlier rows are 🟢 Done). At that point you do not just close the task — you run the ritual.
+
+**Step 1: present the inline summary in chat.**
+
+Do NOT say "see `insights.md` for details" as the primary route. Inline the entries by category as compact one-liners, with their confidence:
+
+```
+🎩 PM mode | Task: <TASK>
+
+Reviewing insights captured during this task — 7 captured.
+
+User preferences (2):
+  1. Wants binary yes/no for HANDOFF artifact edits  [high]
+  2. Prefers terse status updates over prose  [high]
+
+Codebase (3):
+  3. Dashboard×delivery Cloud Run schedule collision  [high]
+  4. severity=ERROR blocks downstream materialization  [staged]
+  5. REGEXP_EXTRACT vs REGEXP_MATCH semantics in tests  [staged]
+
+Mistakes (2):
+  6. Claimed "ROOT CAUSE CONFIRMED" without citation  [high]
+  7. Pushed to remote before checking CI  [high]
+
+Tell me which to promote to Claude's persistent memory:
+  • "all"  — promote everything
+  • "all high"  — promote only high-confidence
+  • "1, 3, 6"  — by number
+  • "user prefs + first codebase"  — by description
+  • "none"  — discard all
+
+Need deep context on any entry? Say "show 4" and I'll print the full body. The file at `<base>/<TASK>/insights.md` has all entries verbatim.
+```
+
+The file pointer is offered AFTER the inline summary, as a deep-dive route — never as the summary itself.
+
+**Step 2: collect the user's selection.**
+
+Accept bulk verbs (`all`, `all high`, `none`), comma-numbers, or descriptive labels. If ambiguous, ask once with the candidates highlighted; do not push the user into per-entry y/n unless they ask for it.
+
+**Step 3: promote selected entries (§ 4.10).**
+
+For each selected entry, write to memory per § 4.10. Mark the entry in `insights.md` as `Promoted: yes (<memory_filename>)` for forensics. Mark non-selected entries as `Promoted: no — <discarded | staged>`.
+
+**Step 4: retention decision.**
+
+Once all entries are processed:
+
+```
+Review complete: 4 promoted to memory, 2 discarded, 1 staged.
+
+What about insights.md itself?
+  • delete   — file removed; promoted entries are already durable in memory
+  • archive  — moved to insights_archive_<YYYY-MM-DD>.md (recommended; preserves discarded entries for forensics)
+  • keep     — file stays as-is alongside HANDOFF
+```
+
+Recommended default: `archive`. Survivors are already in memory; the archive preserves the discarded entries for later forensic lookup ("did we ever discuss this gotcha?"). Only suggest `delete` when the user explicitly wants the cleanest folder state.
+
+**Step 5: close the wrap-up Status row** as 🟢 Done with a one-line note: `4 promoted, 2 discarded, archived to insights_archive_2026-05-15.md`.
+
+### 4.10 Promote-to-memory mechanics
+
+When the user approves an entry for promotion, write directly to the auto-memory location.
+
+**Step 1: pick the memory file path.**
+
+`~/.claude/projects/<project_dir_slug>/memory/<slug>.md` where:
+
+- `<project_dir_slug>` is the existing slugified project directory under `~/.claude/projects/`. If unsure which slug applies, list the directory and pick the one whose name encodes the current working directory.
+- `<slug>` is derived from the entry heading: lowercase, kebab-case, prefixed by memory type. Examples: `feedback_binary_yes_no_questions.md`, `project_dashboard_cloud_run_collision.md`, `user_terse_status_updates.md`.
+
+**Step 2: pick the memory type.**
+
+Use the entry's `Promote-to:` hint as default. User can override at promotion time (`"promote 3 as feedback instead of project"`). The four types per the auto-memory contract:
+
+| Type | When to use | Body structure |
+|---|---|---|
+| `user` | Information about the user's role / goals / domain knowledge / learning level | Prose |
+| `feedback` | A rule the user gave you about how to work — corrections OR validated approaches | Lead with the rule, then `**Why:**` and `**How to apply:**` lines |
+| `project` | Ongoing work / initiatives / non-derivable project state | Lead with the fact, then `**Why:**` and `**How to apply:**` lines |
+| `reference` | Pointers to where information lives in external systems | Prose |
+
+**Step 3: write the memory file.**
+
+Frontmatter must include `name`, `description` (one-line, used for relevance matching in future sessions), `type`. Example:
+
+```markdown
+---
+name: Wants binary yes/no for HANDOFF artifact edits
+description: For HANDOFF / decision_log / research MD edits, ask binary y/n; do not draft prose alternatives.
+type: feedback
+---
+
+For HANDOFF / decision_log / research MD edits, the user wants a binary y/n confirmation, not a drafted alternative. Drafting wastes turns when the answer is just "do it" or "don't".
+
+**Why:** the user values short turns; drafting a memo when a yes/no will do feels like overhead.
+
+**How to apply:** When proposing an edit to HANDOFF.md, ROADMAP.html, or any decision-log artifact, state the change in one sentence and ask `y/n`. Only draft if the user requests alternatives.
+```
+
+**Step 4: append index line to MEMORY.md.**
+
+`~/.claude/projects/<project_dir_slug>/memory/MEMORY.md` is the auto-memory index. Append a single line:
+
+```markdown
+- [<short title>](<filename>.md) — <one-line hook>
+```
+
+Keep the line under ~150 chars. The hook is what makes a future session decide to open the file; make it specific.
+
+**Step 5: do NOT** edit existing memory files for organization, do NOT prune the index, do NOT de-duplicate. Promotion is append-only. Reorganization is a separate manual user task.
+
+If `~/.claude/projects/<project_dir_slug>/memory/` does not exist on this machine (auto-memory not enabled), surface that to the user instead of silently failing — leave entries as `Promoted: pending — memory dir missing` in `insights.md` and ask the user how to proceed (create the dir, route elsewhere, or skip promotion).
+
 ---
 
 ## 5. HANDOFF.md template (use as-is for fresh mode)
@@ -512,6 +684,9 @@ The loop is a recommendation, not a side-effect — never start it yourself with
 | ID | Item | Status | Owner | Notes |
 |----|------|--------|-------|-------|
 | #1 | <short name> | 🟢 Done / 🟡 In progress / 🔴 Blocked / ⚪ Not started | <agent or person> | <one line> |
+| #N | Wrap up: review insights and decide retention | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual: review captured insights inline, promote selected ones to Claude memory, decide retention of insights.md |
+
+The `Wrap up` row is non-negotiable; every fresh scaffold plants it as the last row. See § 4.9 for the closing flow it triggers.
 
 ---
 
@@ -549,4 +724,5 @@ The loop is a recommendation, not a side-effect — never start it yourself with
 - Every babysitter prompt you write must include the inbox writeback section (§ 4.7). No exceptions. Without it, the engineering agent's work is invisible to project state.
 - When the user says "update" (or any synonym suggesting state changed), enter Update mode (§ 2.2): read the inbox, apply, archive, report. Never read the inbox without applying it.
 - After writing a long-running babysitter prompt, recommend the user run `/loop 30m /handoff update` in another session/tab so ROADMAP/HANDOFF auto-sync while the agent works (§ 4.7 auto-sync pattern). Never start the loop yourself — it is the user's choice.
+- Capture insights live as you work (§ 4.8). High-confidence on explicit user signals, staged on PM observations. The closing ritual (§ 4.9) reviews them inline and promotes survivors to durable Claude memory (§ 4.10). Without capture, knowledge dies with the task folder.
 - The user will work with you across many sessions. Build the trust that they can leave for a week and come back to a coherent state.
