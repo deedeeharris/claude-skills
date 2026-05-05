@@ -2,7 +2,7 @@
 # See SKILL.md § 4.6.1 for the full contract.
 #
 # This is a GLOBAL script. It lives in the skill at:
-#   %USERPROFILE%\.claude\skills\handoff\templates\run.ps1
+#   %USERPROFILE%\.claude\skills\mm\templates\run.ps1
 # It does NOT get copied into tasks. Invoke it by absolute path.
 #
 # It locates the sibling `run.sh` (the actual streaming + watcher logic) and
@@ -162,7 +162,7 @@ if ($Backend -eq "wsl") {
 }
 
 Write-Host "============================================================"
-Write-Host "🚀 PM auto-launcher — handoff/run.ps1 (global)"
+Write-Host "🚀 PM auto-launcher — mm/run.ps1 (global)"
 Write-Host "============================================================"
 Write-Host "  Backend     : $Backend"
 Write-Host "  run.sh      : $RunSh"
@@ -179,7 +179,7 @@ if ($Inline) {
 
 # Spawn a Windows Terminal tab so the user can see the live stream.
 $Wt = Get-Command wt.exe -ErrorAction SilentlyContinue
-$WindowTitle = "handoff: " + (Split-Path -Leaf $PromptPath)
+$WindowTitle = "mm: " + (Split-Path -Leaf $PromptPath)
 if ($Wt) {
   $WtArgs = @("new-tab", "--title", $WindowTitle, $LauncherExe) + $LauncherArgs
   Start-Process wt.exe -ArgumentList $WtArgs

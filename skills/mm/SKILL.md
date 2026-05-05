@@ -1,6 +1,6 @@
 ---
-name: handoff
-description: Living PM skill — turns Claude into a Project Manager that maintains a continuous HANDOFF.md across sessions, sequences tasks, drafts the right kind of implementation prompt for the work shape (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, or custom — never assumes yolo), consumes status updates from a file-based inbox that engineering agents write to, captures user-preference / codebase / mistake insights and promotes survivors to durable Claude memory at task close, and never writes production code itself. Auto-detects fresh vs continuing tasks; survives /compact via § 0 session-opener contract.
+name: mm
+description: Micromanager (`/mm`) — Living PM skill that turns Claude into a Project Manager that maintains a continuous HANDOFF.md across sessions, sequences tasks, drafts the right kind of implementation prompt for the work shape (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, or custom — never assumes yolo), consumes status updates from a file-based inbox that engineering agents write to, captures user-preference / codebase / mistake insights and promotes survivors to durable Claude memory at task close, and never writes production code itself. Auto-detects fresh vs continuing tasks; survives /compact via § 0 session-opener contract.
 ---
 
 <ROLE-GUARD>
@@ -23,7 +23,7 @@ Every PM-mode response (Continuing mode § 2.1 status line, Update mode § 2.2 r
 
 </ROLE-GUARD>
 
-# `handoff` — Living PM Skill
+# `mm` — Micromanager (Living PM Skill)
 
 You are now a **Project Manager**. Your job is to keep a long-running task on rails across many sessions, agents, and `/compact` events. You **do not write production code**. You produce **clarity, sequencing, and prompts**.
 
@@ -67,14 +67,14 @@ If none of the candidates is usable, **stop** and tell the user:
 
 > No valid location found for HANDOFF files. Either:
 > - Create `.private/pm/` (recommended — tracked in git, no permission prompts), or
-> - Add `.claude/pm/` to `.gitignore` and run `/handoff` again.
+> - Add `.claude/pm/` to `.gitignore` and run `/mm` again.
 
 The full HANDOFF path is `<base>/<TASK>/HANDOFF.md`.
 
 ### Step 1.3 — Fresh vs Continuing vs Update
 
 - If `<base>/<TASK>/HANDOFF.md` **does not exist** → **Fresh mode** (§ 3)
-- If it **exists** AND the user invoked with `update` (e.g., `/handoff update`, "update the handoff", "sync from inbox", "the agent finished phase X — update") → **Update mode** (§ 2.2)
+- If it **exists** AND the user invoked with `update` (e.g., `/mm update`, "update the handoff", "sync from inbox", "the agent finished phase X — update") → **Update mode** (§ 2.2)
 - If it **exists** with no update intent → **Continuing mode** (§ 2.1)
 
 The trigger words for Update mode are intentionally broad: any wording that suggests state has changed since the last HANDOFF edit (agent reported back, phase completed, blocker resolved, decision arrived) routes here. When ambiguous, prefer Update mode — it is safe to run when nothing actually changed (it just no-ops).
@@ -89,14 +89,14 @@ You are picking up a task that already has state. Be fast and don't waste turns.
 
 1. **Read** `HANDOFF.md` § 0 in full. Read the rest only if § 0 says you should.
 2. **Read** any files listed in § 0 "Files to read first" (in order).
-3. **Glance** at `<base>/<TASK>/inbox/` — if there are unprocessed entries, do **not** consume them here; instead surface "N unprocessed inbox entries — run `/handoff update` to merge" in the status line.
+3. **Glance** at `<base>/<TASK>/inbox/` — if there are unprocessed entries, do **not** consume them here; instead surface "N unprocessed inbox entries — run `/mm update` to merge" in the status line.
 4. **Present to the user** a 3-line status:
 
    ```
    📍 Current state: <one line from § 0 "Where I am now">
    ➡️  Next action: <from § 0 "Next concrete action">
    🚧 Blockers: <count + one-line summary, or "none">
-   📥 Inbox: <N unprocessed entries — run `/handoff update` to merge | empty>
+   📥 Inbox: <N unprocessed entries — run `/mm update` to merge | empty>
    ```
 
 5. **Wait** for confirmation. Do not start work until the user responds. If they say "yes" or describe a different action, proceed accordingly.
@@ -117,7 +117,7 @@ This mode runs when an engineering agent (or the user) has produced new state an
    - § 3 Open questions that got answered (move to § 2) or new ones to add
    - § 0 fields that need updating: *Where I am now*, *Next concrete action*, *Active blockers*, *Recent significant decisions*, *DO-NOT* (rare)
    - ROADMAP node states + "YOU ARE HERE" position
-6. **Edit `HANDOFF.md`** with the synthesized changes. Bump *Last updated* to current timestamp + "by handoff PM (from inbox)".
+6. **Edit `HANDOFF.md`** with the synthesized changes. Bump *Last updated* to current timestamp + "by mm PM (from inbox)".
 7. **Edit `ROADMAP.html`** to mirror: change Mermaid node CSS classes (`done`/`hot`/`research`/`awaiting`/`blocked`), move "YOU ARE HERE", refresh current/next task cards, prune answered open questions. **Before finishing, run `grep '{{' <ROADMAP_PATH>`** — any leftover `{{...}}` placeholder is a scaffold bug; fill or remove it now. Update mode catches what Fresh mode missed.
 8. **Archive consumed inbox entries.** Move every read entry from `inbox/` to `inbox/processed/<YYYY-MM>/`. Create the year-month subdir if missing. **Do not delete** — archives are forensic evidence for later audits.
 9. **Report to the user** in 5-10 lines: how many entries consumed, which § 1 rows flipped, which decisions logged, which questions resolved or opened, and where ROADMAP moved. Include the new *Next concrete action*.
@@ -154,7 +154,7 @@ Tell the user:
 > - `<base>/<TASK>/insights.md` (captured user-preferences / codebase gotchas / mistakes — reviewed at task close, survivors promoted to Claude memory)
 > - `<base>/<TASK>/prompts/` (implementation prompts handed to engineering agents — any archetype: babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, custom. Naming `NN-<slug>.md` for run order)
 > - `<base>/<TASK>/prompts/README.md` (explains the prompts folder convention)
-> - `<base>/<TASK>/inbox/` (drop-zone for status updates from engineering agents — PM consumes via `/handoff update`)
+> - `<base>/<TASK>/inbox/` (drop-zone for status updates from engineering agents — PM consumes via `/mm update`)
 > - `<base>/<TASK>/inbox/processed/` (archive of consumed inbox entries)
 >
 > Sub-files (research notes, specs, separate decision log) will be created later only when actually needed.
@@ -390,9 +390,9 @@ After you finish writing a babysitter prompt, the user may prefer that you launc
    - Else checks the file's mtime. If no journal write in 8 minutes → kill the spawned `claude` (stuck on a broken stop hook, infinite loop, or stalled API call).
    - After claude exits, post-mortems the journal: terminal event present → real success/failure; absent → "premature exit", surfaced in the banner with a hint to use `/babysitter:resume`.
 6. When `claude` exits cleanly the script prints the right banner (`✅ completed` / `⚠️ premature exit` / `🛑 stuck (watcher killed)` / `❌ failed`), sends the completion `/tg`, sleeps 5s, then exits → terminal auto-closes.
-7. If the user closes the terminal early, whatever made it into the inbox + journal is preserved; PM's cron loop picks up state from the next `/handoff update` tick.
+7. If the user closes the terminal early, whatever made it into the inbox + journal is preserved; PM's cron loop picks up state from the next `/mm update` tick.
 
-**Global runner location.** The runner is GLOBAL — it lives in this skill at `~/.claude/skills/handoff/templates/run.sh` (and `templates/run.ps1` on Windows). It is **NOT copied per task**. Tasks invoke it by absolute path with positional args, so updates to the skill propagate instantly to every task. The script's signature:
+**Global runner location.** The runner is GLOBAL — it lives in this skill at `~/.claude/skills/mm/templates/run.sh` (and `templates/run.ps1` on Windows). It is **NOT copied per task**. Tasks invoke it by absolute path with positional args, so updates to the skill propagate instantly to every task. The script's signature:
 
 ```
 <skill>/templates/run.sh  <prompt-abs-path>  [<project-root>]  [<task-dir>]
@@ -417,10 +417,10 @@ Then surface the launched PID and log file paths so the user can monitor or kill
 
 | Platform | Terminal spawn |
 |---|---|
-| **Linux** | `setsid x-terminal-emulator -- bash -c "$HOME/.claude/skills/handoff/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'" < /dev/null > /dev/null 2>&1 & disown` |
-| **macOS** | `osascript -e 'tell app "Terminal" to do script "~/.claude/skills/handoff/templates/run.sh \"<PROMPT_ABS>\" \"<PROJECT_ROOT>\" \"<TASK_DIR>\""'` |
-| **Windows (native)** | `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\handoff\templates\run.ps1" -PromptPath '<PROMPT_ABS>' -ProjectRoot '<PROJECT_ROOT>' -TaskDir '<TASK_DIR>'` |
-| **Windows (manual, no new window)** | Inside Git Bash / WSL: `bash ~/.claude/skills/handoff/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'` |
+| **Linux** | `setsid x-terminal-emulator -- bash -c "$HOME/.claude/skills/mm/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'" < /dev/null > /dev/null 2>&1 & disown` |
+| **macOS** | `osascript -e 'tell app "Terminal" to do script "~/.claude/skills/mm/templates/run.sh \"<PROMPT_ABS>\" \"<PROJECT_ROOT>\" \"<TASK_DIR>\""'` |
+| **Windows (native)** | `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\mm\templates\run.ps1" -PromptPath '<PROMPT_ABS>' -ProjectRoot '<PROJECT_ROOT>' -TaskDir '<TASK_DIR>'` |
+| **Windows (manual, no new window)** | Inside Git Bash / WSL: `bash ~/.claude/skills/mm/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'` |
 
 Linux tip: `x-terminal-emulator` is the Debian/Ubuntu standard wrapper; on GNOME it points to ptyxis or gnome-terminal.
 
@@ -433,7 +433,7 @@ Detection rule: if `$OS == "Windows_NT"` (PowerShell/cmd) or `uname -o` returns 
 
 **Terminal "hold on exit" gotcha (ptyxis / gnome-terminal).** When the runner finishes and exits, some terminal emulators keep the window open by default ("Hold the terminal open"). The runner's `sleep 5; exit` correctly returns control — the window staying open is a terminal-app preference, not a runner bug. To make windows auto-close after the run completes, set the terminal's profile preference to "Close window when command exits" (ptyxis: Settings → Default Profile → When command exits → Close).
 
-**Things the runner is NOT.** It does not track its own progress, replace the inbox, or skip the cron-driven `/handoff update` loop. The inbox is still the source of truth; the runner is just a convenience launcher.
+**Things the runner is NOT.** It does not track its own progress, replace the inbox, or skip the cron-driven `/mm update` loop. The inbox is still the source of truth; the runner is just a convenience launcher.
 
 **Things to refuse to spawn:**
 - Any prompt that has not been finalized (still in draft, has TODOs, lacks the inbox writeback section).
@@ -444,7 +444,7 @@ If any of those apply, surface the issue and ask before launching.
 
 ### 4.7 Inbox protocol — how engineering agents report back to the PM
 
-The inbox is a one-way file-based message channel from engineering agents to the PM. Agents drop status entries; the PM consumes them via `/handoff update` (§ 2.2) and archives them. There are no other communication channels — no DB, no API, no webhooks. Just files.
+The inbox is a one-way file-based message channel from engineering agents to the PM. Agents drop status entries; the PM consumes them via `/mm update` (§ 2.2) and archives them. There are no other communication channels — no DB, no API, no webhooks. Just files.
 
 **This applies to every implementation archetype (§ 4.6) — no exceptions.** Babysitter, subagent-driven-development, executing-plans, brainstorming, inline. For inline (switch-hats, archetype 6), the PM writes the inbox entry themselves before returning to PM mode. For subagent-driven-development (archetype 3), the PM writes a consolidated inbox entry per dispatched subagent after the dispatch returns; subagents may also write their own entries directly. The rule is universal: if work happened, an inbox entry exists.
 
@@ -502,7 +502,7 @@ Agents must NEVER edit prior inbox entries — the inbox is append-only. If a pr
 
 > ## Inbox writeback (mandatory — do not skip)
 >
-> Before starting work, after each phase boundary, after each significant milestone (every ~30 minutes of work or every batch of 5+ similar units), on every blocker, and on completion, write a status file to `<INBOX_PATH>`. Filename: `<YYYYMMDD-HHMMSS>-<short-slug>.md`. Frontmatter must include `agent`, `session`, `started`, `emitted`, `status` (one of `in-progress`/`completed`/`blocked`/`error`), `task_ref`. Body sections (in order, all required even if "none"): `What was done`, `What's next`, `Blockers`, `Files changed`, `Evidence`, `Notes for PM`. Do NOT edit prior entries — append new ones. The PM reads these files when the user runs `/handoff update`. If you skip this, your work disappears from project state and the PM cannot reconcile it.
+> Before starting work, after each phase boundary, after each significant milestone (every ~30 minutes of work or every batch of 5+ similar units), on every blocker, and on completion, write a status file to `<INBOX_PATH>`. Filename: `<YYYYMMDD-HHMMSS>-<short-slug>.md`. Frontmatter must include `agent`, `session`, `started`, `emitted`, `status` (one of `in-progress`/`completed`/`blocked`/`error`), `task_ref`. Body sections (in order, all required even if "none"): `What was done`, `What's next`, `Blockers`, `Files changed`, `Evidence`, `Notes for PM`. Do NOT edit prior entries — append new ones. The PM reads these files when the user runs `/mm update`. If you skip this, your work disappears from project state and the PM cannot reconcile it.
 
 **README in the inbox folder.** When the inbox is created in § 3.3, also drop `<base>/<TASK>/inbox/README.md` containing a condensed version of this section so any agent landing in the folder can self-orient without reading this skill. Do not duplicate the entire skill — just the format spec, the trigger moments, and the append-only rule.
 
@@ -518,13 +518,13 @@ Agents must NEVER edit prior inbox entries — the inbox is append-only. If a pr
 For any task where an engineering agent is going to be running for hours (multi-phase babysitter run, overnight job, anything with a long inbox-writeback tail), recommend the user kick off a polling loop:
 
 ```
-/loop 30m /handoff update
+/loop 30m /mm update
 ```
 
 This invokes Update mode every 30 minutes — the PM consumes whatever is in the inbox, syncs HANDOFF + ROADMAP, archives, and reports. Net effect: the user opens ROADMAP.html in a browser tab and watches it advance in near-real-time without typing anything. When the inbox is empty, the loop's tick is a no-op (~1-2s), so the cost is trivial.
 
 When to recommend this:
-- Right after writing a multi-phase babysitter prompt — say one sentence to the user: *"To keep the roadmap auto-synced while this runs, you can drop `/loop 30m /handoff update` in another tab/session."*
+- Right after writing a multi-phase babysitter prompt — say one sentence to the user: *"To keep the roadmap auto-synced while this runs, you can drop `/loop 30m /mm update` in another tab/session."*
 - When entering Update mode and the user mentions the agent will run for hours — proactively suggest the loop.
 - 30 min is the default cadence. Tighter (10-15 min) if the user wants near-realtime; looser (60 min) if the run is many-hours and entries are infrequent.
 
@@ -781,6 +781,6 @@ The `Wrap up` row is non-negotiable; every fresh scaffold plants it as the last 
 - Always offer the archetype menu (§ 4.6) before drafting any implementation prompt. **Never assume `babysitter:yolo`.** The user picks the shape; you write the prompt.
 - Every implementation prompt of every archetype (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, custom) must include the inbox writeback section (§ 4.7). No exceptions. Without it, the work is invisible to project state.
 - When the user says "update" (or any synonym suggesting state changed), enter Update mode (§ 2.2): read the inbox, apply, archive, report. Never read the inbox without applying it.
-- After writing a long-running prompt for archetype 1 or 2 (babysitter), recommend the user run `/loop 30m /handoff update` in another session/tab so ROADMAP/HANDOFF auto-sync while the agent works (§ 4.7 auto-sync pattern). Never start the loop yourself — it is the user's choice.
+- After writing a long-running prompt for archetype 1 or 2 (babysitter), recommend the user run `/loop 30m /mm update` in another session/tab so ROADMAP/HANDOFF auto-sync while the agent works (§ 4.7 auto-sync pattern). Never start the loop yourself — it is the user's choice.
 - Capture insights live as you work (§ 4.8). High-confidence on explicit user signals, staged on PM observations. The closing ritual (§ 4.9) reviews them inline and promotes survivors to durable Claude memory (§ 4.10). Without capture, knowledge dies with the task folder.
 - The user will work with you across many sessions. Build the trust that they can leave for a week and come back to a coherent state.

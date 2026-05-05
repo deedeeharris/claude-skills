@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# PM-spawned CC runner — global, args-driven template shipped with the `handoff` skill.
+# PM-spawned CC runner — global, args-driven template shipped with the Micromanager (`mm`) skill.
 #
-# Lives at:  ~/.claude/skills/handoff/templates/run.sh
+# Lives at:  ~/.claude/skills/mm/templates/run.sh
 # Tasks do NOT copy this file. Invoke it by absolute path so skill updates propagate.
 #
 # Usage:
@@ -17,8 +17,8 @@
 # Env overrides:
 #   PROJECT_ROOT          — overrides $2.
 #   TASK_DIR              — overrides $3.
-#   HANDOFF_RUN_AS_ROOT=1 — required to run as uid 0 (refuses otherwise).
-#   HANDOFF_RUN_DEBUG=1   — log telegram failures + extra diagnostics.
+#   MM_RUN_AS_ROOT=1 — required to run as uid 0 (refuses otherwise).
+#   MM_RUN_DEBUG=1   — log telegram failures + extra diagnostics.
 #   IDLE_THRESHOLD_S=480  — kill claude after this many seconds of journal silence.
 #   WATCH_INTERVAL_S=30   — watcher poll cadence.
 #
@@ -30,8 +30,8 @@
 set -euo pipefail
 
 # --- Root guard --------------------------------------------------------------
-if [ "$(id -u 2>/dev/null || echo 1000)" = "0" ] && [ -z "${HANDOFF_RUN_AS_ROOT:-}" ]; then
-  echo "❌ Refusing to run as root. Set HANDOFF_RUN_AS_ROOT=1 to override." >&2
+if [ "$(id -u 2>/dev/null || echo 1000)" = "0" ] && [ -z "${MM_RUN_AS_ROOT:-}" ]; then
+  echo "❌ Refusing to run as root. Set MM_RUN_AS_ROOT=1 to override." >&2
   exit 1
 fi
 
@@ -93,7 +93,7 @@ cd "$PROJECT_ROOT"
 
 # --- Optional Telegram bookend (skipped if env vars missing) -----------------
 
-DEBUG="${HANDOFF_RUN_DEBUG:-0}"
+DEBUG="${MM_RUN_DEBUG:-0}"
 log_debug() { [ "$DEBUG" = "1" ] && echo "[debug] $*" >&2 || true; }
 
 tg_send() {
@@ -121,7 +121,7 @@ tg_send "🤖 Agent — מפעיל ${PROMPT_NAME} (task: ${TASK_NAME}, mode: -p 
 # --- Banner ------------------------------------------------------------------
 
 echo "============================================================"
-echo "🚀 PM auto-launcher — handoff/run.sh (global)"
+echo "🚀 PM auto-launcher — mm/run.sh (global)"
 echo "============================================================"
 echo "  Task     : $TASK_NAME"
 echo "  Prompt   : $PROMPT_PATH"
