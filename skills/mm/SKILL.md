@@ -357,6 +357,18 @@ Wait for an explicit pick before drafting. If the user says "you choose" or simi
 
 The prompt should be runnable on its own — the engineering agent shouldn't need to read your scrollback to do the work.
 
+**After writing any prompt — always surface the full path.** Once you save the prompt file, output its absolute path on its own line so the user can copy it without hunting:
+
+```
+📄 Prompt ready: `<absolute_path_to_prompt>`
+```
+
+For archetypes that run in a separate `claude` session (babysitter, executing-plans), follow immediately with one of:
+- "Paste that path into a new `claude` session to run it." (canonical flow)
+- "Want me to launch it with the runner?" (opt-in shortcut — see § 4.6.1)
+
+Without this, the user must navigate to the task folder to find the file, which breaks the "copy-paste to a fresh session" flow.
+
 ### 4.6.1 Optional: PM-spawned CC runner — for babysitter archetypes only (opt-in, never automatic)
 
 🚨 **HARD RULE (babysitter archetypes 1 & 2 only) — never execute a babysitter prompt inside the PM session.** Not inline (your own Bash tool), not via the Agent tool / subagent dispatch, not via `Skill` invocation. This rule is **scoped to babysitter archetypes** (§ 4.6 archetypes 1 and 2): the babysitter framework deliberately runs in a separate `claude` subprocess so the PM session stays free of implementation context, and that contract is what the inbox/cron architecture is built around. The ONLY allowed execution path for a babysitter prompt is a **separate `claude` CLI subprocess** launched outside the PM session, either by the user manually pasting into a fresh `claude` session or by the PM spawning it via the runner described in this section.
@@ -780,6 +792,7 @@ The `Wrap up` row is non-negotiable; every fresh scaffold plants it as the last 
 - Citations are not optional. A claim without a source is a hypothesis, not a finding.
 - Always offer the archetype menu (§ 4.6) before drafting any implementation prompt. **Never assume `babysitter:yolo`.** The user picks the shape; you write the prompt.
 - Every implementation prompt of every archetype (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, custom) must include the inbox writeback section (§ 4.7). No exceptions. Without it, the work is invisible to project state.
+- After writing any prompt, output its full absolute path (`📄 Prompt ready: \`<path>\``). For archetypes that run in a separate session, follow with "Paste that path into a new `claude` session to run it." or offer the runner (§ 4.6.1). Without the path, the user has to hunt for the file before they can run it.
 - When the user says "update" (or any synonym suggesting state changed), enter Update mode (§ 2.2): read the inbox, apply, archive, report. Never read the inbox without applying it.
 - After writing a long-running prompt for archetype 1 or 2 (babysitter), recommend the user run `/loop 30m /mm update` in another session/tab so ROADMAP/HANDOFF auto-sync while the agent works (§ 4.7 auto-sync pattern). Never start the loop yourself — it is the user's choice.
 - Capture insights live as you work (§ 4.8). High-confidence on explicit user signals, staged on PM observations. The closing ritual (§ 4.9) reviews them inline and promotes survivors to durable Claude memory (§ 4.10). Without capture, knowledge dies with the task folder.
