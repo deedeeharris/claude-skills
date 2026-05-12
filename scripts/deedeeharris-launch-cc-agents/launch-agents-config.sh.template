@@ -1,0 +1,16 @@
+# CLAUDE AGENTS CONFIG TEMPLATE
+# Copy this to launch-agents-config.sh and edit, OR just run launch-agents.bat
+# and use [+] to add agents from the menu.
+#
+# Each agent needs the same index in all 3 arrays:
+#   NAMES   = label shown in the menu and in Claude Code agents view
+#   PATHS   = working directory (use forward slashes on all platforms)
+#   PROMPTS = slash command or plain text to start the session with
+#
+# Example:
+# declare -a NAMES=([0]="My PM" [1]="My Dev")
+# declare -a PATHS=([0]="/path/to/project" [1]="/path/to/project")
+# declare -a PROMPTS=([0]="/mm enter pm mode" [1]="Enter dev mode and wait for instructions")
+declare -a NAMES=()
+declare -a PATHS=()
+declare -a PROMPTS=()
