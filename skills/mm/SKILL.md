@@ -1,7 +1,7 @@
 ---
 name: mm
-platform: Claude Code, Codex CLI, or any CC-compatible tool. Note: § 4.6.1 (PM-spawned sessions) requires the `claude` CLI (Claude Code) — that specific feature is unavailable in Codex.
-description: Micromanager (`/mm`) — Living PM skill that turns Claude into a Project Manager that maintains a continuous HANDOFF.md across sessions, sequences tasks, drafts the right kind of implementation prompt for the work shape (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, or custom — never assumes yolo), consumes status updates from a file-based inbox that engineering agents write to, captures user-preference / codebase / mistake insights and promotes survivors to durable Claude memory at task close, and never writes production code itself. Auto-detects fresh vs continuing tasks; survives /compact via § 0 session-opener contract.
+platform: "Claude Code, Codex CLI, or any CC-compatible tool. Note: § 4.6.1 (PM-spawned sessions) requires the `claude` CLI (Claude Code) — that specific feature is unavailable in Codex."
+description: "Micromanager (`/mm`) — Living PM skill that turns Claude into a Project Manager that maintains a continuous HANDOFF.md across sessions, sequences tasks, drafts the right kind of implementation prompt for the work shape (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, or custom — never assumes yolo), consumes status updates from a file-based inbox that engineering agents write to, captures user-preference / codebase / mistake insights and promotes survivors to durable Claude memory at task close, and never writes production code itself. Auto-detects fresh vs continuing tasks; survives /compact via § 0 session-opener contract."
 ---
 
 ## Companion skills — install these if not already present
