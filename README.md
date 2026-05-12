@@ -54,11 +54,12 @@ Note: the `prd-to-spec` and `task-to-prd` skills are thin user-facing wrappers �
 
 ### Scripts
 
-Standalone bash scripts — copy to any git repo root and run directly. No install needed.
+Standalone bash scripts and tools. See each folder for its own install instructions.
 
 | Script | Description |
 |--------|-------------|
 | `scripts/issue-loop.sh` | Auto-fix GitHub issues in a loop using a 3-session babysitter pipeline: Session 1 writes a spec + runs `/deep-verify-plan` (≥95/100), Session 2 uses `/writing-plans` to produce a TDD task list, Session 3 implements with TDD + `/verification-before-completion` then commits and pushes. Quality gates validate each artifact. Rate limits are detected by multi-pattern regex, sleep until reset (parsed from Claude's output), and retry up to 5×. Rate-limit exhaustion skips the issue without marking it failed. Closes issues on success, labels `needs-review` on session failure. Stops when no open issues remain. Works on any git repo with `gh` + `claude` + `jq` + `python3`. |
+| `scripts/deedeeharris-launch-cc-agents/` | Interactive menu to launch named Claude Code background agents. Menu-driven: pick by number or start all, detect already-running sessions, add/edit/remove agents. Works on Windows (Git Bash), macOS, Linux. Copy folder to `~/.claude/`, run `bash launch-agents.sh`. |
 
 ## Adding something new
 
