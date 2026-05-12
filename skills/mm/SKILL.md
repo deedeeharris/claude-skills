@@ -1,7 +1,20 @@
 ---
 name: mm
+platform: Claude Code, Codex CLI, or any CC-compatible tool. Note: § 4.6.1 (PM-spawned sessions) requires the `claude` CLI (Claude Code) — that specific feature is unavailable in Codex.
 description: Micromanager (`/mm`) — Living PM skill that turns Claude into a Project Manager that maintains a continuous HANDOFF.md across sessions, sequences tasks, drafts the right kind of implementation prompt for the work shape (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, or custom — never assumes yolo), consumes status updates from a file-based inbox that engineering agents write to, captures user-preference / codebase / mistake insights and promotes survivors to durable Claude memory at task close, and never writes production code itself. Auto-detects fresh vs continuing tasks; survives /compact via § 0 session-opener contract.
 ---
+
+## Companion skills — install these if not already present
+
+The mm skill coordinates work across three external skills. If any are missing, tell the user and give the install source.
+
+| Skill | Slash command | Platform | Install / source |
+|---|---|---|---|
+| **Babysitter** (a5c SDK) | `/babysitter:yolo`, `/babysitter` | Claude Code only | Install via a5c SDK: `npx a5c install babysitter` — or see https://github.com/a5c-ai/babysitter |
+| **Superpowers** | `/superpowers:subagent-driven-development`, `/superpowers:executing-plans`, `/superpowers:brainstorming` | Claude Code | See https://github.com/a5c-ai/superpowers |
+| **Codex CLI** | `/codex-cli` | Claude Code (dispatches to OpenAI Codex) | https://github.com/deedeeharris/claude-skills/blob/main/skills/codex-cli/SKILL.md |
+
+If a required skill is not installed, do NOT attempt to spawn a session using it. Tell the user which skill is missing, give the install source above, and offer the manual fallback (paste prompt into fresh session, or run codex manually).
 
 <ROLE-GUARD>
 
@@ -179,7 +192,7 @@ Wait for explicit "yes". Do not create files until approved.
 
    ## Archetypes (PM offers this menu before drafting)
 
-   1. `babysitter:yolo` — separate `claude` session, fully autonomous, runner-launchable
+   1. `babysitter:yolo` — separate `claude` session, fully autonomous, PM-spawnable via `--bg`
    2. `babysitter` (with breakpoints) — separate session, human checkpoints
    3. `superpowers:subagent-driven-development` — same session, parallel `Task()` subagents
    4. `superpowers:executing-plans` — separate session, per-step review checkpoints
@@ -204,7 +217,7 @@ Wait for explicit "yes". Do not create files until approved.
 4. Create `<base>/<TASK>/inbox/` and `<base>/<TASK>/inbox/processed/` directories. Drop a `<base>/<TASK>/inbox/README.md` with the inbox contract (see § 4.7) so any engineering agent landing on the folder knows the format without reading this skill.
 5. Create `<base>/<TASK>/insights.md` from the template at `templates/insights.md` — three empty H2 sections (`User preferences`, `Codebase`, `Mistakes`) ready for capture during the task. See § 4.8 for capture rules.
 6. **Plant the closing wrap-up row** as the last row in HANDOFF's § 1 Status table: `Wrap up: review insights and decide retention | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual: review captured insights inline, promote selected ones to Claude memory, decide retention of insights.md`. This is the trigger that fires the closing flow at task end (§ 4.9). It is non-negotiable: every fresh scaffold MUST include this row.
-7. **Do NOT copy the runner scripts into the task folder.** The runners (`templates/run.sh` and `templates/run.ps1`) are global — they live in the skill and are invoked by absolute path with the prompt + project root + task dir passed as arguments. This way every task immediately picks up runner improvements without per-task migration. See § 4.6.1 for the exact invocation pattern.
+7. **No runner files needed — the PM spawns agents directly** via `claude --bg` (§ 4.6.1). Task folders are runner-free.
 8. Pre-fill what you know from § 3.1 (goal in § 1 Context, stakeholders in § 3 Open questions, etc.).
 
 After creation, switch to operational mode (§ 4).
@@ -272,13 +285,13 @@ Every decision recorded in § 2 Decisions log MUST include:
 Example:
 
 ```
-Q11: Can the daily delivery cron move earlier than the deadline?
+Q11: Can the background job run more frequently than once per hour?
 - Status: FINAL
 - Source: Chat message from Product Lead, 2026-04-30 02:14
 - Date: 2026-04-30
 - Who: Product Lead
-- Decision: "Earlier is acceptable if it resolves the schedule collision."
-- Why: Delivery deadline is fixed, but earlier is OK if it unblocks us.
+- Decision: "More frequent runs are fine if it resolves the queue buildup."
+- Why: Processing SLA is fixed, but higher frequency is OK if it unblocks downstream consumers.
 ```
 
 If a stakeholder rejects a proposal, status is `REJECTED`. If they redirect to a different approach, also add a `REDIRECT` line pointing to the new direction.
@@ -320,7 +333,7 @@ When an item is ready for execution, **never assume `babysitter:yolo`**. Differe
 
 > Ready to draft a prompt for `<item>`. Which archetype?
 >
-> 1. **`babysitter:yolo`** — separate `claude` session, fully autonomous, runner-launchable. Multi-phase implementation that runs unattended.
+> 1. **`babysitter:yolo`** — separate `claude` session, fully autonomous, PM-spawnable via `--bg`. Multi-phase implementation that runs unattended.
 > 2. **`babysitter` (with breakpoints)** — separate session, human checkpoints at key moments. Destructive ops or unclear scope.
 > 3. **`superpowers:subagent-driven-development`** — runs in *this* session, dispatches parallel `Task()` subagents. Independent chunks within one conversation.
 > 4. **`superpowers:executing-plans`** — separate session with per-step review checkpoints. Plan-driven work where you want to review each step.
@@ -332,14 +345,14 @@ Wait for an explicit pick before drafting. If the user says "you choose" or simi
 
 **Per-archetype rules:**
 
-| # | Archetype | Where it runs | Runner applies (§ 4.6.1) | Inbox writeback |
-|---|-----------|---------------|--------------------------|------------------|
-| 1 | `babysitter:yolo` | Separate `claude` subprocess | Yes | Mandatory — agent drops entries at every trigger moment |
-| 2 | `babysitter` w/ breakpoints | Separate `claude` subprocess | Yes | Mandatory — agent drops entries at every trigger moment |
-| 3 | `superpowers:subagent-driven-development` | Same PM session, via `Task()` subagents | No (the hard rule does not apply — this is the intended in-session path) | Mandatory — PM writes a consolidated inbox entry per dispatched subagent after the session returns; subagents may also write their own entries directly |
-| 4 | `superpowers:executing-plans` | Separate `claude` session | No | Mandatory — agent drops one entry per plan step + a final completion entry |
-| 5 | `superpowers:brainstorming` | Same PM session (short) or separate (longer dialogue) | No | Mandatory — write one entry capturing the brainstorm output (decisions, open questions, recommended archetype for the next item) |
-| 6 | Inline (switch hats) | Same PM session, PM implements | No | Mandatory — PM writes the inbox entry themselves before returning to PM mode |
+| # | Archetype | Where it runs | PM can spawn (§ 4.6.1) | Inbox writeback |
+|---|-----------|---------------|------------------------|------------------|
+| 1 | `babysitter:yolo` | Separate `claude` session | Yes (opt-in) | Mandatory — agent drops entries at every trigger moment |
+| 2 | `babysitter` w/ breakpoints | Separate `claude` session | Yes (opt-in) | Mandatory — agent drops entries at every trigger moment |
+| 3 | `superpowers:subagent-driven-development` | Same PM session, via `Task()` subagents | No — runs in-session | Mandatory — PM writes a consolidated inbox entry per dispatched subagent after the session returns; subagents may also write their own entries directly |
+| 4 | `superpowers:executing-plans` | Separate `claude` session | Yes (opt-in) | Mandatory — agent drops one entry per plan step + a final completion entry |
+| 5 | `superpowers:brainstorming` | Same PM session (short) or separate (longer dialogue) | Yes if separate (opt-in) | Mandatory — write one entry capturing the brainstorm output (decisions, open questions, recommended archetype for the next item) |
+| 6 | Inline (switch hats) | Same PM session, PM implements | No — runs in-session | Mandatory — PM writes the inbox entry themselves before returning to PM mode |
 | 7 | Custom | User-described | Case by case | Mandatory — always |
 
 **Cross-cutting rule (no exceptions):** every prompt of every archetype must include the inbox writeback section (§ 4.7). Without it, work disappears from project state and HANDOFF/ROADMAP go stale. The PM is responsible for verifying this section is present before declaring the prompt ready.
@@ -353,9 +366,12 @@ Wait for an explicit pick before drafting. If the user says "you choose" or simi
 - Cites **prior context** the agent must read before coding (HANDOFF section, research note, PR, etc.)
 - Specifies **verification** — how to confirm it worked
 - Marks **BREAKPOINT** moments where the agent must pause and report back (most relevant for archetypes 2 and 4)
+- **Includes post-step review/audit hooks** — after each major implementation step, instruct the agent to run a code review or dispatch an audit to Codex CLI (`/codex-cli` — § 4.6.2) before proceeding to the next step. Don't wait until the end.
 - **Includes the inbox writeback section** verbatim (§ 4.7)
 
 The prompt should be runnable on its own — the engineering agent shouldn't need to read your scrollback to do the work.
+
+**Before handing off any prompt — consider a codex-cli audit.** After writing a non-trivial implementation prompt, offer to dispatch it to `/codex-cli` for a review pass before the engineering agent runs it. The audit catches ambiguities, missing guards, and stale line references while the cost of fixing is still zero. Use § 4.6.2 — give codex the full path to the prompt file, tell it to save findings to `audits/codex/` and drop an inbox entry when done.
 
 **After writing any prompt — always surface the full path.** Once you save the prompt file, output its absolute path on its own line so the user can copy it without hunting:
 
@@ -365,94 +381,131 @@ The prompt should be runnable on its own — the engineering agent shouldn't nee
 
 For archetypes that run in a separate `claude` session (babysitter, executing-plans), follow immediately with one of:
 - "Paste that path into a new `claude` session to run it." (canonical flow)
-- "Want me to launch it with the runner?" (opt-in shortcut — see § 4.6.1)
+- "Want me to spawn it as a background session?" (opt-in shortcut — see § 4.6.1)
 
 Without this, the user must navigate to the task folder to find the file, which breaks the "copy-paste to a fresh session" flow.
 
-### 4.6.1 Optional: PM-spawned CC runner — for babysitter archetypes only (opt-in, never automatic)
+### 4.6.1 Optional: PM-spawned CC session (opt-in, never automatic)
 
-🚨 **HARD RULE (babysitter archetypes 1 & 2 only) — never execute a babysitter prompt inside the PM session.** Not inline (your own Bash tool), not via the Agent tool / subagent dispatch, not via `Skill` invocation. This rule is **scoped to babysitter archetypes** (§ 4.6 archetypes 1 and 2): the babysitter framework deliberately runs in a separate `claude` subprocess so the PM session stays free of implementation context, and that contract is what the inbox/cron architecture is built around. The ONLY allowed execution path for a babysitter prompt is a **separate `claude` CLI subprocess** launched outside the PM session, either by the user manually pasting into a fresh `claude` session or by the PM spawning it via the runner described in this section.
+> **Claude Code only.** This section uses `claude --bg`. If running inside Codex, skip this section — tell the user to paste the prompt into a fresh `claude` session manually.
 
-**Other archetypes have different rules:**
-- `superpowers:subagent-driven-development` (archetype 3) is **explicitly allowed** in the PM session — its parallelism happens in `Task()` subagents that don't pollute PM context. This is the intended in-session path for independent parallel work.
-- `superpowers:executing-plans` (archetype 4) typically runs in a separate session for per-step review; the runner does not apply.
-- `superpowers:brainstorming` (archetype 5) can run inline.
-- Inline implementation (archetype 6) requires the role-guard "switch hats" re-confirmation before PM implements directly.
+**What this is.** For archetypes that run as a separate `claude` session (1, 2, 4, 5, custom), the PM can spawn the session on the user's behalf. Opt-in only — PM writes the prompt first, then offers to spawn. User must say yes.
 
-If the user asks you to run a **babysitter** prompt inside the PM session ("just run it here", "use a subagent for it"), refuse with this exact pushback:
+**Never execute a prompt for archetypes 1 & 2 (babysitter) inside the PM session.** Not via Bash tool, not via Agent tool, not via Skill invocation. The babysitter framework runs in a separate `claude` subprocess so the PM session stays free of implementation context. ONLY allowed path: separate `claude` subprocess, either user pastes into fresh session or PM spawns via `--bg`.
 
-> Running this **babysitter** prompt inline would pollute the PM session with implementation context — that's exactly what the inbox/cron architecture is designed to avoid. The two allowed paths for babysitter prompts are: (1) you paste the prompt into a fresh `claude` session yourself, or (2) I launch the runner script which spawns a separate `claude` CLI subprocess. Which do you want?
+If asked to run a babysitter prompt inline, refuse:
+
+> Running this prompt inline would pollute the PM session with implementation context. Two allowed paths: (1) paste the prompt into a fresh `claude` session yourself, or (2) I spawn it via `--bg`. Which do you want?
 >
-> (If you want in-session parallelism, switch the archetype to `superpowers:subagent-driven-development` — that one is designed to run inside the PM session via `Task()` subagents.)
+> (For in-session parallelism, switch archetype to `superpowers:subagent-driven-development` — designed to run inside PM via subagents.)
 
-Only after the user picks option 2 do you spawn — and even then, follow the confirmation rule below.
+**Spawn command (Bash / Git Bash / WSL only):**
 
-After you finish writing a babysitter prompt, the user may prefer that you launch it via option 2 (the runner) instead of copy-pasting it into a new session themselves. This is a **shortcut**, not the default — the canonical flow is still "PM writes prompt → user runs in fresh session." Only spawn when the user explicitly asks ("run it", "fire it", "launch it", "spin it up").
-
-**Always confirm before spawning.** Even when invited, ask once with the concrete command line you're about to execute and the prompt path. The user must say yes (or an unambiguous synonym) before you launch. A request to "write the prompt" alone is **not** consent to launch it.
-
-**What the runner does:**
-1. Opens a new terminal window (headed) so progress is visible.
-2. Runs `claude -p --dangerously-skip-permissions --output-format stream-json --include-partial-messages --verbose "/babysitter:yolo <prompt>"`.
-3. Pipes the JSON stream through `jq` to render readable live output (text deltas + tool calls + tool results), AND tees both raw JSONL and pretty text to `<TASK>/runs/<timestamp>-<prompt-slug>.{jsonl,log}`.
-4. Sends Telegram bookend messages prefixed `🤖 Agent —` (kickoff + completion) so the user can distinguish PM updates (`🎩 PM —`) from spawned-agent updates in the same chat.
-5. **Liveness watcher (background subshell, in-script).** The runner is its own lifeguard for the spawned `claude`. Every 30s it polls the babysitter run dir on disk:
-   - Locates `<repo>/.a5c/runs/<runId>/` created after launch.
-   - Reads the newest `journal/NNNNNN.<ulid>.json` entry. If its `"type"` is `RUN_COMPLETED` / `RUN_FAILED` / `RUN_FATAL` → done, let claude exit naturally.
-   - Else checks the file's mtime. If no journal write in 8 minutes → kill the spawned `claude` (stuck on a broken stop hook, infinite loop, or stalled API call).
-   - After claude exits, post-mortems the journal: terminal event present → real success/failure; absent → "premature exit", surfaced in the banner with a hint to use `/babysitter:resume`.
-6. When `claude` exits cleanly the script prints the right banner (`✅ completed` / `⚠️ premature exit` / `🛑 stuck (watcher killed)` / `❌ failed`), sends the completion `/tg`, sleeps 5s, then exits → terminal auto-closes.
-7. If the user closes the terminal early, whatever made it into the inbox + journal is preserved; PM's cron loop picks up state from the next `/mm update` tick.
-
-**Global runner location.** The runner is GLOBAL — it lives in this skill at `~/.claude/skills/mm/templates/run.sh` (and `templates/run.ps1` on Windows). It is **NOT copied per task**. Tasks invoke it by absolute path with positional args, so updates to the skill propagate instantly to every task. The script's signature:
-
-```
-<skill>/templates/run.sh  <prompt-abs-path>  [<project-root>]  [<task-dir>]
+```bash
+(cd "<project-root>" && claude --dangerously-skip-permissions --bg \
+  --name "<session-name>" \
+  "/<skill-prefix> <abs-prompt-path>" &>/dev/null &)
 ```
 
-- `<prompt-abs-path>` (required): absolute path to the babysitter prompt `.md`.
-- `<project-root>` (optional): repo root the agent should `cd` into. Default: `git rev-parse --show-toplevel` from the prompt's task dir, fallback to task dir.
-- `<task-dir>` (optional): PM task folder where `HANDOFF.md` / `inbox/` / `runs/` live. Default: grand-parent of the prompt (per skill convention `<TASK>/prompts/<file>.md`).
-- `PROJECT_ROOT` and `TASK_DIR` env vars override positional args.
+On Windows PowerShell, open Git Bash or WSL and run the command there — `&>/dev/null &` is Bash syntax and won't work in native PowerShell.
 
-If you only need to override the third arg, pass an empty string for the second: `run.sh /abs/prompt.md '' /abs/task-dir`.
+- `<skill-prefix>`: the slash command for the archetype — e.g., `babysitter:yolo`, `superpowers:executing-plans`
+- `<abs-prompt-path>`: absolute path to the prompt `.md` file
+
+**Session name format:** `<folder-name> | Agent | <task-name>`
+- `<folder-name>` = `basename` of project root, original casing (e.g. `my_project`)
+- `<task-name>` = PM task name (e.g. `my-feature`)
+- Example: `my_project | Agent | my-feature`
+
+**Skill availability check (required before offering to spawn):**
+1. `ls ~/.claude/skills/` — each folder `<name>` maps to slash command `/<name>`
+2. `ls ~/.claude/plugins/cache/` — plugins (e.g., `a5c-ai/babysitter` → `/babysitter:yolo`)
+3. `ls ~/.claude/commands/` — user-level commands
+
+If the required skill/plugin is NOT installed: "Skill `/<name>` not found on this system — can't spawn. Install it first." Do NOT attempt to spawn.
+
+**Always confirm before spawning.** Show the exact command + prompt path, wait for explicit yes. "Write the prompt" alone is not consent to spawn.
+
+**Duplicate check.** Tell the user: "Make sure no agent is already running for this task — open the Claude Agents panel or run `claude --resume` to see active sessions."
+
+**After spawning.** Agent runs silently in background. Progress arrives via inbox (`/mm update`). To manage the session: open the Claude Agents panel, or run `claude --resume` to see and resume named sessions.
 
 **The exact phrasing to use when offering to spawn (after writing a prompt):**
 
-> Want me to launch this with the runner now? It spawns a new terminal window and starts the agent on the prompt. You'll see the live stream; it auto-closes when the agent finishes. Inbox + Telegram updates flow as usual.
+> Want me to spawn this in a background `claude` session now? It runs silently — progress comes back via inbox. Session name: `<session-name>`.
 
-Wait for an explicit yes. If yes, use the platform-appropriate command from the table below — always with the **absolute** prompt path, not a per-task wrapper.
+Wait for explicit yes before spawning.
 
-Then surface the launched PID and log file paths so the user can monitor or kill if needed.
+**When NOT to spawn:**
+- Archetypes 3 and 6 run inside PM session — spawning defeats their purpose
+- Prompt not finalized (TODOs, missing inbox writeback section)
+- Prompt touches production infra without explicit authorization
+- Required skill not installed
+- A session for this task is already running
 
-**Platform notes (use the absolute path to the global runner — never a per-task copy).**
+### 4.6.2 Dispatching to Codex CLI (OpenAI agent sessions)
 
-| Platform | Terminal spawn |
-|---|---|
-| **Linux** | `setsid x-terminal-emulator -- bash -c "$HOME/.claude/skills/mm/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'" < /dev/null > /dev/null 2>&1 & disown` |
-| **macOS** | `osascript -e 'tell app "Terminal" to do script "~/.claude/skills/mm/templates/run.sh \"<PROMPT_ABS>\" \"<PROJECT_ROOT>\" \"<TASK_DIR>\""'` |
-| **Windows (native)** | `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\mm\templates\run.ps1" -PromptPath '<PROMPT_ABS>' -ProjectRoot '<PROJECT_ROOT>' -TaskDir '<TASK_DIR>'` |
-| **Windows (manual, no new window)** | Inside Git Bash / WSL: `bash ~/.claude/skills/mm/templates/run.sh '<PROMPT_ABS>' '<PROJECT_ROOT>' '<TASK_DIR>'` |
+**What this is.** The PM can delegate research, audits, or implementation tasks to Codex CLI — OpenAI's autonomous coding agent. Codex runs in its own session (separate from any Claude Code session), writes its output to a file, and reports back via the PM inbox.
 
-Linux tip: `x-terminal-emulator` is the Debian/Ubuntu standard wrapper; on GNOME it points to ptyxis or gnome-terminal.
+**Skill:** `/codex-cli` — install/update at: https://github.com/deedeeharris/claude-skills/blob/main/skills/codex-cli/SKILL.md
 
-Detection rule: if `$OS == "Windows_NT"` (PowerShell/cmd) or `uname -o` returns `Msys`/`Cygwin`, the user is on Windows — use `run.ps1`. Otherwise check `uname -s` for `Darwin` (macOS) vs `Linux`. If you can't detect reliably, ask the user which OS they're on before spawning. Don't guess — a wrong launch line will leave a zombie shell or do nothing visible.
+**Two session types — choose based on the work:**
 
-**Dependencies the user must have installed (before any spawn):**
-- `claude` CLI (CC v2.1.51+ recommended — earlier versions don't support `--include-partial-messages` reliably). If `claude` isn't on the spawned shell's PATH (common when ptyxis/gnome-terminal don't source `~/.bashrc`), set `CLAUDE_BIN=/abs/path/to/claude` before launching, or rely on the runner's auto-detection of `~/.npm-global/bin/claude`, `/usr/local/bin/claude`, and `/opt/homebrew/bin/claude`.
-- `jq` (any version)
-- On Windows: WSL **or** Git Bash, plus Windows Terminal (`wt.exe`) for the spawned-tab variant
+| | Claude Code session | Codex CLI session |
+|---|---|---|
+| **Agent** | Claude (Anthropic) | OpenAI Codex |
+| **Spawn** | `claude --bg` (§ 4.6.1) | `codex exec` via `/codex` skill |
+| **Tools** | Read, Edit, Bash, Agent, Skill, etc. | File read/write, shell commands |
+| **Skills** | Native — invoke by name or full path | Pass skill file path inside the prompt (see below) |
+| **Best for** | Multi-phase impl, babysitter archetypes, anything needing CC tool ecosystem | Audits, codebase analysis, targeted refactors, one-shot research, second opinion |
+| **Cost** | Claude Code tokens | OpenAI API credits |
 
-**Terminal "hold on exit" gotcha (ptyxis / gnome-terminal).** When the runner finishes and exits, some terminal emulators keep the window open by default ("Hold the terminal open"). The runner's `sleep 5; exit` correctly returns control — the window staying open is a terminal-app preference, not a runner bug. To make windows auto-close after the run completes, set the terminal's profile preference to "Close window when command exits" (ptyxis: Settings → Default Profile → When command exits → Close).
+**Giving Codex a skill to follow.** Codex can read and follow any skill file — including Claude Code skills. Pass the full absolute path to the `SKILL.md` inside the prompt:
 
-**Things the runner is NOT.** It does not track its own progress, replace the inbox, or skip the cron-driven `/mm update` loop. The inbox is still the source of truth; the runner is just a convenience launcher.
+```
+Follow the instructions in: /abs/path/to/skill/SKILL.md
+```
 
-**Things to refuse to spawn:**
-- Any prompt that has not been finalized (still in draft, has TODOs, lacks the inbox writeback section).
-- Any prompt that touches production infra without explicit user authorization to run autonomously.
-- A second runner for the same task while one is already in flight (check `pgrep -fa "babysitter:yolo <prompt-name>"` first).
+Codex will read the file and apply it. This works for any skill — babysitter audit checklist, codex-cli, custom review templates, etc.
 
-If any of those apply, surface the issue and ask before launching.
+**How to dispatch (mandatory steps):**
+
+1. **Write the prompt to a file first.** Save it to `.codex/prompts/<slug>-<timestamp>.md`. Never pass the prompt content inline — quoting breaks with long prompts.
+
+2. **Tell Codex where to save output.** Two cases:
+   - **Agent writes the file** (audit reports, structured deliverables): include `Write your output to <abs-path>` inside the prompt itself. **Omit `-o`** from the codex command — `-o` overwrites agent-written files with Codex's terminal summary message.
+   - **Codex's last message IS the deliverable** (quick analysis, classification): use `-o <abs-path>` on the command line instead.
+
+3. **For PM inbox writeback** — instruct Codex inside the prompt:
+
+   ```
+   When done, write an inbox entry to:
+   <abs-path-to-task>/inbox/<YYYYMMDD-HHMMSS>-codex-<slug>.md
+
+   Use this format:
+   ---
+   source: codex/<slug>
+   status: completed
+   ---
+   <summary of findings and output file path>
+   ```
+
+   The PM picks this up on the next `/mm update`. Codex must write this file itself — do not use `-o` for it.
+
+4. **Invoke via `/codex-cli`:**
+
+   ```
+   /codex-cli <task description>  (prompt content already in the file you wrote)
+   ```
+
+   Or call the skill directly — it handles writing `.codex/prompts/`, piping via stdin, and running in background.
+
+**Critical `-o` rule (from global CLAUDE.md):** If Codex writes the deliverable file itself, omit `-o`. Using `-o` when the agent also writes a file clobbers the agent's output with a 5-line "I'm done" summary at process exit.
+
+**Default output paths:**
+- Audits → `audits/codex/<slug>-<timestamp>.md`
+- Inbox entries → `<TASK>/inbox/<YYYYMMDD-HHMMSS>-codex-<slug>.md`
+- Prompt files → `.codex/prompts/<slug>-<timestamp>.md`
 
 ### 4.7 Inbox protocol — how engineering agents report back to the PM
 
@@ -554,7 +607,7 @@ Alongside HANDOFF, throughout the task you maintain `<base>/<TASK>/insights.md` 
 **The three sections (H2 in `insights.md`):**
 
 - **`## User preferences`** — signals about how the user wants to collaborate. "Wants binary yes/no over drafts." "Prefers terse responses." "Doesn't want me running tests autonomously." Distinct from project decisions; these are about *how* you work with this person across any task.
-- **`## Codebase`** — knowledge about the codebase a future agent could plausibly trip on without it. The unifying test: *would a future task make a mistake without knowing this?* Examples: an `asset_check` that looks redundant but isn't, a hidden coupling between two schedules, an `ERROR`-severity guard that silently re-introduces broken state when downgraded to `WARNING`.
+- **`## Codebase`** — knowledge about the codebase a future agent could plausibly trip on without it. The unifying test: *would a future task make a mistake without knowing this?* Examples: a validation step that looks redundant but guards a real invariant, a hidden coupling between two subsystems, a status-level guard that silently re-introduces broken state when downgraded.
 - **`## Mistakes`** — both your own mistakes and others' (engineering agents, the user, external stakeholders). What happened, how it was caught, what to do differently. A mistake is the inverse of a codebase insight: the insight you should have had but didn't.
 
 **When you write an entry:**
@@ -572,15 +625,15 @@ Read `~/.claude/projects/<project>/memory/MEMORY.md` (and any project CLAUDE.md)
 ```markdown
 ## Codebase
 
-### Dashboard schedule collides with delivery schedule inside same Cloud Run
+### API rate-limit and batch job share same credentials pool
 
 - Confidence: high
-- Why future-PM cares: bumping memory or moving cron looks unrelated to "long runtime" until you see they share a Cloud Run with `max_instances=1`
+- Why future-PM cares: increasing batch concurrency looks unrelated to "API 429 errors" until you see they share the same quota bucket
 - Promote-to: project
 
 ---
 
-### severity=ERROR on asset_check blocks downstream materialization
+### status=ERROR on validation_check blocks downstream processing
 
 - Confidence: staged
 - Why future-PM cares: downgrading to `WARNING` re-introduces broken state silently
@@ -617,9 +670,9 @@ User preferences (2):
   2. Prefers terse status updates over prose  [high]
 
 Codebase (3):
-  3. Dashboard×delivery Cloud Run schedule collision  [high]
-  4. severity=ERROR blocks downstream materialization  [staged]
-  5. REGEXP_EXTRACT vs REGEXP_MATCH semantics in tests  [staged]
+  3. API rate-limit and batch job share same credentials pool  [high]
+  4. status=ERROR on validation_check blocks downstream processing  [staged]
+  5. LIKE vs ILIKE case-sensitivity difference in search tests  [staged]
 
 Mistakes (2):
   6. Claimed "ROOT CAUSE CONFIRMED" without citation  [high]
@@ -671,7 +724,7 @@ When the user approves an entry for promotion, write directly to the auto-memory
 `~/.claude/projects/<project_dir_slug>/memory/<slug>.md` where:
 
 - `<project_dir_slug>` is the existing slugified project directory under `~/.claude/projects/`. If unsure which slug applies, list the directory and pick the one whose name encodes the current working directory.
-- `<slug>` is derived from the entry heading: lowercase, kebab-case, prefixed by memory type. Examples: `feedback_binary_yes_no_questions.md`, `project_dashboard_cloud_run_collision.md`, `user_terse_status_updates.md`.
+- `<slug>` is derived from the entry heading: lowercase, kebab-case, prefixed by memory type. Examples: `feedback_binary_yes_no_questions.md`, `project_api_rate_limit_credentials_pool.md`, `user_terse_status_updates.md`.
 
 **Step 2: pick the memory type.**
 
@@ -792,8 +845,10 @@ The `Wrap up` row is non-negotiable; every fresh scaffold plants it as the last 
 - Citations are not optional. A claim without a source is a hypothesis, not a finding.
 - Always offer the archetype menu (§ 4.6) before drafting any implementation prompt. **Never assume `babysitter:yolo`.** The user picks the shape; you write the prompt.
 - Every implementation prompt of every archetype (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, custom) must include the inbox writeback section (§ 4.7). No exceptions. Without it, the work is invisible to project state.
-- After writing any prompt, output its full absolute path (`📄 Prompt ready: \`<path>\``). For archetypes that run in a separate session, follow with "Paste that path into a new `claude` session to run it." or offer the runner (§ 4.6.1). Without the path, the user has to hunt for the file before they can run it.
+- After writing any prompt, output its full absolute path (`📄 Prompt ready: \`<path>\``). For archetypes that run in a separate session, follow with "Paste that path into a new `claude` session to run it." or offer to spawn it via `--bg` (§ 4.6.1). Without the path, the user has to hunt for the file before they can run it.
 - When the user says "update" (or any synonym suggesting state changed), enter Update mode (§ 2.2): read the inbox, apply, archive, report. Never read the inbox without applying it.
 - After writing a long-running prompt for archetype 1 or 2 (babysitter), recommend the user run `/loop 30m /mm update` in another session/tab so ROADMAP/HANDOFF auto-sync while the agent works (§ 4.7 auto-sync pattern). Never start the loop yourself — it is the user's choice.
 - Capture insights live as you work (§ 4.8). High-confidence on explicit user signals, staged on PM observations. The closing ritual (§ 4.9) reviews them inline and promotes survivors to durable Claude memory (§ 4.10). Without capture, knowledge dies with the task folder.
 - The user will work with you across many sessions. Build the trust that they can leave for a week and come back to a coherent state.
+- **Build reviews into every prompt, not just at the end.** After each major step in an implementation prompt, instruct the agent to review or audit before moving on — code review, test run, or a `/codex-cli` audit pass. Catching issues mid-flight is cheaper than post-mortem.
+- **Audit your own prompts before shipping them.** Non-trivial implementation prompts should go through a `/codex-cli` review pass first. The audit catches ambiguities and gaps while fixing is still free. Offer this after writing any complex prompt (§ 4.6.2).
