@@ -160,15 +160,17 @@ add_agent() {
     echo ""
     echo -e "  ${CYAN}--- Add New Agent ---${NC}"
     echo ""
-    read -r -p "  Name (shown in agents view): " NEW_NAME
-    read -r -p "  Path (project directory):    " NEW_PATH
-    read -r -p "  Prompt (slash cmd or text):  " NEW_PROMPT
+    read -r -p "  Name (shown in agents view):          " NEW_NAME
+    read -r -p "  Path (forward slashes: C:/ai/proj):  " NEW_PATH
+    read -r -p "  Prompt (slash cmd or text):           " NEW_PROMPT
 
     if [[ -z "$NEW_NAME" || -z "$NEW_PATH" || -z "$NEW_PROMPT" ]]; then
         echo -e "  ${RED}Cancelled — all fields required.${NC}"
         sleep 1.5
         return
     fi
+
+    NEW_PATH="${NEW_PATH//\\//}"  # normalize backslashes to forward slashes
 
     NAMES+=("$NEW_NAME")
     PATHS+=("$NEW_PATH")
@@ -222,6 +224,8 @@ edit_agent() {
     read -r -p "  Name    [${NAMES[$idx]}]: " NEW_NAME
     read -r -p "  Path    [${PATHS[$idx]}]: " NEW_PATH
     read -r -p "  Prompt  [${PROMPTS[$idx]}]: " NEW_PROMPT
+
+    NEW_PATH="${NEW_PATH//\\//}"  # normalize backslashes to forward slashes
 
     [[ -n "$NEW_NAME" ]]   && NAMES[$idx]="$NEW_NAME"
     [[ -n "$NEW_PATH" ]]   && PATHS[$idx]="$NEW_PATH"
