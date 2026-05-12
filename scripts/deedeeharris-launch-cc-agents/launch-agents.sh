@@ -172,6 +172,12 @@ add_agent() {
         return
     fi
 
+    if [[ "$NEW_NAME" == *['\|&;<>()']* ]]; then
+        echo -e "  ${RED}Name contains invalid characters (| & ; < > ( ) \\ ).${NC}"
+        sleep 1.5
+        return
+    fi
+
     NEW_PATH="${NEW_PATH//\\//}"  # normalize backslashes to forward slashes
 
     NAMES+=("$NEW_NAME")
@@ -226,6 +232,12 @@ edit_agent() {
     read -r -p "  Name    [${NAMES[$idx]}]: " NEW_NAME
     read -r -p "  Path    [${PATHS[$idx]}]: " NEW_PATH
     read -r -p "  Prompt  [${PROMPTS[$idx]}]: " NEW_PROMPT
+
+    if [[ -n "$NEW_NAME" && "$NEW_NAME" == *['\|&;<>()']* ]]; then
+        echo -e "  ${RED}Name contains invalid characters (| & ; < > ( ) \\ ).${NC}"
+        sleep 1.5
+        return
+    fi
 
     NEW_PATH="${NEW_PATH//\\//}"  # normalize backslashes to forward slashes
 
