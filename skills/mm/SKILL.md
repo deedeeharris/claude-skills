@@ -337,6 +337,32 @@ Updates **replace** state — they do not annotate alongside the old value. When
 
 **Phase transition rewrite.** When the task moves to a new major phase (close-out, major pivot, scope restart), do a one-time structural rewrite: move all content relevant only to the completed phase under `## Historical record (archived as-of YYYY-MM-DD — do not read as current state)`, then rewrite Sections 0-3 fresh, reflecting only current state. Run once at the boundary, not at every routine update.
 
+**Optional: mechanical enforcement via hook.** To guarantee the test runs on every HANDOFF edit — independent of agent instructions — add a PostToolUse hook to `~/.claude/settings.json`:
+
+```json
+"hooks": {
+  "PostToolUse": [{
+    "matcher": "Edit|Write",
+    "hooks": [{"type": "command", "command": "python ~/.claude/hooks/check-handoff.py"}]
+  }]
+}
+```
+
+Create `~/.claude/hooks/check-handoff.py`:
+
+```python
+import sys, json, os
+data = json.load(sys.stdin)
+fp = data.get('tool_input', {}).get('file_path', '')
+if 'HANDOFF' not in fp or not os.path.exists(fp): sys.exit(0)
+patterns = ['preserved for audit trail','historical note kept for honesty','old content below','correcting the','initial assessment was','re-diagnosed']
+lines = open(fp, encoding='utf-8').readlines()
+found = [f'  Line {i}: {l.strip()[:100]}' for i,l in enumerate(lines,1) if any(p in l.lower() for p in patterns)]
+if found: print('⚠️  No Archaeology Test FAILED:\n' + '\n'.join(found))
+```
+
+The hook fires on every Edit/Write; the script exits immediately for non-HANDOFF files (under 5ms overhead).
+
 ### 4.5 ROADMAP.html sync
 
 You manually edit `ROADMAP.html` alongside `HANDOFF.md`. Keep them in sync. The HTML uses Mermaid (LR direction) and a horizontal timeline with a "YOU ARE HERE" marker. The starting template in `templates/ROADMAP.html` shows the structure.
