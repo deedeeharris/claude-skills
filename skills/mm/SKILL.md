@@ -55,7 +55,7 @@ The defining test of your work: **a fresh session reading `HANDOFF.md` Section 0
 
 ## 0.5 Git hygiene — do not pollute the codebase
 
-This skill is configured for git-tracked repos. **All PM artifacts live in exactly one location: `<pm_root>/<TASK>/` (and `<pm_done_root>/<TASK>/` after closing).** Pick those two paths once per repo and stick to them. Suggested defaults are `.pm/active/` and `.pm/done/`; some teams prefer a tracked location like `docs/pm/active/` so PM state is part of the repo and visible in diffs. Wherever you put them, do not scatter PM working files anywhere else.
+**All PM artifacts ALWAYS live under `.private/pm/`.** This is fixed, not configurable: active tasks at `<pm_root>/<TASK>/` where `<pm_root>` = `.private/pm/active/`, and closed tasks at `<pm_done_root>/<TASK>/` where `<pm_done_root>` = `.private/pm/done/`. Wherever this skill says `<pm_root>` it means `.private/pm/active/`; `<pm_done_root>` means `.private/pm/done/`. Keeping PM under `.private/` holds working-state churn out of the tracked codebase and off upstream. Do not scatter PM working files anywhere else, and do not place them in tracked locations like `docs/` or the repo root.
 
 **Hard rules:**
 
@@ -63,7 +63,7 @@ This skill is configured for git-tracked repos. **All PM artifacts live in exact
 2. **Never put PM working files in tracked directories outside the task folder.** If you're tempted to drop a research note in `docs/`, a prompt in `prompts/`, or a script in `scripts/` — stop. It belongs inside the task folder.
 3. **The only files allowed outside the task folder are project-convention deliverables the user explicitly asked for** — a PRD, a memo at a documented location, a row appended to a project-wide status log, etc. These are intentional, named, and the user requested the location.
 4. **Before creating any file outside `<pm_root>/<TASK>/`,** ask the user to confirm the path. Phrase it as: "Putting `<file>` at `<absolute path>` — that's outside the task folder. Confirm or redirect?"
-5. **If the user picks a non-standard base path for a one-off task** (e.g., they say "use `.private/` for this task because it's research that shouldn't go upstream"), **first** run `git check-ignore <path>` to verify it's gitignored. If it's not, warn the user once: "`<path>` is not gitignored — files will be tracked. Add to `.gitignore` first, or pick a different location?"
+5. **`.private/` must be gitignored** so PM state never goes upstream. On first use in a repo, run `git check-ignore .private` to verify; if it's not ignored, warn the user once: "`.private/` is not gitignored — PM files would be committed/pushed. Add `.private/` to `.gitignore` first?" Create `.private/pm/active/` and `.private/pm/done/` if missing — never silently scatter PM files elsewhere.
 
 **Why this matters.** PM artifacts have a heavy footprint: many MD files, frequent edits, working-state churn. If they leak outside `<pm_root>/<TASK>/`, every commit becomes noisy, every diff is harder to review, and the codebase carries permanent debt long after the task closes. The single-folder rule keeps the noise contained and the closing-ritual cleanup (Section 4.9 Step 6) effective — one folder moves to `<pm_done_root>/`, nothing else changes.
 
@@ -83,7 +83,7 @@ The task name should follow whatever pattern your project uses for task IDs — 
 
 ### Step 1.2 — Base path
 
-The PM root path is configured in Section 0.5 (default `.pm/active/`). The full HANDOFF path is `<pm_root>/<TASK>/HANDOFF.md`.
+The PM root is fixed (Section 0.5): `<pm_root>` = `.private/pm/active/`, `<pm_done_root>` = `.private/pm/done/`. The full HANDOFF path is `<pm_root>/<TASK>/HANDOFF.md` (i.e. `.private/pm/active/<TASK>/HANDOFF.md`).
 
 If `<pm_root>/` does not exist on this repo, **stop** and tell the user:
 
@@ -93,7 +93,7 @@ The sibling `<pm_done_root>/` is the archive destination used by the closing rit
 
 ### Step 1.3 — Fresh vs Continuing vs Update
 
-- If `<base>/<TASK>/HANDOFF.md` **does not exist** → **Fresh mode** (Section 3)
+- If `<pm_root>/<TASK>/HANDOFF.md` **does not exist** → **Fresh mode** (Section 3)
 - If it **exists** AND the user invoked with `update` (e.g., `/mm update`, "update the handoff", "sync from inbox", "the agent finished phase X — update") → **Update mode** (Section 2.2)
 - If it **exists** with no update intent → **Continuing mode** (Section 2.1)
 
@@ -109,7 +109,7 @@ You are picking up a task that already has state. Be fast and don't waste turns.
 
 1. **Read** `HANDOFF.md` Section 0 in full. Read the rest only if Section 0 says you should.
 2. **Read** any files listed in Section 0 "Files to read first" (in order).
-3. **Glance** at `<base>/<TASK>/inbox/` — if there are unprocessed entries, do **not** consume them here; instead surface "N unprocessed inbox entries — run `/mm update` to merge" in the status line.
+3. **Glance** at `<pm_root>/<TASK>/inbox/` — if there are unprocessed entries, do **not** consume them here; instead surface "N unprocessed inbox entries — run `/mm update` to merge" in the status line.
 4. **Present to the user** a 3-line status:
 
    ```
@@ -128,7 +128,7 @@ If Section 0 is empty, malformed, or stale (Last updated > 7 days old), say so a
 This mode runs when an engineering agent (or the user) has produced new state and the PM artifacts need to catch up. It is the loop that keeps HANDOFF and ROADMAP from drifting.
 
 1. **Read** `HANDOFF.md` Section 0 in full to anchor the prior state.
-2. **List** `<base>/<TASK>/inbox/*.md` (excluding the `processed/` subdirectory). Treat only files matching `^\d{8}-\d{6}-.*\.md$` as entries — sentinel files like `README.md` and any other non-timestamp-prefixed Markdown belong to the folder's documentation, not the message stream, and must be skipped silently. Sort entries by filename — the convention is `<YYYYMMDD-HHMMSS>-<source>.md` so filename sort = chronological.
+2. **List** `<pm_root>/<TASK>/inbox/*.md` (excluding the `processed/` subdirectory). Treat only files matching `^\d{8}-\d{6}-.*\.md$` as entries — sentinel files like `README.md` and any other non-timestamp-prefixed Markdown belong to the folder's documentation, not the message stream, and must be skipped silently. Sort entries by filename — the convention is `<YYYYMMDD-HHMMSS>-<source>.md` so filename sort = chronological.
 3. **Read every unprocessed inbox entry in chronological order.** Do not skip entries even if they look redundant — later entries may reference earlier ones.
 4. **Optionally read referenced files.** If an inbox entry cites a path under "Evidence" or "Files changed" that the PM needs to verify (e.g., a new audit report, a gap plan, a commit), read that file. Don't read every cited file — only when the citation is load-bearing for a Section 1 status flip, a Section 2 decision, or a Section 0 *Where I am now* update.
 5. **Synthesize the diff.** For each unprocessed entry, identify:
@@ -185,9 +185,9 @@ Wait for explicit "yes". Do not create files until approved.
 
 ### Step 3.3 — Create the scaffold
 
-1. Create `<base>/<TASK>/HANDOFF.md` using the template in Section 5.
-2. Copy the skill's `templates/ROADMAP.html` to `<base>/<TASK>/ROADMAP.html`, then **sweep every `{{...}}` placeholder and replace it with real content**. Common placeholders include `{{TASK_NAME}}` (page title + H1), `{{LAST_UPDATED}}`, `{{BRANCH}}`, `{{HEADLINE_STATUS}}`, the four KPI cells, `{{CURRENT_TASK}}` / `{{CURRENT_TASK_WHY}}` / `{{NEXT_TASK}}` / `{{NEXT_TASK_WHY}}`, the five `{{PHASE_*_SUB}}` cells, and the open-question row (`{{QUESTION_TEXT}}`, `{{QUESTION_META}}`, `{{QUESTION_OWNER}}`, `{{QUESTION_DATE}}`). If any group has no value yet, replace with `—` or remove the row outright — never leave raw template tokens in the rendered file. Run `grep '{{' <path>` after editing; the result must be empty before you consider the scaffold done.
-3. Create `<base>/<TASK>/prompts/` and drop a `<base>/<TASK>/prompts/README.md` explaining the `NN-<slug>.md` naming convention and that each prompt must be self-contained with success criteria and the mandatory inbox writeback section. Use this content verbatim:
+1. Create `<pm_root>/<TASK>/HANDOFF.md` using the template in Section 5.
+2. Copy the skill's `templates/ROADMAP.html` to `<pm_root>/<TASK>/ROADMAP.html`, then **sweep every `{{...}}` placeholder and replace it with real content**. Common placeholders include `{{TASK_NAME}}` (page title + H1), `{{LAST_UPDATED}}`, `{{BRANCH}}`, `{{HEADLINE_STATUS}}`, the four KPI cells, `{{CURRENT_TASK}}` / `{{CURRENT_TASK_WHY}}` / `{{NEXT_TASK}}` / `{{NEXT_TASK_WHY}}`, the five `{{PHASE_*_SUB}}` cells, and the open-question row (`{{QUESTION_TEXT}}`, `{{QUESTION_META}}`, `{{QUESTION_OWNER}}`, `{{QUESTION_DATE}}`). If any group has no value yet, replace with `—` or remove the row outright — never leave raw template tokens in the rendered file. Run `grep '{{' <path>` after editing; the result must be empty before you consider the scaffold done.
+3. Create `<pm_root>/<TASK>/prompts/` and drop a `<pm_root>/<TASK>/prompts/README.md` explaining the `NN-<slug>.md` naming convention and that each prompt must be self-contained with success criteria and the mandatory inbox writeback section. Use this content verbatim:
 
    ```markdown
    # Implementation prompts
@@ -222,8 +222,8 @@ Wait for explicit "yes". Do not create files until approved.
    - Inbox writeback section (mandatory for ALL archetypes — copy from skill Section 4.7)
    ```
 
-4. Create `<base>/<TASK>/inbox/` and `<base>/<TASK>/inbox/processed/` directories. Drop a `<base>/<TASK>/inbox/README.md` with the inbox contract (see Section 4.7) so any engineering agent landing on the folder knows the format without reading this skill.
-5. Create `<base>/<TASK>/insights.md` from the template at `templates/insights.md` — three empty H2 sections (`User preferences`, `Codebase`, `Mistakes`) ready for capture during the task. See Section 4.8 for capture rules.
+4. Create `<pm_root>/<TASK>/inbox/` and `<pm_root>/<TASK>/inbox/processed/` directories. Drop a `<pm_root>/<TASK>/inbox/README.md` with the inbox contract (see Section 4.7) so any engineering agent landing on the folder knows the format without reading this skill.
+5. Create `<pm_root>/<TASK>/insights.md` from the template at `templates/insights.md` — three empty H2 sections (`User preferences`, `Codebase`, `Mistakes`) ready for capture during the task. See Section 4.8 for capture rules.
 6. **Plant the closing wrap-up row** as the last row in HANDOFF's Section 1 Status table: `Wrap up: insights review + move to done/ | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual (Section 4.9): review captured insights inline, promote survivors to Claude memory, archive insights.md, append a row to the project status log if one exists, clean temp PM artifacts (prompts/, inbox/, audits/, research/), and move the task folder to <pm_done_root>/<TASK>/`. This is the trigger that fires the closing flow at task end (Section 4.9). It is non-negotiable: every fresh scaffold MUST include this row.
 7. **No runner files needed — the PM spawns agents directly** via `claude --bg` (Section 4.6.1). Task folders are runner-free.
 8. Pre-fill what you know from Section 3.1 (goal in Section 1 Context, stakeholders in Section 3 Open questions, etc.).
@@ -523,7 +523,7 @@ Codex will read the file and apply it. This works for any skill — babysitter a
 
 **How to dispatch (mandatory steps):**
 
-1. **Write the prompt to a file first.** Save it to `<base>/<TASK>/.codex-prompts/<slug>-<timestamp>.md` (inside the task folder, per Section 0.5 — never repo-root `.codex/`). Never pass the prompt content inline — quoting breaks with long prompts.
+1. **Write the prompt to a file first.** Save it to `<pm_root>/<TASK>/.codex-prompts/<slug>-<timestamp>.md` (inside the task folder, per Section 0.5 — never repo-root `.codex/`). Never pass the prompt content inline — quoting breaks with long prompts.
 
 2. **Tell Codex where to save output.** Two cases:
    - **Agent writes the file** (audit reports, structured deliverables): include `Write your output to <abs-path>` inside the prompt itself. **Omit `-o`** from the codex command — `-o` overwrites agent-written files with Codex's terminal summary message.
@@ -556,9 +556,9 @@ Codex will read the file and apply it. This works for any skill — babysitter a
 **Critical `-o` rule (from global CLAUDE.md):** If Codex writes the deliverable file itself, omit `-o`. Using `-o` when the agent also writes a file clobbers the agent's output with a 5-line "I'm done" summary at process exit.
 
 **Default output paths (all under the task folder — never repo root):**
-- Audits → `<base>/<TASK>/audits/<slug>-<timestamp>.md`
-- Inbox entries → `<base>/<TASK>/inbox/<YYYYMMDD-HHMMSS>-codex-<slug>.md`
-- Prompt files → `<base>/<TASK>/.codex-prompts/<slug>-<timestamp>.md`
+- Audits → `<pm_root>/<TASK>/audits/<slug>-<timestamp>.md`
+- Inbox entries → `<pm_root>/<TASK>/inbox/<YYYYMMDD-HHMMSS>-codex-<slug>.md`
+- Prompt files → `<pm_root>/<TASK>/.codex-prompts/<slug>-<timestamp>.md`
 
 Never create `.codex/`, `audits/`, or any new top-level folder at the repo root — they would pollute the tracked codebase. Everything stays inside the task folder and is cleaned up at task close (Section 4.9 Step 6). See Section 0.5 Git hygiene.
 
@@ -568,7 +568,7 @@ The inbox is a one-way file-based message channel from engineering agents to the
 
 **This applies to every implementation archetype (Section 4.6) — no exceptions.** Babysitter, subagent-driven-development, executing-plans, brainstorming, inline. For inline (switch-hats, archetype 6), the PM writes the inbox entry themselves before returning to PM mode. For subagent-driven-development (archetype 3), the PM writes a consolidated inbox entry per dispatched subagent after the dispatch returns; subagents may also write their own entries directly. The rule is universal: if work happened, an inbox entry exists.
 
-**Location.** `<base>/<TASK>/inbox/` for unprocessed entries; `<base>/<TASK>/inbox/processed/<YYYY-MM>/` for archived ones.
+**Location.** `<pm_root>/<TASK>/inbox/` for unprocessed entries; `<pm_root>/<TASK>/inbox/processed/<YYYY-MM>/` for archived ones.
 
 **Filename convention.** `<YYYYMMDD-HHMMSS>-<source>.md` where `<source>` is a short slug identifying the writer (phase name, agent name, or run ID). Example: `20260501-1432-phase-a1-ch3.md`. The lexicographic sort matches chronological order — this is how the PM reads them in time sequence.
 
@@ -624,7 +624,7 @@ Agents must NEVER edit prior inbox entries — the inbox is append-only. If a pr
 >
 > Before starting work, after each phase boundary, after each significant milestone (every ~30 minutes of work or every batch of 5+ similar units), on every blocker, and on completion, write a status file to `<INBOX_PATH>`. Filename: `<YYYYMMDD-HHMMSS>-<short-slug>.md`. Frontmatter must include `agent`, `session`, `started`, `emitted`, `status` (one of `in-progress`/`completed`/`blocked`/`error`), `task_ref`. Body sections (in order, all required even if "none"): `What was done`, `What's next`, `Blockers`, `Files changed`, `Evidence`, `Notes for PM`. Do NOT edit prior entries — append new ones. The PM reads these files when the user runs `/mm update`. If you skip this, your work disappears from project state and the PM cannot reconcile it.
 
-**README in the inbox folder.** When the inbox is created in Section 3.3, also drop `<base>/<TASK>/inbox/README.md` containing a condensed version of this section so any agent landing in the folder can self-orient without reading this skill. Do not duplicate the entire skill — just the format spec, the trigger moments, and the append-only rule.
+**README in the inbox folder.** When the inbox is created in Section 3.3, also drop `<pm_root>/<TASK>/inbox/README.md` containing a condensed version of this section so any agent landing in the folder can self-orient without reading this skill. Do not duplicate the entire skill — just the format spec, the trigger moments, and the append-only rule.
 
 **PM responsibilities around the inbox.**
 
@@ -645,7 +645,7 @@ Never start the loop yourself — the user runs `/loop` in their own session. Th
 
 ### 4.8 Insights capture — building the durable knowledge layer
 
-Alongside HANDOFF, throughout the task you maintain `<base>/<TASK>/insights.md` — a single file that captures three kinds of knowledge that emerge during the work and would otherwise die when the task closes.
+Alongside HANDOFF, throughout the task you maintain `<pm_root>/<TASK>/insights.md` — a single file that captures three kinds of knowledge that emerge during the work and would otherwise die when the task closes.
 
 **The three sections (H2 in `insights.md`):**
 
@@ -728,7 +728,7 @@ Tell me which to promote to Claude's persistent memory:
   • "user prefs + first codebase"  — by description
   • "none"  — discard all
 
-Need deep context on any entry? Say "show 4" and I'll print the full body. The file at `<base>/<TASK>/insights.md` has all entries verbatim.
+Need deep context on any entry? Say "show 4" and I'll print the full body. The file at `<pm_root>/<TASK>/insights.md` has all entries verbatim.
 ```
 
 The file pointer is offered AFTER the inline summary, as a deep-dive route — never as the summary itself.
@@ -759,7 +759,7 @@ If the project has no status log convention, skip this step.
 
 **Step 6: clean up temp PM artifacts and move folder to `done/`.**
 
-Inside `<base>/<TASK>/` delete the working artifacts that no longer add value once the task is closed:
+Inside `<pm_root>/<TASK>/` delete the working artifacts that no longer add value once the task is closed:
 
 - `prompts/` — implementation prompts (consumed)
 - `inbox/` and `inbox/processed/` — message channel + archives (consumed; status reflected in HANDOFF/status.md)
@@ -863,7 +863,7 @@ If `~/.claude/projects/<project_dir_slug>/memory/` does not exist on this machin
 **Recent significant decisions (last 24-48h, with citations):**
 - <Q-id> — <decision> (<source>, <date>)
 
-**Inbox status:** <N unprocessed entries at `<base>/<TASK>/inbox/` | empty | last consumed <YYYY-MM-DD>>
+**Inbox status:** <N unprocessed entries at `<pm_root>/<TASK>/inbox/` | empty | last consumed <YYYY-MM-DD>>
 
 **DO-NOT (anti-patterns specific to this task):**
 - <anti-pattern>: <why>
