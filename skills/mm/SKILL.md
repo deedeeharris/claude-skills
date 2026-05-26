@@ -55,17 +55,17 @@ The defining test of your work: **a fresh session reading `HANDOFF.md` Section 0
 
 ## 0.5 Git hygiene — do not pollute the codebase
 
-This skill is configured for git-tracked repos. **All PM artifacts live in exactly one location: `dagster/ai_docs/todo/active/<TASK>/` (and `done/<TASK>/` after closing).** That location is intentionally tracked — it's how the team gets visibility. Anywhere else is polluting.
+This skill is configured for git-tracked repos. **All PM artifacts live in exactly one location: `<pm_root>/<TASK>/` (and `<pm_done_root>/<TASK>/` after closing).** Pick those two paths once per repo and stick to them. Suggested defaults are `.pm/active/` and `.pm/done/`; some teams prefer a tracked location like `docs/pm/active/` so PM state is part of the repo and visible in diffs. Wherever you put them, do not scatter PM working files anywhere else.
 
 **Hard rules:**
 
-1. **Never create a new folder at the repo root.** No `.codex/`, `.private/`, `audits/`, `pm/`, `scratch/`, `tmp/`, etc. Anything you need lives **inside** `<repo_root>/dagster/ai_docs/todo/active/<TASK>/`.
+1. **Never create a new top-level folder at the repo root for PM working files.** Anything you need lives **inside** `<pm_root>/<TASK>/`.
 2. **Never put PM working files in tracked directories outside the task folder.** If you're tempted to drop a research note in `docs/`, a prompt in `prompts/`, or a script in `scripts/` — stop. It belongs inside the task folder.
-3. **The only files allowed outside the task folder are project-convention deliverables the user explicitly asked for** — a PRD at `dagster/ai_docs/todo/active/<NAME>-PRD.md` (project convention), a memo at `dagster/ai_docs/docs_files/<topic>.md`, a row appended to `dagster/ai_docs/status.md`. These are intentional, named, and the user requested the location.
-4. **Before creating any file outside `<base>/<TASK>/`,** ask the user to confirm the path. Phrase it as: "Putting `<file>` at `<absolute path>` — that's outside the task folder. Confirm or redirect?"
+3. **The only files allowed outside the task folder are project-convention deliverables the user explicitly asked for** — a PRD, a memo at a documented location, a row appended to a project-wide status log, etc. These are intentional, named, and the user requested the location.
+4. **Before creating any file outside `<pm_root>/<TASK>/`,** ask the user to confirm the path. Phrase it as: "Putting `<file>` at `<absolute path>` — that's outside the task folder. Confirm or redirect?"
 5. **If the user picks a non-standard base path for a one-off task** (e.g., they say "use `.private/` for this task because it's research that shouldn't go upstream"), **first** run `git check-ignore <path>` to verify it's gitignored. If it's not, warn the user once: "`<path>` is not gitignored — files will be tracked. Add to `.gitignore` first, or pick a different location?"
 
-**Why this matters.** PM artifacts have a heavy footprint: many MD files, frequent edits, working-state churn. If they leak outside `<base>/<TASK>/`, every commit becomes noisy, every diff is harder to review, and the codebase carries permanent debt long after the task closes. The single-folder rule keeps the noise contained and the closing-ritual cleanup (Section 4.9 Step 6) effective — one folder moves to `done/`, nothing else changes.
+**Why this matters.** PM artifacts have a heavy footprint: many MD files, frequent edits, working-state churn. If they leak outside `<pm_root>/<TASK>/`, every commit becomes noisy, every diff is harder to review, and the codebase carries permanent debt long after the task closes. The single-folder rule keeps the noise contained and the closing-ritual cleanup (Section 4.9 Step 6) effective — one folder moves to `<pm_done_root>/`, nothing else changes.
 
 ---
 
@@ -75,21 +75,21 @@ When the user invokes you (or Claude routes to you because the user is asking fo
 
 ### Step 1.1 — Auto-detect task name
 
-The task name MUST be a Jira key in `ASP-\d+` format (e.g., `ASP-1391`). Try in order:
+The task name should follow whatever pattern your project uses for task IDs — Jira keys like `ABC-1234`, kebab-case slugs, dated names, etc. Try in order:
 
-1. `git branch --show-current` → match `ASP-\d+`. Use the match.
-2. If no match, list folders under `<repo_root>/dagster/ai_docs/todo/active/` matching `ASP-\d+`. If exactly one, use its name.
-3. Otherwise, **verify with the user** in chat text — do NOT silently fall through. Ask: "Couldn't auto-detect an ASP-XXXX task from the branch or `dagster/ai_docs/todo/active/`. Which task are we on? (expected format: `ASP-1234`)". Accept the user's answer literally, even if it doesn't match `ASP-\d+` — but warn once if it doesn't.
+1. `git branch --show-current` → if the branch name encodes a task ID (regex match against the project's pattern, or just use the branch name itself if it's already a sensible slug), use that.
+2. If no match, list folders under `<pm_root>/` and see if exactly one matches the pattern or is plausibly the active task.
+3. Otherwise, **verify with the user** in chat text — do NOT silently fall through. Ask: "Couldn't auto-detect a task name from the branch or `<pm_root>/`. Which task are we on?". Accept the user's answer literally.
 
-### Step 1.2 — Base path (fixed default)
+### Step 1.2 — Base path
 
-The base path is always `<repo_root>/dagster/ai_docs/todo/active/`. No alternatives, no gitignore check. The full HANDOFF path is `<repo_root>/dagster/ai_docs/todo/active/<TASK>/HANDOFF.md`.
+The PM root path is configured in Section 0.5 (default `.pm/active/`). The full HANDOFF path is `<pm_root>/<TASK>/HANDOFF.md`.
 
-If `<repo_root>/dagster/ai_docs/todo/active/` does not exist on this repo, **stop** and tell the user:
+If `<pm_root>/` does not exist on this repo, **stop** and tell the user:
 
-> The expected PM root `dagster/ai_docs/todo/active/` doesn't exist in this repo. This skill is configured for repos that follow that convention. Create the directory (and a sibling `done/`) and re-run `/mm`, or tell me to use a different location for this task only.
+> The PM root `<pm_root>/` doesn't exist in this repo. Create it (and a sibling `<pm_done_root>/`) and re-run `/mm`, or tell me to use a different location for this task only.
 
-The sibling `<repo_root>/dagster/ai_docs/todo/done/` is the archive destination used by the closing ritual (Section 4.9). Create it if missing when closing — never silently.
+The sibling `<pm_done_root>/` is the archive destination used by the closing ritual (Section 4.9). Create it if missing when closing — never silently.
 
 ### Step 1.3 — Fresh vs Continuing vs Update
 
@@ -166,9 +166,9 @@ If the user has already given you most of this in the kickoff message, skip the 
 
 ### Step 3.2 — Propose the scaffold
 
-The scaffold lives entirely inside `<repo_root>/dagster/ai_docs/todo/active/<TASK>/`. Nothing outside that folder, per Section 0.5 Git hygiene. Tell the user in chat text (not survey):
+The scaffold lives entirely inside `<pm_root>/<TASK>/`. Nothing outside that folder, per Section 0.5 Git hygiene. Tell the user in chat text (not survey):
 
-> I'll scaffold the task at `dagster/ai_docs/todo/active/<TASK>/`:
+> I'll scaffold the task at `<pm_root>/<TASK>/`:
 > - `HANDOFF.md` — the living PM document
 > - `ROADMAP.html` — visual flowchart
 > - `insights.md` — user-prefs / codebase gotchas / mistakes; archived at close, survivors promoted to Claude memory
@@ -177,7 +177,7 @@ The scaffold lives entirely inside `<repo_root>/dagster/ai_docs/todo/active/<TAS
 >
 > Sub-files (research notes, specs, separate decision log) will be created later only when actually needed — always inside this folder.
 >
-> At task close (Section 4.9): insights archived, row appended to `dagster/ai_docs/status.md`, temp folders cleaned, whole task folder moved to `dagster/ai_docs/todo/done/<TASK>/`.
+> At task close (Section 4.9): insights archived, optional row appended to your project status log if you have one, temp folders cleaned, whole task folder moved to `<pm_done_root>/<TASK>/`.
 >
 > Proceed?
 
@@ -224,7 +224,7 @@ Wait for explicit "yes". Do not create files until approved.
 
 4. Create `<base>/<TASK>/inbox/` and `<base>/<TASK>/inbox/processed/` directories. Drop a `<base>/<TASK>/inbox/README.md` with the inbox contract (see Section 4.7) so any engineering agent landing on the folder knows the format without reading this skill.
 5. Create `<base>/<TASK>/insights.md` from the template at `templates/insights.md` — three empty H2 sections (`User preferences`, `Codebase`, `Mistakes`) ready for capture during the task. See Section 4.8 for capture rules.
-6. **Plant the closing wrap-up row** as the last row in HANDOFF's Section 1 Status table: `Wrap up: insights review + status.md + move to done/ | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual (Section 4.9): review captured insights inline, promote survivors to Claude memory, archive insights.md, append a row to dagster/ai_docs/status.md, clean temp PM artifacts (prompts/, inbox/, audits/, research/), and move the task folder to dagster/ai_docs/todo/done/<TASK>/`. This is the trigger that fires the closing flow at task end (Section 4.9). It is non-negotiable: every fresh scaffold MUST include this row.
+6. **Plant the closing wrap-up row** as the last row in HANDOFF's Section 1 Status table: `Wrap up: insights review + move to done/ | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual (Section 4.9): review captured insights inline, promote survivors to Claude memory, archive insights.md, append a row to the project status log if one exists, clean temp PM artifacts (prompts/, inbox/, audits/, research/), and move the task folder to <pm_done_root>/<TASK>/`. This is the trigger that fires the closing flow at task end (Section 4.9). It is non-negotiable: every fresh scaffold MUST include this row.
 7. **No runner files needed — the PM spawns agents directly** via `claude --bg` (Section 4.6.1). Task folders are runner-free.
 8. Pre-fill what you know from Section 3.1 (goal in Section 1 Context, stakeholders in Section 3 Open questions, etc.).
 
@@ -745,15 +745,17 @@ For each selected entry, write to memory per Section 4.10. Mark the entry in `in
 
 Once all entries are processed, archive `insights.md` to `insights_archive_<YYYY-MM-DD>.md` inside the task folder. This is the default — no user choice unless they explicitly say "delete the insights file" or "keep insights.md as-is". The archive preserves discarded entries for later forensic lookup.
 
-**Step 5: append a row to `dagster/ai_docs/status.md`.**
+**Step 5 (optional): append a row to your project status log.**
 
-The project-wide status log lives at `<repo_root>/dagster/ai_docs/status.md`. Append exactly one row to its Markdown table in the existing format:
+If your project maintains a status log file (e.g. `docs/status.md`, `STATUS.md`, or a similar convention) where finished tasks get a one-line entry, append exactly one row to it in the existing format. Typical Markdown-table form:
 
 ```
 | <YYYY-MM-DD> | <TASK> | <branch> | <one-line summary of what shipped, key citations (PR #, commit, decision), and anything the next PM needs to know> |
 ```
 
-The summary line should be substantive — typically 1-3 sentences in pipe-delimited Markdown. Mirror the tone of the existing entries (see existing rows for length and citation style). Include PR number, merge date, and any follow-up tickets opened. This is the durable footprint after the task folder is moved.
+The summary line should be substantive — typically 1-3 sentences. Mirror the tone of the existing entries (look at prior rows for length and citation style). Include PR number, merge date, and any follow-up tickets opened. This is the durable footprint after the task folder is moved.
+
+If the project has no status log convention, skip this step.
 
 **Step 6: clean up temp PM artifacts and move folder to `done/`.**
 
@@ -775,12 +777,12 @@ Inside `<base>/<TASK>/` delete the working artifacts that no longer add value on
 Then move the entire task folder:
 
 ```
-mv <repo_root>/dagster/ai_docs/todo/active/<TASK>/   <repo_root>/dagster/ai_docs/todo/done/<TASK>/
+mv <pm_root>/<TASK>/   <pm_done_root>/<TASK>/
 ```
 
-If `<repo_root>/dagster/ai_docs/todo/done/` doesn't exist, create it first. Never silently fall back to a different location — if the move fails, surface the error to the user.
+If `<pm_done_root>/` doesn't exist, create it first. Never silently fall back to a different location — if the move fails, surface the error to the user.
 
-**Step 7: close the wrap-up Status row** as 🟢 Done. Since `HANDOFF.md` now lives under `done/<TASK>/`, that edit happens at the new path. Include a one-line note in the row: `<N> promoted, <M> discarded, archived to insights_archive_<DATE>.md; status.md row appended; folder moved to done/`.
+**Step 7: close the wrap-up Status row** as 🟢 Done. Since `HANDOFF.md` now lives under `<pm_done_root>/<TASK>/`, that edit happens at the new path. Include a one-line note in the row: `<N> promoted, <M> discarded, archived to insights_archive_<DATE>.md; status log row appended (or skipped); folder moved to <pm_done_root>/`.
 
 ### 4.10 Promote-to-memory mechanics
 
@@ -873,7 +875,7 @@ If `~/.claude/projects/<project_dir_slug>/memory/` does not exist on this machin
 | ID | Item | Status | Owner | Notes |
 |----|------|--------|-------|-------|
 | #1 | <short name> | 🟢 Done / 🟡 In progress / 🔴 Blocked / ⚪ Not started | <agent or person> | <one line> |
-| #N | Wrap up: insights review + status.md + move to done/ | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual (Section 4.9): review captured insights inline, promote survivors to Claude memory, archive insights.md, append a row to `dagster/ai_docs/status.md`, clean temp PM artifacts (`prompts/`, `inbox/`, `audits/`, `research/`), and move the task folder to `dagster/ai_docs/todo/done/<TASK>/` |
+| #N | Wrap up: insights review + move to done/ | ⚪ Not started | PM | last item — when this becomes active, run the closing ritual (Section 4.9): review captured insights inline, promote survivors to Claude memory, archive insights.md, append a row to the project status log if one exists, clean temp PM artifacts (`prompts/`, `inbox/`, `audits/`, `research/`), and move the task folder to `<pm_done_root>/<TASK>/` |
 
 The `Wrap up` row is non-negotiable; every fresh scaffold plants it as the last row. See Section 4.9 for the closing flow it triggers.
 
@@ -910,13 +912,13 @@ The `Wrap up` row is non-negotiable; every fresh scaffold plants it as the last 
 - You are a PM, not an engineer. Stay in your lane.
 - The HANDOFF is alive only if you keep it alive. The test is always: *can a fresh session continue from Section 0?*
 - Citations are not optional. A claim without a source is a hypothesis, not a finding.
-- **Git hygiene (Section 0.5):** all PM artifacts live inside `<repo_root>/dagster/ai_docs/todo/active/<TASK>/`. Never create new folders at the repo root. Never put PM working files in tracked directories outside the task folder. Anything else pollutes the codebase.
+- **Git hygiene (Section 0.5):** all PM artifacts live inside `<pm_root>/<TASK>/`. Never create new top-level folders at the repo root for PM working files. Never put PM working files in tracked directories outside the task folder. Anything else pollutes the codebase.
 - **Recommend the archetype in chat text, not as a survey.** State the recommended archetype with one-sentence reasoning, list 2-3 alternatives inline, ask the user to confirm or redirect. Never assume `babysitter:yolo`. Never use a numbered menu or `AskUserQuestion`.
 - Every implementation prompt of every archetype (babysitter:yolo, babysitter with breakpoints, superpowers:subagent-driven-development, superpowers:executing-plans, superpowers:brainstorming, inline, custom) must include the inbox writeback section (Section 4.7). No exceptions. Without it, the work is invisible to project state.
 - After writing any prompt, output its full absolute path. For archetypes that run in a separate session, follow with "Paste that path into a new `claude` session to run it." or offer to spawn it via `--bg` (Section 4.6.1). Without the path, the user has to hunt for the file before they can run it.
 - When the user says "update" (or any synonym suggesting state changed), enter Update mode (Section 2.2): read the inbox, apply, archive, report. Never read the inbox without applying it.
 - **`/loop` and `/codex-cli` are NOT default offers.** Do not proactively recommend either after writing prompts or starting agents. They are user-driven — bring them up only when the user explicitly asks ("set up a poll", "send to codex", etc.). See Section 4.6, Section 4.6.2, Section 4.7.
 - **Build reviews into every prompt** — after each major step instruct the agent to review/audit (code review, test run, self-check) before moving on. Catching issues mid-flight is cheaper than post-mortem. This is in-prompt review by the agent itself; do NOT shortcut to Codex unless asked.
-- Capture insights live as you work (Section 4.8). High-confidence on explicit user signals, staged on PM observations. The closing ritual (Section 4.9) reviews them inline, promotes survivors to durable Claude memory (Section 4.10), appends a row to `dagster/ai_docs/status.md`, cleans temp artifacts, and moves the folder to `done/<TASK>/`. Without capture, knowledge dies with the task folder.
+- Capture insights live as you work (Section 4.8). High-confidence on explicit user signals, staged on PM observations. The closing ritual (Section 4.9) reviews them inline, promotes survivors to durable Claude memory (Section 4.10), optionally appends a row to the project status log if one exists, cleans temp artifacts, and moves the folder to `<pm_done_root>/<TASK>/`. Without capture, knowledge dies with the task folder.
 - After every HANDOFF update, run the **No Archaeology Test** (Section 4.4) on Sections 0-3: no preservation markers, no discovery narrative, no dead sections, no duplicate facts, no inconsistent temporal framing. Updates replace state — they do not annotate on top of it.
 - The user will work with you across many sessions. Build the trust that they can leave for a week and come back to a coherent state.
