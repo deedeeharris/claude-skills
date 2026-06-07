@@ -53,6 +53,23 @@
       --awaiting: #f59e0b;
       --blocked: #94a3b8;
     }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111318;
+        --card: #191d25;
+        --border: #303846;
+        --text: #e8edf4;
+        --muted: #a8b3c2;
+        --accent: #8ab4ff;
+        --done: #4ade80;
+        --hot: #f87171;
+        --research: #60a5fa;
+        --awaiting: #fbbf24;
+        --blocked: #7b8796;
+      }
+      .questions-table th { background: #222936; }
+      .mermaid-wrap { background: #151922; }
+    }
     * { box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -204,10 +221,10 @@
 
     <!-- KPI row -->
     <div class="kpi-row">
-      <div class="kpi"><div class="kpi-label">Items shipped</div><div class="kpi-value">0 / 0</div><div class="kpi-detail">—</div></div>
-      <div class="kpi"><div class="kpi-label">Active now</div><div class="kpi-value">0</div><div class="kpi-detail">—</div></div>
-      <div class="kpi"><div class="kpi-label">Awaiting external</div><div class="kpi-value">0</div><div class="kpi-detail">—</div></div>
-      <div class="kpi"><div class="kpi-label">Open questions</div><div class="kpi-value">0</div><div class="kpi-detail">—</div></div>
+      <div class="kpi"><div class="kpi-label">Items shipped</div><div class="kpi-value">{{KPI_SHIPPED}}</div><div class="kpi-detail">{{KPI_SHIPPED_DETAIL}}</div></div>
+      <div class="kpi"><div class="kpi-label">Active now</div><div class="kpi-value">{{KPI_ACTIVE}}</div><div class="kpi-detail">{{KPI_ACTIVE_DETAIL}}</div></div>
+      <div class="kpi"><div class="kpi-label">Awaiting external</div><div class="kpi-value">{{KPI_AWAITING}}</div><div class="kpi-detail">{{KPI_AWAITING_DETAIL}}</div></div>
+      <div class="kpi"><div class="kpi-label">Open questions</div><div class="kpi-value">{{KPI_QUESTIONS}}</div><div class="kpi-detail">{{KPI_QUESTIONS_DETAIL}}</div></div>
     </div>
 
     <!-- Two-column highlights -->
@@ -271,25 +288,25 @@ flowchart LR
 
   subgraph S1 [✓ Done]
     direction TB
-    D1[item 1]:::done
+    D1[{{FLOW_DONE_ITEM}}]:::done
   end
 
   subgraph S2 [🔥 Hot — ship next]
-    H1[item 2]:::hot
+    H1[{{FLOW_HOT_ITEM}}]:::hot
   end
 
   subgraph S3 [🔬 Research]
     direction TB
-    R1[item 3]:::research
+    R1[{{FLOW_RESEARCH_ITEM}}]:::research
   end
 
   subgraph S4 [⏸ Awaiting external]
     direction TB
-    A1[item 4]:::awaiting
+    A1[{{FLOW_AWAITING_ITEM}}]:::awaiting
   end
 
   subgraph S5 [🚧 Blocked]
-    B1[item 5]:::blocked
+    B1[{{FLOW_BLOCKED_ITEM}}]:::blocked
   end
 
   End([Close]):::done
