@@ -8,13 +8,13 @@ Entries are H3 with the actual content as the heading. No opaque IDs. Body has e
 
 ## User preferences
 
-(Add H3 entries here as user signals arrive. Example:)
+(Add H3 entries here as user signals arrive. Example structure:)
 
 <!--
-### Wants binary yes/no for HANDOFF artifact edits
+### <preference stated by this task's user>
 
 - Confidence: high
-- Why future-PM cares: drafting prose alternatives wastes turns when the answer is just "do it" or "don't"
+- Why future-PM cares: <why this preference affects future PM behavior>
 - Promote-to: feedback
 -->
 

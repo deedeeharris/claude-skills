@@ -807,7 +807,7 @@ Alongside HANDOFF, throughout the task you maintain `<pm_root>/<TASK>/insights.m
 
 **The three sections (H2 in `insights.md`):**
 
-- **`## User preferences`** — signals about how the user wants to collaborate. "Wants binary yes/no over drafts." "Prefers terse responses." "Doesn't want me running tests autonomously." Distinct from project decisions; these are about *how* you work with this person across any task.
+- **`## User preferences`** — signals about how the user wants to collaborate. Keep these task-derived and user-approved; do not seed a new task with prewritten personal preferences. Distinct from project decisions; these are about *how* you work with this person across any task.
 - **`## Codebase`** — knowledge about the codebase a future agent could plausibly trip on without it. The unifying test: *would a future task make a mistake without knowing this?* Examples: a validation step that looks redundant but guards a real invariant, a hidden coupling between two subsystems, a status-level guard that silently re-introduces broken state when downgraded.
 - **`## Mistakes`** — both your own mistakes and others' (engineering agents, the user, external stakeholders). What happened, how it was caught, what to do differently. A mistake is the inverse of a codebase insight: the insight you should have had but didn't.
 
@@ -867,8 +867,8 @@ Do NOT say "see `insights.md` for details" as the primary route. Inline the entr
 Reviewing insights captured during this task — 7 captured.
 
 User preferences (2):
-  1. Wants binary yes/no for HANDOFF artifact edits  [high]
-  2. Prefers terse status updates over prose  [high]
+  1. <preference heading from insights.md>  [high]
+  2. <preference heading from insights.md>  [high]
 
 Codebase (3):
   3. API rate-limit and batch job share same credentials pool  [high]
@@ -954,7 +954,7 @@ When the user approves an entry for promotion, write directly to the auto-memory
 `~/.claude/projects/<project_dir_slug>/memory/<slug>.md` where:
 
 - `<project_dir_slug>` is the existing slugified project directory under `~/.claude/projects/`. If unsure which slug applies, list the directory and pick the one whose name encodes the current working directory.
-- `<slug>` is derived from the entry heading: lowercase, kebab-case, prefixed by memory type. Examples: `feedback_binary_yes_no_questions.md`, `project_api_rate_limit_credentials_pool.md`, `user_terse_status_updates.md`.
+- `<slug>` is derived from the entry heading: lowercase, kebab-case, prefixed by memory type. Examples: `feedback_artifact_edit_confirmation.md`, `project_api_rate_limit_credentials_pool.md`, `user_domain_context.md`.
 
 **Step 2: pick the memory type.**
 
@@ -973,16 +973,16 @@ Frontmatter must include `name`, `description` (one-line, used for relevance mat
 
 ```markdown
 ---
-name: Wants binary yes/no for HANDOFF artifact edits
-description: For HANDOFF / decision_log / research MD edits, ask binary y/n; do not draft prose alternatives.
+name: Example feedback rule
+description: Example feedback memory showing the required structure.
 type: feedback
 ---
 
-For HANDOFF / decision_log / research MD edits, the user wants a binary y/n confirmation, not a drafted alternative. Drafting wastes turns when the answer is just "do it" or "don't".
+Replace this paragraph with the approved feedback rule in the user's own terms.
 
-**Why:** the user values short turns; drafting a memo when a yes/no will do feels like overhead.
+**Why:** explain why the rule matters for future work.
 
-**How to apply:** When proposing an edit to HANDOFF.md, ROADMAP.html, or any decision-log artifact, state the change in one sentence and ask `y/n`. Only draft if the user requests alternatives.
+**How to apply:** explain the concrete behavior future agents should follow.
 ```
 
 **Step 4: append index line to MEMORY.md.**
