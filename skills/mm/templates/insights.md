@@ -1,6 +1,6 @@
 # Insights — <TASK>
 
-Living capture of three kinds of knowledge that emerge during this task. The PM writes here as work progresses (see skill § 4.8). At the wrap-up Status row, the PM presents an inline summary in chat and the user picks which entries to promote to durable Claude memory (§ 4.9–4.10).
+Living capture of three kinds of knowledge that emerge during this task. The PM writes here as work progresses (see Section 4.8). At the wrap-up Status row, the PM presents an inline summary in chat and the user picks which entries to promote to durable Claude memory (Sections 4.9-4.10).
 
 Entries are H3 with the actual content as the heading. No opaque IDs. Body has exactly three terse fields: `Confidence`, `Why future-PM cares`, `Promote-to`. No timestamps, no source-file pointers — citations belong in research notes.
 
