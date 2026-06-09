@@ -498,6 +498,40 @@ def badge(value: Any) -> str:
     return html.escape(str(value if value is not None else ""))
 
 
+def attr(value: Any) -> str:
+    return html.escape(str(value if value is not None else ""), quote=True)
+
+
+def slug(value: Any) -> str:
+    text = str(value if value is not None else "").strip().lower()
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-") or "unknown"
+
+
+def table_cell(label: str, value: Any, *, css_class: str = "") -> str:
+    class_attr = f' class="{attr(css_class)}"' if css_class else ""
+    return f'<td data-label="{attr(label)}"{class_attr}>{badge(value)}</td>'
+
+
+def status_pill(value: Any) -> str:
+    text = str(value if value is not None else "unknown").strip() or "unknown"
+    return f'<span class="pill status-{attr(slug(text))}">{badge(text)}</span>'
+
+
+def risk_pill(value: Any) -> str:
+    text = str(value if value is not None else "unknown").strip() or "unknown"
+    return f'<span class="pill risk-{attr(slug(text))}">{badge(text)}</span>'
+
+
+def priority_sort_value(value: Any) -> int:
+    text = str(value if value is not None else "").strip()
+    return int(text) if text.isdigit() else 99
+
+
+def date_sort_value(value: Any) -> str:
+    parsed = parse_date(str(value if value is not None else ""))
+    return parsed.isoformat() if parsed else "9999-12-31"
+
+
 def render_html(data: dict[str, Any]) -> str:
     counts = data["counts"]
     tasks_by_name = task_lookup(data)
@@ -506,14 +540,17 @@ def render_html(data: dict[str, Any]) -> str:
         task = tasks_by_name[task_id]
         this_week_rows.append(
             "<tr>"
-            f"<td>{badge(task['task'])}</td><td>{badge(task['target_finish_date'])}</td>"
-            f"<td>{badge(task['status'])}</td><td>{badge(task['waiting_on'])}</td>"
-            f"<td>{badge(task['at_risk'])}</td><td>{badge(task['next_human_decision'])}</td>"
-            f"<td>{badge(task['next_agent_action'])}</td>"
+            f"{table_cell('Task', task['task'], css_class='task-name')}"
+            f"{table_cell('Target finish date', task['target_finish_date'])}"
+            f'<td data-label="Status">{status_pill(task["status"])}</td>'
+            f"{table_cell('Waiting on', task['waiting_on'])}"
+            f'<td data-label="At risk">{risk_pill(task["at_risk"])}</td>'
+            f"{table_cell('Next human decision', task['next_human_decision'])}"
+            f"{table_cell('Next agent action', task['next_agent_action'])}"
             "</tr>"
         )
     if not this_week_rows:
-        this_week_rows.append('<tr><td colspan="7">none</td></tr>')
+        this_week_rows.append('<tr><td colspan="7" class="empty-state">No tasks target this week.</td></tr>')
 
     risk_sections = []
     for title, key in [
@@ -525,8 +562,11 @@ def render_html(data: dict[str, Any]) -> str:
         ("Malformed Section 0A", "malformed_section_0a"),
     ]:
         names = data["risks"][key]
-        items = "".join(f"<li>{badge(name)}</li>" for name in names) or "<li>none</li>"
-        risk_sections.append(f"<section><h3>{title}</h3><ul>{items}</ul></section>")
+        items = "".join(f"<li>{badge(name)}</li>" for name in names) or '<li class="muted">none</li>'
+        risk_sections.append(
+            f'<section class="risk-card risk-{attr(slug(key))}" data-risk-key="{attr(key)}">'
+            f"<h3>{title}</h3><strong>{len(names)}</strong><ul>{items}</ul></section>"
+        )
 
     table_rows = []
     overdue_ids = set(data["risks"]["overdue"])
@@ -542,24 +582,47 @@ def render_html(data: dict[str, Any]) -> str:
         if task_id in malformed_ids:
             classes.append("malformed")
         class_attr = f' class="{" ".join(classes)}"' if classes else ""
+        risk_flags = []
+        if task_id in overdue_ids:
+            risk_flags.append("overdue")
+        if task_id in stale_ids:
+            risk_flags.append("stale")
+        if task_id in malformed_ids:
+            risk_flags.append("malformed")
+        if task["status"].strip().lower() == "blocked":
+            risk_flags.append("blocked")
+        if task["status"].strip().lower() == "waiting" or task["waiting_on"].strip().lower() not in MISSING_VALUES:
+            risk_flags.append("waiting")
         roadmap = task["roadmap_path"]
         handoff = task["handoff_path"]
         roadmap_href = rel_from_pm(roadmap)
         handoff_href = rel_from_pm(handoff)
         table_rows.append(
-            f"<tr{class_attr}>"
-            f"<td>{badge(task['task'])}</td><td>{badge(task['status'])}</td>"
-            f"<td>{badge(task['priority'])}</td><td>{badge(task['target_finish_date'])}</td>"
-            f"<td>{badge(task['deadline_type'])}</td><td>{badge(task['schedule_confidence'])}</td>"
-            f"<td>{badge(task['at_risk'])}</td><td>{badge(task['waiting_on'])}</td>"
-            f"<td>{badge(task['next_human_decision'])}</td><td>{badge(task['next_agent_action'])}</td>"
-            f"<td>{badge(task['inbox_count'])}</td><td>{badge(task['last_updated'])}</td>"
-            f'<td><a href="{badge(handoff_href)}">{badge(handoff)}</a><br><a href="{badge(roadmap_href)}">{badge(roadmap)}</a></td>'
+            f'<tr{class_attr} data-status="{attr(slug(task["status"]))}" '
+            f'data-risk="{attr(" ".join(risk_flags) or "clear")}" '
+            f'data-priority="{priority_sort_value(task["priority"])}" '
+            f'data-target="{attr(date_sort_value(task["target_finish_date"]))}" '
+            f'data-updated="{attr(task["last_updated"])}" '
+            f'data-inbox="{attr(task["inbox_count"])}" '
+            f'data-task="{attr(task["task"])}">'
+            f"{table_cell('Task', task['task'], css_class='task-name')}"
+            f'<td data-label="Status">{status_pill(task["status"])}</td>'
+            f"{table_cell('Priority', task['priority'])}"
+            f"{table_cell('Target finish date', task['target_finish_date'])}"
+            f"{table_cell('Deadline type', task['deadline_type'])}"
+            f"{table_cell('Confidence', task['schedule_confidence'])}"
+            f'<td data-label="At risk">{risk_pill(task["at_risk"])}</td>'
+            f"{table_cell('Waiting on', task['waiting_on'])}"
+            f"{table_cell('Next human decision', task['next_human_decision'])}"
+            f"{table_cell('Next agent action', task['next_agent_action'])}"
+            f"{table_cell('Inbox', task['inbox_count'])}"
+            f"{table_cell('Last updated', task['last_updated'])}"
+            f'<td data-label="Paths"><a href="{attr(handoff_href)}">HANDOFF</a><span class="path-text">{badge(handoff)}</span><br><a href="{attr(roadmap_href)}">ROADMAP</a><span class="path-text">{badge(roadmap)}</span></td>'
             "</tr>"
         )
 
     cards = "".join(
-        f'<div class="card"><span>{label}</span><strong>{counts[key]}</strong></div>'
+        f'<button class="metric metric-{attr(slug(label))}" type="button" data-metric="{attr(key)}"><span>{label}</span><strong>{counts[key]}</strong></button>'
         for label, key in [
             ("Active", "active_handoffs"),
             ("Blocked", "blocked"),
@@ -578,41 +641,99 @@ def render_html(data: dict[str, Any]) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PM Dashboard - {badge(data['project_name'])}</title>
   <style>
-    :root {{ --bg:#f7f8fa; --text:#18212f; --muted:#5c6778; --line:#d9dee7; --card:#fff; --red:#b42318; --amber:#a15c00; --blue:#2251a4; }}
+    :root {{
+      --bg:#f5f7fb; --text:#18212f; --muted:#657184; --line:#d9dee7; --card:#fff;
+      --red:#b42318; --red-soft:#fff1f0; --amber:#a15c00; --amber-soft:#fff7e8;
+      --blue:#2251a4; --blue-soft:#edf4ff; --green:#067647; --green-soft:#ecfdf3;
+      --violet:#6d3fc8; --violet-soft:#f3efff; --shadow:0 14px 34px rgba(24,33,47,.08);
+    }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }}
+    body::before {{ content:""; position:fixed; inset:0 0 auto; height:260px; background:linear-gradient(135deg,#fff 0%,#edf4ff 45%,#fff7e8 100%); z-index:-1; }}
     header, main, footer {{ max-width:1400px; margin:0 auto; padding:20px; }}
-    header {{ padding-top:28px; }}
-    h1 {{ margin:0 0 6px; font-size:28px; }}
+    header {{ padding-top:30px; }}
+    .hero {{ display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }}
+    h1 {{ margin:0 0 6px; font-size:32px; line-height:1.1; }}
     .meta {{ color:var(--muted); font-size:13px; }}
-    .generated {{ margin-top:10px; padding:10px 12px; border:1px solid var(--line); background:#fff; border-radius:6px; font-weight:600; }}
-    .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:18px 0; }}
-    .card {{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; }}
-    .card span {{ display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
-    .card strong {{ display:block; font-size:30px; margin-top:4px; }}
-    section {{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin:16px 0; }}
+    .generated {{ margin-top:14px; padding:10px 12px; border:1px solid var(--line); background:rgba(255,255,255,.78); border-radius:8px; font-weight:600; }}
+    .cards {{ display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:12px; margin:18px 0; }}
+    .metric {{ appearance:none; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; color:var(--text); cursor:pointer; box-shadow:0 1px 0 rgba(24,33,47,.03); min-width:0; }}
+    .metric:hover, .metric.active {{ transform:translateY(-1px); box-shadow:var(--shadow); border-color:#b9c6d8; }}
+    .metric span {{ display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
+    .metric strong {{ display:block; font-size:30px; margin-top:4px; }}
+    .metric-blocked strong, .metric-overdue strong, .metric-malformed strong {{ color:var(--red); }}
+    .metric-waiting strong, .metric-stale strong {{ color:var(--amber); }}
+    .metric-inbox strong {{ color:var(--violet); }}
+    section {{ background:rgba(255,255,255,.9); border:1px solid var(--line); border-radius:8px; padding:16px; margin:16px 0; box-shadow:0 1px 0 rgba(24,33,47,.03); }}
     h2 {{ margin:0 0 12px; font-size:18px; }}
     h3 {{ margin:0 0 8px; font-size:14px; }}
-    .risk-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }}
+    .toolbar {{ display:grid; grid-template-columns:minmax(220px,2fr) repeat(3,minmax(140px,1fr)) auto; gap:10px; align-items:end; }}
+    .field label {{ display:block; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; margin-bottom:5px; }}
+    input, select, .reset-btn {{ width:100%; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:7px; padding:9px 10px; font:inherit; font-size:13px; }}
+    .reset-btn {{ cursor:pointer; font-weight:700; }}
+    .reset-btn:hover {{ border-color:#b9c6d8; box-shadow:0 4px 14px rgba(24,33,47,.08); }}
+    .summary-line {{ color:var(--muted); font-size:13px; margin-top:10px; }}
+    .risk-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr)); gap:12px; min-width:0; }}
     .risk-grid section {{ margin:0; background:#fbfcfe; }}
+    .risk-card {{ position:relative; border-left:4px solid var(--blue); overflow:visible; min-width:0; }}
+    .risk-card::before {{ content:none; }}
+    .risk-card strong {{ position:absolute; top:14px; right:16px; font-size:26px; }}
+    .risk-card ul {{ margin:10px 0 0; padding-left:18px; padding-right:38px; color:var(--muted); min-width:0; }}
+    .risk-card li {{ overflow-wrap:anywhere; word-break:break-word; }}
+    .risk-overdue, .risk-blocked, .risk-malformed-section-0a {{ border-left-color:var(--red); }}
+    .risk-waiting, .risk-stale, .risk-missing-target-date {{ border-left-color:var(--amber); }}
     .table-wrap {{ overflow-x:auto; }}
     table {{ width:100%; border-collapse:collapse; font-size:13px; }}
     th, td {{ border-bottom:1px solid var(--line); padding:9px 10px; text-align:left; vertical-align:top; }}
-    th {{ background:#eef2f7; white-space:nowrap; }}
+    th {{ background:#eef2f7; white-space:nowrap; position:sticky; top:0; z-index:1; }}
     tr.overdue td {{ background:#fff1f0; }}
     tr.stale td {{ box-shadow: inset 4px 0 0 var(--amber); }}
     tr.malformed td {{ color:var(--red); font-weight:600; }}
+    .task-name {{ font-weight:700; min-width:180px; }}
+    .pill {{ display:inline-flex; align-items:center; min-height:22px; border-radius:999px; padding:2px 9px; font-weight:700; font-size:12px; background:#eef2f7; color:var(--muted); white-space:nowrap; }}
+    .status-active {{ background:var(--blue-soft); color:var(--blue); }}
+    .status-blocked {{ background:var(--red-soft); color:var(--red); }}
+    .status-waiting, .status-paused, .status-needs-triage {{ background:var(--amber-soft); color:var(--amber); }}
+    .status-done {{ background:var(--green-soft); color:var(--green); }}
+    .risk-yes {{ background:var(--red-soft); color:var(--red); }}
+    .risk-no {{ background:var(--green-soft); color:var(--green); }}
+    .risk-unknown {{ background:#eef2f7; color:var(--muted); }}
+    .path-text {{ display:block; color:var(--muted); font-size:11px; margin-top:2px; }}
+    .empty-state, .muted {{ color:var(--muted); }}
     a {{ color:var(--blue); text-decoration:none; }}
     a:hover {{ text-decoration:underline; }}
     footer {{ color:var(--muted); font-size:13px; padding-bottom:32px; }}
-    @media (max-width: 700px) {{
+    @media (max-width: 1050px) {{
+      .cards {{ grid-template-columns:repeat(4,minmax(0,1fr)); }}
+      .toolbar {{ grid-template-columns:1fr 1fr; }}
+    }}
+    @media (max-width: 760px) {{
       header, main, footer {{ padding-left:12px; padding-right:12px; }}
       h1 {{ font-size:23px; }}
-      .card strong {{ font-size:24px; }}
-      th, td {{ padding:8px; }}
+      .hero {{ display:block; }}
+      .cards {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+      .metric strong {{ font-size:24px; }}
+      .toolbar {{ grid-template-columns:1fr; }}
+      .risk-grid {{ grid-template-columns:1fr; }}
+      .risk-card strong {{ position:static; display:block; margin-top:-2px; font-size:22px; }}
+      .risk-card ul {{ padding-right:0; }}
+      .table-wrap {{ overflow:visible; }}
+      table, thead, tbody, tr, td {{ display:block; width:100%; }}
+      thead {{ display:none; }}
+      tr {{ border:1px solid var(--line); border-radius:8px; margin:10px 0; background:var(--card); overflow:hidden; }}
+      th, td {{ padding:8px 10px; }}
+      td {{ display:grid; grid-template-columns:118px minmax(0,1fr); gap:10px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }}
+      td::before {{ content:attr(data-label); color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }}
+      td:last-child {{ border-bottom:0; }}
+      tr.overdue td {{ background:transparent; }}
+      tr.overdue {{ background:var(--red-soft); }}
+      tr.stale td {{ box-shadow:none; }}
+      tr.stale {{ box-shadow:inset 4px 0 0 var(--amber); }}
     }}
     @media (prefers-color-scheme: dark) {{
-      :root {{ --bg:#111318; --text:#e8edf4; --muted:#a8b3c2; --line:#303846; --card:#191d25; --red:#ff9b90; --amber:#f8c16b; --blue:#8ab4ff; }}
+      :root {{ --bg:#111318; --text:#e8edf4; --muted:#a8b3c2; --line:#303846; --card:#191d25; --red:#ff9b90; --red-soft:#3a1d1b; --amber:#f8c16b; --amber-soft:#332617; --blue:#8ab4ff; --blue-soft:#17253d; --green:#7ee2a8; --green-soft:#12281d; --violet:#c4b5fd; --violet-soft:#271f3f; --shadow:0 18px 34px rgba(0,0,0,.32); }}
+      body::before {{ background:linear-gradient(135deg,#171b24 0%,#17253d 45%,#332617 100%); }}
+      section {{ background:rgba(25,29,37,.94); }}
       th {{ background:#222936; }}
       tr.overdue td {{ background:#3a1d1b; }}
       .risk-grid section {{ background:#151922; }}
@@ -622,12 +743,62 @@ def render_html(data: dict[str, Any]) -> str:
 </head>
 <body>
   <header>
-    <h1>PM Dashboard - {badge(data['project_name'])}</h1>
-    <div class="meta">Generated {badge(data['generated_at'])} from {badge(data['project_root'])}</div>
+    <div class="hero">
+      <div>
+        <h1>PM Dashboard - {badge(data['project_name'])}</h1>
+        <div class="meta">Generated {badge(data['generated_at'])} from {badge(data['project_root'])}</div>
+      </div>
+    </div>
     <div class="generated">Generated file. Do not edit manually.</div>
   </header>
   <main>
     <div class="cards">{cards}</div>
+    <section>
+      <h2>Filter and sort</h2>
+      <div class="toolbar" aria-label="Dashboard filters">
+        <div class="field">
+          <label for="search">Search</label>
+          <input id="search" type="search" placeholder="Task, owner, blocker, next action">
+        </div>
+        <div class="field">
+          <label for="status-filter">Status</label>
+          <select id="status-filter">
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="blocked">Blocked</option>
+            <option value="waiting">Waiting</option>
+            <option value="paused">Paused</option>
+            <option value="needs-triage">Needs triage</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="risk-filter">Risk</label>
+          <select id="risk-filter">
+            <option value="all">All risk states</option>
+            <option value="overdue">Overdue</option>
+            <option value="blocked">Blocked</option>
+            <option value="waiting">Waiting</option>
+            <option value="stale">Stale</option>
+            <option value="malformed">Malformed</option>
+            <option value="clear">No flagged risk</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sort-by">Sort by</label>
+          <select id="sort-by">
+            <option value="priority">Priority</option>
+            <option value="target">Target date</option>
+            <option value="status">Status</option>
+            <option value="inbox">Inbox count</option>
+            <option value="updated">Last updated</option>
+            <option value="task">Task name</option>
+          </select>
+        </div>
+        <button class="reset-btn" id="reset-filters" type="button">Reset</button>
+      </div>
+      <div class="summary-line"><span id="visible-count">{len(data["tasks"])}</span> of {len(data["tasks"])} active handoffs shown.</div>
+    </section>
     <section>
       <h2>This week</h2>
       <div class="table-wrap">
@@ -644,7 +815,7 @@ def render_html(data: dict[str, Any]) -> str:
     <section>
       <h2>Active handoffs</h2>
       <div class="table-wrap">
-        <table>
+        <table id="handoffs-table">
           <thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Target finish date</th><th>Deadline type</th><th>Confidence</th><th>At risk</th><th>Waiting on</th><th>Next human decision</th><th>Next agent action</th><th>Inbox</th><th>Last updated</th><th>Paths</th></tr></thead>
           <tbody>{''.join(table_rows) or '<tr><td colspan="13">No active handoffs.</td></tr>'}</tbody>
         </table>
@@ -652,6 +823,75 @@ def render_html(data: dict[str, Any]) -> str:
     </section>
   </main>
   <footer>Generated file. Do not edit manually. Edit the relevant HANDOFF.md Section 0A and rebuild.</footer>
+  <script>
+    const tableBody = document.querySelector('#handoffs-table tbody');
+    const rows = Array.from(tableBody.querySelectorAll('tr[data-task]'));
+    const search = document.querySelector('#search');
+    const statusFilter = document.querySelector('#status-filter');
+    const riskFilter = document.querySelector('#risk-filter');
+    const sortBy = document.querySelector('#sort-by');
+    const visibleCount = document.querySelector('#visible-count');
+    const reset = document.querySelector('#reset-filters');
+
+    function rowText(row) {{
+      return row.textContent.toLowerCase();
+    }}
+
+    function matchesRisk(row, risk) {{
+      if (risk === 'all') return true;
+      return row.dataset.risk.split(' ').includes(risk);
+    }}
+
+    function sortValue(row, key) {{
+      if (key === 'priority' || key === 'inbox') return Number(row.dataset[key] || 0);
+      return (row.dataset[key] || '').toLowerCase();
+    }}
+
+    function applyFilters() {{
+      const term = search.value.trim().toLowerCase();
+      const status = statusFilter.value;
+      const risk = riskFilter.value;
+      const key = sortBy.value;
+      const sorted = rows.slice().sort((a, b) => {{
+        const av = sortValue(a, key);
+        const bv = sortValue(b, key);
+        if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+        return String(av).localeCompare(String(bv));
+      }});
+      let shown = 0;
+      sorted.forEach((row) => {{
+        const visible = (!term || rowText(row).includes(term))
+          && (status === 'all' || row.dataset.status === status)
+          && matchesRisk(row, risk);
+        row.hidden = !visible;
+        if (visible) shown += 1;
+        tableBody.appendChild(row);
+      }});
+      visibleCount.textContent = shown;
+    }}
+
+    [search, statusFilter, riskFilter, sortBy].forEach((control) => control.addEventListener('input', applyFilters));
+    reset.addEventListener('click', () => {{
+      search.value = '';
+      statusFilter.value = 'all';
+      riskFilter.value = 'all';
+      sortBy.value = 'priority';
+      document.querySelectorAll('.metric.active').forEach((metric) => metric.classList.remove('active'));
+      applyFilters();
+    }});
+    document.querySelectorAll('.metric').forEach((metric) => {{
+      metric.addEventListener('click', () => {{
+        document.querySelectorAll('.metric.active').forEach((item) => item.classList.remove('active'));
+        metric.classList.add('active');
+        const metricKey = metric.dataset.metric;
+        riskFilter.value = metricKey === 'blocked' || metricKey === 'waiting' || metricKey === 'overdue' || metricKey === 'stale' || metricKey === 'malformed'
+          ? metricKey
+          : 'all';
+        applyFilters();
+      }});
+    }});
+    applyFilters();
+  </script>
 </body>
 </html>
 """
