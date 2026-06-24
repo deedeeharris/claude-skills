@@ -51,7 +51,7 @@ digraph bg_it {
 
 | Archetype | Skill prefix |
 |---|---|
-| `babysitter:yolo` | `babysitter:yolo` |
+| `babysitter:yolo` / `yolo` (autonomous) | `yolo` |
 | `babysitter` (with breakpoints) | `babysitter` |
 | `superpowers:executing-plans` | `superpowers:executing-plans` |
 | `superpowers:subagent-driven-development` | `superpowers:subagent-driven-development` |
@@ -60,6 +60,8 @@ digraph bg_it {
 | custom / interactive | ask human what slash command to use |
 
 **All archetypes are valid** — including subagent-driven-development, interactive sessions, and prompts with no skill prefix at all.
+
+> **Deprecated:** `/babysitter:yolo` is no longer used in Claude Code — use `/yolo` for autonomous runs. A prompt whose frontmatter says `archetype: babysitter:yolo` still maps to the `/yolo` slash command.
 
 ## The commands
 
