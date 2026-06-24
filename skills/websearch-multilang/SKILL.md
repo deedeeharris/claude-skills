@@ -1,6 +1,6 @@
 ---
 name: websearch-multilang
-description: Use when the task is to FIND ideas, solutions, root causes, workarounds, prior art, or benchmarks ONLINE — researching a problem/idea/solution on the web — NOT a simple single-doc API lookup. Searches across MANY languages in parallel: spawns one research subagent per language (English, Chinese Simplified, Chinese Traditional, French, Russian, Hebrew, Spanish), each searching native technical terms and native forums, then synthesizes. Triggers: "research this", "search online for", "find a solution/idea/approach", "how do people solve", "is there prior art", "find workarounds", "deep multilingual web research".
+description: 'Use when the task is to FIND ideas, solutions, root causes, workarounds, prior art, or benchmarks ONLINE — researching a problem/idea/solution on the web — NOT a simple single-doc API lookup. Searches across MANY languages in parallel: spawns one research subagent per language (English, Chinese Simplified, Chinese Traditional, French, Russian, Hebrew, Spanish), each searching native technical terms and native forums, then synthesizes. Triggers: "research this", "search online for", "find a solution/idea/approach", "how do people solve", "is there prior art", "find workarounds", "deep multilingual web research".'
 ---
 
 # websearch-multilang — Parallel Multilingual Web Research
