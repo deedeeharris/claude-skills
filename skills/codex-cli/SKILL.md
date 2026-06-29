@@ -1,193 +1,314 @@
+---
+name: codex-cli
+description: Use when delegating coding, review, analysis, testing, or repo-maintenance work to OpenAI Codex CLI from Claude Code or another agent, especially when the user asks to run codex, get a Codex review, use codex exec, save Codex output, stream JSON events, or run autonomous codebase work in a local repository.
+---
+
 # Codex CLI
 
-Delegate tasks to OpenAI Codex CLI. Codex runs autonomously in yolo mode, can read/write files, run commands, and produce structured output. Saves the final response to a file and optionally streams all events as JSONL.
+Delegate work to OpenAI Codex CLI. Codex runs in a separate local process, can inspect or edit files according to its sandbox mode, can run commands, and can save its final response to a file.
 
-**Usage:** `/codex <task description> [--save <output-file>] [--review] [--uncommitted] [--base <branch>] [--model <model>] [--sandbox <mode>]`
+Use this skill for slash-style requests such as:
 
-**Examples:**
-- `/codex find the top 5 bugs in this codebase --save docs/codex-bugs.md`
-- `/codex refactor backend/app/services/container_manager.py to use async/await`
-- `/codex review --uncommitted --save docs/codex-review.md`
-- `/codex review --base main --save docs/codex-review.md`
-- `/codex write unit tests for all FastAPI routes --save backend/tests/generated_tests.py`
-- `/codex create GitHub issues for all bugs you find`
-- `/codex explain the Docker networking architecture --save docs/docker-arch.md`
+```text
+/codex find the top 5 bugs in this codebase --save docs/codex-bugs.md
+/codex review --uncommitted --save audits/codex-review.md
+/codex review --base main --save audits/codex-review.md
+/codex write unit tests for all FastAPI routes --save backend/tests/generated_tests.py
+```
 
-## Instructions
+## Current CLI Contract
 
-### Step 1 — Parse arguments
+Verified against `codex-cli 0.130.0`:
 
-Extract from the raw args:
-- **task**: the natural-language instruction (everything before `--` flags)
-- **`--save <file>`**: path to write Codex's final response (passed as `--output-last-message`)
-- **`--review`**: use `codex exec review` subcommand instead of `codex exec`
-- **`--uncommitted`**: (review mode only) review staged/unstaged/untracked changes
-- **`--base <branch>`**: (review mode only) review diff against a base branch
-- **`--model <name>`**: model to use — defaults to Codex's auto. See [Supported Models](#supported-models) below for valid IDs. **Never guess or hallucinate a model name** — always use the list below or check the live docs first.
-- **`--sandbox <mode>`**: `read-only`, `workspace-write`, or `danger-full-access` (default: `workspace-write` for tasks, `read-only` for review)
-- **`--json`**: if present, also capture all JSONL events to `<save-file>.events.jsonl`
+- `codex exec` reads instructions from stdin when no prompt is provided or when the prompt argument is `-`.
+- If stdin is piped and a prompt argument is also provided, Codex appends stdin as a `<stdin>` block; avoid that mixed mode for this skill.
+- `codex exec review` reads custom review instructions from stdin only when the prompt argument is `-`.
+- `--instructions-file` is not a supported flag in `codex-cli 0.130.0`.
+- `-o` is short for `--output-last-message <FILE>`.
+- `--json` streams events to stdout as JSONL.
+- Sandbox modes are `read-only`, `workspace-write`, and `danger-full-access`.
+- `--dangerously-bypass-approvals-and-sandbox` skips confirmations and sandboxing. Use it only when the user explicitly wants yolo behavior or the surrounding runner is already sandboxed.
 
-### Step 2 — Gather context automatically
-
-Before running Codex, collect real project context to enrich the prompt:
+Before relying on a newly installed Codex version, verify flags with:
 
 ```bash
-# Project structure (top 2 levels, skip noise)
-find . -maxdepth 2 -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/.venv/*' 2>/dev/null | head -60
+codex --version
+codex exec --help
+codex exec review --help
+```
 
-# Recent commits
+## Parse Arguments
+
+Extract from the raw request:
+
+- `task`: natural-language instruction before flags.
+- `--save <file>`: final response output path. Pass it to `-o`.
+- `--review`: use `codex exec review`.
+- `--uncommitted`: review staged, unstaged, and untracked changes.
+- `--base <branch>`: review diff against a base branch.
+- `--model <name>`: pass through as `-m <model>`. Never invent model names.
+- `--sandbox <mode>`: pass through to `codex exec` for task mode.
+- `--json`: also capture JSONL events to `<save-file>.events.jsonl`.
+- `--yolo`: use `--dangerously-bypass-approvals-and-sandbox`.
+
+Defaults:
+
+- Save path: `audits/codex/<slug>-<timestamp>.md`.
+- Task sandbox: `workspace-write`.
+- Review mode: do not use yolo unless the user explicitly asks.
+- Prompt path: `.codex/prompts/<slug>-<timestamp>.md`.
+
+## Gather Context
+
+Before running Codex, collect a small amount of real repo context and put it into the prompt:
+
+```bash
+git rev-parse --show-toplevel 2>/dev/null
+git status --short 2>/dev/null
 git log --oneline -10 2>/dev/null
-
-# Uncommitted changes summary
-git diff --stat HEAD 2>/dev/null | head -20
+find . -maxdepth 2 -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/.venv/*' 2>/dev/null | head -80
 ```
 
-Use this to embed real paths and recent context into the prompt.
+On PowerShell, use equivalent native commands:
 
-### Step 3 — Save prompt to file, then build the command
-
-**CRITICAL: Never pass the prompt as an inline shell argument.** Codex hangs waiting for stdin when the prompt is passed inline on some platforms. Always write the enriched prompt to a file first, then reference it with `--instructions-file`.
-
-**Prompt file location:** `.codex/prompts/<slug>-<timestamp>.md` (create dir if needed, never write to project root).
-
-```bash
-mkdir -p .codex/prompts
-PROMPT_FILE=".codex/prompts/<slug>-$(date +%Y%m%d-%H%M%S).md"
-cat > "$PROMPT_FILE" << 'PROMPT_EOF'
-<enriched_prompt>
-PROMPT_EOF
+```powershell
+git rev-parse --show-toplevel 2>$null
+git status --short 2>$null
+git log --oneline -10 2>$null
+Get-ChildItem -Force -Depth 2 | Where-Object {
+  $_.FullName -notmatch '\\.git|node_modules|__pycache__|\\.venv'
+} | Select-Object -First 80 FullName
 ```
 
-**Standard task (yolo, write mode):**
-```bash
-codex exec --dangerously-bypass-approvals-and-sandbox \
-  --sandbox workspace-write \
-  -o "<save-file>" \
-  --instructions-file "$PROMPT_FILE"
-```
+## Write Prompt File
 
-**With JSON events:**
-```bash
-codex exec --dangerously-bypass-approvals-and-sandbox \
-  --sandbox workspace-write \
-  -o "<save-file>" \
-  --json \
-  --instructions-file "$PROMPT_FILE" > "<save-file>.events.jsonl"
-```
+Never pass a long prompt as an inline shell argument. Write the enriched prompt to `.codex/prompts/` and feed it to stdin.
 
-**Review — uncommitted changes:**
-```bash
-codex exec review \
-  --dangerously-bypass-approvals-and-sandbox \
-  --uncommitted \
-  -o "<save-file>" \
-  --instructions-file "$PROMPT_FILE"
-```
+PowerShell:
 
-**Review — against base branch:**
-```bash
-codex exec review \
-  --dangerously-bypass-approvals-and-sandbox \
-  --base <branch> \
-  -o "<save-file>" \
-  --instructions-file "$PROMPT_FILE"
-```
-
-**With specific model:**
-```bash
-codex exec --dangerously-bypass-approvals-and-sandbox \
-  -m <model> \
-  -o "<save-file>" \
-  --instructions-file "$PROMPT_FILE"
-```
-
-**Output file location:** If no `--save` is specified, default to `audits/codex/<slug>-<timestamp>.md`. Never write output to the project root. Create the directory if needed:
-```bash
-mkdir -p audits/codex
-```
-
-### Step 4 — Build a rich, detailed prompt
-
-For task mode (not `--review`), do NOT pass the raw task verbatim. Construct an enriched prompt:
-
-```
-Project: <name from README or git remote>
-Root: <absolute path to cwd>
-Stack: <language/framework from key files>
+```powershell
+New-Item -ItemType Directory -Force -Path ".codex/prompts","audits/codex" | Out-Null
+$ts = Get-Date -Format "yyyyMMdd-HHmmss"
+$PROMPT_FILE = ".codex/prompts/<slug>-$ts.md"
+@'
+Project: <project name>
+Root: <absolute path from `git rev-parse --show-toplevel` or current working directory>
+Stack: <detected stack>
 
 Key files:
-- <list real file paths from Step 2 that are relevant to the task>
+- <paths>
 
-Recent changes:
-- <git log summary from Step 2>
+Recent context:
+- <git status/log summary>
 
-Task: <user's task, stated precisely>
+Task:
+<precise task>
 
-Output: Write your findings/results to <save-file>.
-If creating GitHub issues: use `gh issue create --title "..." --body "..." --label bug` for each issue.
+Output:
+Write the final result to <save-file>.
+'@ | Set-Content -LiteralPath $PROMPT_FILE -Encoding utf8
 ```
 
-For `--review` mode: pass custom review instructions as the positional prompt argument if the user gave extra guidance (e.g. "focus on security"). Otherwise omit the prompt and let Codex use its default review behavior.
-
-### Step 5 — Run Codex
-
-Run in the **background** by default (Codex tasks take time). Use `run_in_background: true` on the Bash call.
-
-Always write the prompt to `.codex/prompts/` first (Step 3), then run:
+Bash:
 
 ```bash
-cd <project root>
 mkdir -p .codex/prompts audits/codex
 PROMPT_FILE=".codex/prompts/<slug>-$(date +%Y%m%d-%H%M%S).md"
 cat > "$PROMPT_FILE" << 'PROMPT_EOF'
-<enriched_prompt>
+Project: <project name>
+Root: <absolute path from `git rev-parse --show-toplevel` or current working directory>
+Stack: <detected stack>
+
+Key files:
+- <paths>
+
+Recent context:
+- <git status/log summary>
+
+Task:
+<precise task>
+
+Output:
+Write the final result to <save-file>.
 PROMPT_EOF
-codex exec --dangerously-bypass-approvals-and-sandbox \
-  --sandbox workspace-write \
-  -o "<save-file>" \
-  --instructions-file "$PROMPT_FILE"
 ```
 
-Tell the user: "Codex is running in the background. Prompt saved to `.codex/prompts/...`. Output will be saved to `<save-file>`."
+## Run Task Mode
 
-If the user explicitly asks to wait (`--wait`), run in the foreground instead and stream output.
+PowerShell, normal sandboxed task:
 
-### Step 6 — Report result
+```powershell
+Get-Content -Raw -LiteralPath $PROMPT_FILE | codex exec `
+  --sandbox workspace-write `
+  -o "<save-file>" `
+  -
+```
 
-After Codex completes (background notification) or finishes (foreground):
-- Show the path to the saved output file
-- If GitHub issues were created, list their URLs if available in the output
-- Do not re-summarize Codex's output — just confirm completion and point to the file
+Bash, normal sandboxed task:
+
+```bash
+cat "$PROMPT_FILE" | codex exec \
+  --sandbox workspace-write \
+  -o "<save-file>" \
+  -
+```
+
+PowerShell, yolo task:
+
+```powershell
+Get-Content -Raw -LiteralPath $PROMPT_FILE | codex exec `
+  --dangerously-bypass-approvals-and-sandbox `
+  -o "<save-file>" `
+  -
+```
+
+Bash, yolo task:
+
+```bash
+cat "$PROMPT_FILE" | codex exec \
+  --dangerously-bypass-approvals-and-sandbox \
+  -o "<save-file>" \
+  -
+```
+
+PowerShell with JSON events:
+
+```powershell
+Get-Content -Raw -LiteralPath $PROMPT_FILE | codex exec `
+  --sandbox workspace-write `
+  -o "<save-file>" `
+  --json `
+  - > "<save-file>.events.jsonl"
+```
+
+Bash with JSON events:
+
+```bash
+cat "$PROMPT_FILE" | codex exec \
+  --sandbox workspace-write \
+  -o "<save-file>" \
+  --json \
+  - > "<save-file>.events.jsonl"
+```
+
+`-o <save-file>` captures only the final natural-language response and is not affected by redirecting stdout. `--json` writes structured event logs to stdout, so redirect stdout to the `.events.jsonl` file when JSON capture is requested.
+
+With a specific model:
+
+```bash
+cat "$PROMPT_FILE" | codex exec \
+  --sandbox workspace-write \
+  -m <model> \
+  -o "<save-file>" \
+  -
+```
+
+## Run Review Mode
+
+PowerShell, uncommitted review with default Codex review behavior:
+
+```powershell
+codex exec review `
+  --uncommitted `
+  -o "<save-file>"
+```
+
+Bash, uncommitted review with default Codex review behavior:
+
+```bash
+codex exec review \
+  --uncommitted \
+  -o "<save-file>"
+```
+
+PowerShell, uncommitted review with custom instructions:
+
+```powershell
+Get-Content -Raw -LiteralPath $PROMPT_FILE | codex exec review `
+  --uncommitted `
+  -o "<save-file>" `
+  -
+```
+
+Bash, uncommitted review with custom instructions:
+
+```bash
+cat "$PROMPT_FILE" | codex exec review \
+  --uncommitted \
+  -o "<save-file>" \
+  -
+```
+
+PowerShell, review against a base branch:
+
+```powershell
+codex exec review `
+  --base <branch> `
+  -o "<save-file>"
+```
+
+Bash, review against a base branch:
+
+```bash
+codex exec review \
+  --base <branch> \
+  -o "<save-file>"
+```
+
+PowerShell, review against a base branch with custom instructions:
+
+```powershell
+Get-Content -Raw -LiteralPath $PROMPT_FILE | codex exec review `
+  --base <branch> `
+  -o "<save-file>" `
+  -
+```
+
+Bash, review against a base branch with custom instructions:
+
+```bash
+cat "$PROMPT_FILE" | codex exec review \
+  --base <branch> \
+  -o "<save-file>" \
+  -
+```
+
+Use `--dangerously-bypass-approvals-and-sandbox` in review mode only when the user explicitly requests yolo review behavior.
+
+## Background Execution
+
+Codex work often takes time. Run in the background unless the user explicitly asks you to wait. Codex CLI has no wait flag; waiting is a behavior of the agent running this skill, not a CLI option.
+
+Tell the user:
+
+```text
+Codex is running in the background. Prompt saved to .codex/prompts/<file>. Output will be saved to <save-file>.
+```
+
+When Codex finishes, report the saved output path. Do not re-summarize Codex output unless the user asks.
 
 ## Supported Models
 
-> **Live docs:** https://developers.openai.com/codex/models — check here for the latest list before using a model.
-> **NEVER hallucinate a model ID.** If the user asks for a model you're unsure about, look it up first.
+Do not maintain a hard-coded model table in this skill. Model availability changes by Codex version, sign-in method, plan, provider, and date. When the user asks for a specific model, verify it before passing `-m`.
 
-Models available as of April 2026 (pass as `-m <id>`):
+Use the local model catalog first:
 
-| Model ID | Description |
-|---|---|
-| `gpt-5.5` | Newest frontier — complex coding, computer use, research |
-| `gpt-5.4` | Flagship — strong reasoning + agentic workflows |
-| `gpt-5.4-mini` | Fast/cheap mini variant for responsive tasks and subagents |
-| `gpt-5.3-codex` | Industry-leading coding model for complex software engineering |
-| `gpt-5.3-codex-spark` | Text-only research preview, near-instant iteration |
-| `gpt-5.2` | Previous general-purpose model for coding and agentic tasks |
+```bash
+codex debug models
+```
 
-Default (no `-m`): Codex picks automatically based on task complexity.
+`codex debug models` may refresh the model catalog and can require authentication or network access. Use `codex debug models --bundled` when you only need the model catalog bundled with the installed binary.
 
-Codex also accepts any model from providers supporting the OpenAI Chat Completions or Responses API, via `--provider`.
+Then check official OpenAI Codex docs when network access is available. If the requested model is still uncertain, ask the user before running Codex with `-m`.
 
-## Notes
+## Safety And Output Rules
 
-- `--dangerously-bypass-approvals-and-sandbox` is the yolo equivalent — skips all confirmations
-- For read-only tasks (review, analysis), prefer `--sandbox read-only` over full bypass
-- `--output-last-message` / `-o` saves only the final natural-language response
-- `--json` streams all structured events (tool calls, thinking steps) as JSONL — useful for debugging
-- Codex uses OpenAI's API — this consumes OpenAI account credits, not Claude Code tokens
-- If Codex is not authenticated, tell the user to run `! codex login`
-- `codex exec review` has built-in git-diff awareness — it automatically reads the diff; no need to describe changes
-- For large tasks (full codebase review, test generation), always run in background
-- **Prompt files** go in `.codex/prompts/` — never inline the prompt as a shell argument (causes stdin hang)
-- **Output files** go in `audits/codex/` by default — never write to the project root
+- Prompt files go in `.codex/prompts/`.
+- Default output files go in `audits/codex/`.
+- Never write prompt or output files to the repo root.
+- Prefer `--sandbox read-only` or review mode for audit-only work.
+- Prefer `--sandbox workspace-write` for normal implementation work.
+- Use `--dangerously-bypass-approvals-and-sandbox` only for explicitly approved yolo runs.
+- If Codex is not authenticated, tell the user to run `codex login`.
+- If the CLI rejects a flag, run `codex exec --help` and adjust to the installed version.
+- Codex uses OpenAI account credits, not Claude Code tokens.
