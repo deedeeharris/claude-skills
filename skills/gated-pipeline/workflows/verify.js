@@ -104,7 +104,8 @@ const waitNote = (lsTarget, minutes) => `It can run for up to ~${minutes} minute
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
 async function reviewed(viaCodex, fallback) {
   const r = await viaCodex()
-  if (!r || r.codex_available !== false) return r && { ...r, reviewer: 'codex' }
+  // An explicit relay blocker (refused command, failed setup) always stops the stage; it never falls back.
+  if (!r || r.blocked || r.codex_available !== false) return r && { ...r, reviewer: 'codex' }
   if ((A.review_fallback || 'none') !== 'opus-high') return { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
   const f = await fallback()
   return f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }

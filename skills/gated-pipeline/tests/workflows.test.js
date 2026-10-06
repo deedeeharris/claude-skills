@@ -242,6 +242,45 @@ test('when codex is capped, opus-high does not fall back and design returns BLOC
   assert.ok(!calls.some(c => c.options.model === 'opus'));
 });
 
+const blockedUnavailable = { ...unavailable, blocked: true, note: 'git worktree add was refused' };
+
+test('when a design relay reports blocked with codex unavailable and opus-high, design returns BLOCKED without an Opus review', async () => {
+  const { result, calls } = await run('design', { ...designArgs, review_fallback: 'opus-high' }, [{ blocked: false }, blockedUnavailable]);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(calls.length, 2);
+  assert.ok(!calls.some(c => c.options.model === 'opus'));
+});
+
+test('when a build review or security relay reports blocked with codex unavailable and opus-high, build returns BLOCKED without an Opus review', async () => {
+  const reviewBlocked = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
+    [work, { ...blockedUnavailable, head_sha: '', changed: [] }]);
+  assert.equal(reviewBlocked.result.status, 'BLOCKED');
+  assert.equal(reviewBlocked.result.stage, 'review');
+  assert.equal(reviewBlocked.calls.length, 2);
+  assert.ok(!reviewBlocked.calls.some(c => c.options.model === 'opus'));
+  const securityBlocked = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
+    [work, codeReview, { verdict: 'ERROR', blocking: [], codex_available: false, blocked: true, note: 'refused' }]);
+  assert.equal(securityBlocked.result.status, 'BLOCKED');
+  assert.equal(securityBlocked.result.stage, 'security');
+  assert.equal(securityBlocked.calls.length, 3);
+  assert.ok(!securityBlocked.calls.some(c => c.options.model === 'opus'));
+});
+
+test('when a verify final review or compliance relay reports blocked with codex unavailable and opus-high, verify returns BLOCKED without an Opus review', async () => {
+  const finalBlocked = await run('verify', { ...verifyArgs, review_fallback: 'opus-high' },
+    [preflight, proofs, { verdict: 'ERROR', confirmed_findings: [], head_sha: sha, codex_available: false, blocked: true }]);
+  assert.equal(finalBlocked.result.status, 'BLOCKED');
+  assert.equal(finalBlocked.result.stage, 'final review');
+  assert.equal(finalBlocked.calls.length, 3);
+  assert.ok(!finalBlocked.calls.some(c => c.options.model === 'opus'));
+  const complianceBlocked = await run('verify', { ...verifyArgs, review_fallback: 'opus-high' },
+    [preflight, proofs, { ...finalReview, codex_available: true }, { verdict: 'ERROR', blocking: [], requirements: [], codex_available: false, blocked: true, ...pinned }]);
+  assert.equal(complianceBlocked.result.status, 'BLOCKED');
+  assert.equal(complianceBlocked.result.stage, 'compliance');
+  assert.equal(complianceBlocked.calls.length, 4);
+  assert.ok(!complianceBlocked.calls.some(c => c.options.model === 'opus'));
+});
+
 test('when codex is unavailable and review_fallback is opus-high, build reviews and security-checks with Opus high', async () => {
   const opusReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [] };
   const { result, calls } = await run('build', { ...buildArgs, review_fallback: 'opus-high' },

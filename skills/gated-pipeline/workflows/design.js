@@ -74,7 +74,8 @@ const availNote = `First check that codex is AVAILABLE in this environment: run 
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
 async function reviewed(relay, fallback) {
   const r = await relay()
-  if (!r || r.codex_available !== false) return r && { ...r, reviewer: 'codex' }
+  // An explicit relay blocker (refused command, failed setup) always stops the stage; it never falls back.
+  if (!r || r.blocked || r.codex_available !== false) return r && { ...r, reviewer: 'codex' }
   if ((A.review_fallback || 'none') !== 'opus-high') return { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
   const f = await fallback()
   return f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }
@@ -102,7 +103,7 @@ function codex(kind, file, against, out, label, ph, inventory) {
     (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
     'Put each defect you verified against the document and the repo in confirmed_findings, anything plausible but unverified in other_findings, and one short line per reason for your verdict in verdict_reasons. ' +
     `verdict PASS only when confirmed_findings is empty. Do not edit any file.\n- ${RULES}`,
-    { label: `${label} (opus fallback)`, phase: ph, schema: REVIEW, model: 'opus', effort: 'high' }))
+    { label: `${label.replace(/^codex /, 'opus ')} (codex unavailable)`, phase: ph, schema: REVIEW, model: 'opus', effort: 'high' }))
 }
 
 async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
