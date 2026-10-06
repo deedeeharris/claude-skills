@@ -1,0 +1,32 @@
+# gated-pipeline config for this repo. The main session reads it and passes values to the workflows as args.
+branches:
+  work: dev                 # implementation commits land here
+  trunk: main               # PR target; the human merges
+reviews:
+  primary: codex            # cross-family reviewer (codex-review skill)
+  fallback: none            # e.g. agy; if every option is capped, WAIT
+  runner: ""                # ABSOLUTE path to codex-review/scripts/run-review.js (no ~: the workflows single-quote it, so ~ never expands)
+  codex_model: ""           # empty = let codex-review pick from the live catalog
+  codex_effort: high
+  review_timeout_seconds: 1200   # per codex attempt; a real review of a few files takes 10+ minutes
+agents:
+  impl_effort: medium       # Claude implementer/fixer reasoning effort
+  author_effort: medium     # PRD/spec author
+limits:
+  max_fix_rounds: 4         # build: codex FAIL -> fix -> re-review, at most this many times
+  max_design_rounds: 3      # design: per document
+tests:
+  unit_cmd: ""              # focused tests for the change
+  suite_cmd: ""             # full suite, always run LAST
+  lock_note: ""             # e.g. "only via scripts/test/run.sh, which takes a machine-wide lock; never delete the lock"
+  known_failures: []        # EXACT failing test ids that predate the feature (list, or one id per line)
+  clean_ignore: []          # repo-relative prefixes allowed to be dirty/untracked while tests run (e.g. a state dir)
+  suite_isolated: false     # true = run the suite in a fresh worktree of the reviewed commit (strongest; needs isolated_setup if deps are not committed)
+  isolated_setup: ""        # one-line setup run in that worktree first, e.g. "npm ci"
+verify_checks: []           # optional: [{name, how, budget_min, quiet, effort}]
+state:
+  mode: simple              # simple = <state_dir>/<feature>/<stage>/<run_id>/result.json; or a repo-specific harness note
+  state_dir: ""             # ABSOLUTE path OUTSIDE the repo, e.g. <home>/.pipeline-state/<repo-name>; run dirs (evidence, review worktrees) live here
+land:
+  allow_no_ci: false        # true ONLY if this repo has no CI; otherwise a PR with no checks yet stays CI_PENDING
+deploy_gate: "Never deploy without the human's explicit yes."
