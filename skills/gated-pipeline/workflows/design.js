@@ -7,16 +7,17 @@ export const meta = {
     { title: 'PRD review', detail: 'codex reviews the PRD' },
     { title: 'Spec', detail: 'write and revise the spec' },
     { title: 'Spec review', detail: 'codex reviews the spec against the PRD' },
+    { title: 'Freeze', detail: 'pin the reviewed spec and acceptance inventory' },
   ],
 }
 
 const A = args || {}
-const need = ['feature_id', 'repo', 'task', 'run_dir', 'review_runner']
+const need = ['feature_id', 'repo', 'task', 'run_dir', 'review_runner', 'execution_schema']
 const missing = need.filter(k => !A[k])
 if (missing.length) return { status: 'BLOCKED', reason: 'missing args: ' + missing.join(', ') }
 // Paths go into shell commands: single-quoted, and only from a conservative character set.
 const SAFE = /^[A-Za-z0-9._\/\\: +@-]+$/
-for (const k of ['repo', 'run_dir', 'review_runner']) {
+for (const k of ['repo', 'run_dir', 'review_runner', 'execution_schema']) {
   if (!SAFE.test(A[k]) || !/^([A-Za-z]:[\/\\]|\/)/.test(A[k])) return { status: 'BLOCKED', reason: `${k} must be an absolute path of safe characters (no ~, quotes, $ or backticks): ${A[k]}` }
 }
 
@@ -30,6 +31,7 @@ const MAX = A.max_rounds ?? 3
 const EFFORT = A.author_effort || 'medium'
 const prd = `${A.run_dir}/prd.md`
 const spec = `${A.run_dir}/spec.md`
+const manifest = `${A.run_dir}/execution-plan.json`
 const RULES = [
   `Repo: ${A.repo}. Write ONLY the file you are asked to write; do not change code, branches or git state.`,
   'Ground every statement in the repo as it is (read the code). No invented APIs, models or files.',
@@ -61,10 +63,11 @@ const REVIEW = {
 const disagreementOnly = r => r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && r.other_findings.length &&
   r.verdict_reasons.length > 0 && r.verdict_reasons.every(x => /model_rule_disagreement/.test(x))
 
-function codex(kind, file, against, out, label, ph) {
+function codex(kind, file, against, out, label, ph, inventory) {
   return agent(
     `Run an independent codex ${kind} review and report its verdict. Do not review the document yourself.\n` +
-    `Command (Bash): node ${q(A.review_runner)} --kind ${kind} --files ${q(file)}${against ? ` --against ${q(against)}` : ''} --repo ${q(A.repo)} --out-dir ${q(out)}` +
+    (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
+    `Command (Bash): node ${q(A.review_runner)} --kind ${kind} --files ${q(file)}${inventory ? ' ' + q(inventory) : ''}${against ? ` --against ${q(against)}` : ''} --repo ${q(A.repo)} --out-dir ${q(out)}` +
     `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}\n` +
     `It can run for up to ~${Math.ceil(TIMEOUT_S * 6 / 60) + 5} minutes: run it in the background and poll for ${out}/*/result.json with a bounded wait loop of that length.\n` +
     `Exit codes: 0 PASS, 1 FAIL, 3 NEEDS_HUMAN, 2 setup error (report ERROR). Read the result.json of the run folder THIS command created (the newest; ignore older folders). ` +
@@ -73,11 +76,11 @@ function codex(kind, file, against, out, label, ph) {
     { label, phase: ph, schema: REVIEW, effort: 'low' })
 }
 
-async function loop(kind, path, writePrompt, against, ph, rph) {
+async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
   let doc = await agent(writePrompt(null), { label: `${kind} draft`, phase: ph, schema: DOC, effort: EFFORT })
   if (!doc || doc.blocked) return { status: 'BLOCKED', stage: kind, reason: doc ? doc.blocked_reason : 'author died' }
   for (let round = 1; round <= MAX; round++) {
-    const r = await codex(kind, path, against, `${A.run_dir}/${kind}-review-${round}`, `codex ${kind} review ${round}`, rph)
+    const r = await codex(kind, path, against, `${A.run_dir}/${kind}-review-${round}`, `codex ${kind} review ${round}`, rph, inventory)
     if (!r || r.blocked || r.verdict === 'ERROR' || (r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && !disagreementOnly(r))) return { status: 'BLOCKED', stage: `${kind} review`, round, review: r }
     if (r.verdict === 'PASS' && !r.confirmed_findings.length) return { status: 'PASS', rounds: round, path }
     if (round === MAX) return { status: 'FAIL', stage: `${kind} review`, rounds: round, review: r }
@@ -99,10 +102,26 @@ if (p.status !== 'PASS') return { status: p.status, prd: p }
 
 phase('Spec')
 const s = await loop('spec', spec, items => items
-  ? `Revise the spec at ${spec} (traced against ${prd}) to resolve these confirmed codex findings (or explain why one is wrong):\n${items}\n- ${RULES}`
+  ? `Revise the spec at ${spec} and its execution inventory at ${manifest} (traced against ${prd}) to resolve these confirmed codex findings (or explain why one is wrong). Recompute spec_sha256 in the inventory after edits:\n${items}\n- ${RULES.replace('Write ONLY the file you are asked to write', 'Write ONLY the design artifacts you are asked to write')}`
   : `Write an implementation spec for feature ${A.feature_id} to ${spec}, traced to every requirement in ${prd}. ` +
     `For each acceptance check give: an id, the behaviour, the exact proof command, and a negative control (the code mutation that must make that proof fail). ` +
-    `List the files to change, the test plan (failing test first), and, if any proof calls a live or paid external API, a hard minute/cost budget. ` +
-    `No check may depend on behaviour the repo does not control.\n- ${RULES}`,
-  prd, 'Spec', 'Spec review')
-return { status: s.status, prd: p, spec: s, prd_path: prd, spec_path: spec }
+    `List the files to change, protected files/non-goals, invariants, the test plan (failing test first), and, if any proof calls a live or paid external API, a hard minute/cost budget. ` +
+    `For a service include boot/connectivity, success/failure/edge paths and side-effect readback where relevant. For static/document changes use static evidence; do not invent a service to boot. ` +
+    `Write ${manifest} to the schema at ${A.execution_schema}: version=1, feature_id=${A.feature_id}, spec_sha256 is the SHA256 of the final spec bytes, ` +
+    `requirements contains EVERY acceptance ID in order with kind runtime or static and proof_command (exact command for runtime, empty for static). ` +
+    `allowed_paths lists exact repo-relative files (or deliberately scoped directory prefixes ending /); protected_paths wins over allowed_paths. ` +
+    `Include state_paths and clean_ignore from the agreed repo config when used; narrow them to genuine state files, never code or verification artifacts. ` +
+    `checks inventories the configured extra checks; explicitly state applicability and reason for service smoke, lint and types. ` +
+    `No check may depend on behaviour the repo does not control. You may write ONLY these two design artifacts.\n- ${RULES.replace('Write ONLY the file you are asked to write', 'Write ONLY the design artifacts you are asked to write')}`,
+  prd, 'Spec', 'Spec review', manifest)
+if (s.status !== 'PASS') return { status: s.status, prd: p, spec: s, prd_path: prd, spec_path: spec }
+phase('Freeze')
+const frozen = await agent(
+  `Read-only: compute SHA256 of the exact bytes of ${spec} and ${manifest} with Node crypto or sha256sum. ` +
+  `Do not edit either artifact after review. Return spec_sha256 and manifest_sha256 from the observed output, not estimates.\n- ${RULES}`,
+  { label: 'freeze plan identity', phase: 'Freeze', effort: 'low', schema: {
+    type: 'object', properties: { blocked: { type: 'boolean' }, reason: { type: 'string' }, spec_sha256: { type: 'string' }, manifest_sha256: { type: 'string' } },
+    required: ['blocked', 'spec_sha256', 'manifest_sha256'],
+  } })
+if (!frozen || frozen.blocked || !/^[0-9a-f]{64}$/.test(frozen.spec_sha256) || !/^[0-9a-f]{64}$/.test(frozen.manifest_sha256)) return { status: 'BLOCKED', stage: 'freeze', reason: frozen && frozen.reason || 'missing observed plan hashes' }
+return { status: 'PASS', feature_id: A.feature_id, prd: p, spec: s, prd_path: prd, spec_path: spec, manifest_path: manifest, spec_sha256: frozen.spec_sha256, manifest_sha256: frozen.manifest_sha256 }

@@ -1,28 +1,31 @@
 export const meta = {
   name: 'gated-land',
   description: 'Open the PR from the work branch to the trunk, watch CI, stop for the human merge',
-  whenToUse: 'Stage 4 of the gated-pipeline skill, after build (and verify, if needed) returned PASS',
+  whenToUse: 'Stage 4 of the gated-pipeline skill, after build and mandatory verify returned PASS',
   phases: [
+    { title: 'Completion', detail: 'revalidate frozen inventory and actual artifacts before PR side effects' },
     { title: 'PR', detail: 'open or reuse the PR' },
     { title: 'CI', detail: 'watch checks; re-run a flaky failure once' },
   ],
 }
 
 const A = args || {}
-const need = ['feature_id', 'repo', 'work_branch', 'trunk_branch', 'title', 'body_path', 'reviewed_sha']
+const need = ['feature_id', 'repo', 'work_branch', 'trunk_branch', 'title', 'body_path', 'reviewed_sha', 'completion_runner', 'manifest_path', 'manifest_sha256', 'spec_path', 'build_result_path', 'verify_result_path', 'proof_path']
 const missing = need.filter(k => !A[k])
 if (missing.length) return { status: 'BLOCKED', reason: 'missing args: ' + missing.join(', ') }
 // Everything below goes into shell commands single-quoted, so it may not contain quotes, $, backticks or backslash-escapes.
 const SAFE_PATH = /^[A-Za-z0-9._\/\\: +@-]+$/
 const SAFE_REF = /^[A-Za-z0-9._\/-]+$/
 const SAFE_TEXT = /^[A-Za-z0-9 ._,:;()#\/+@-]+$/
-if (![A.repo, A.body_path].every(p => SAFE_PATH.test(p) && /^([A-Za-z]:[\/\\]|\/)/.test(p))) return { status: 'BLOCKED', reason: 'repo and body_path must be absolute paths of safe characters' }
+if (![A.repo, A.body_path, A.completion_runner, A.manifest_path, A.spec_path, A.build_result_path, A.verify_result_path, A.proof_path].every(p => SAFE_PATH.test(p) && /^([A-Za-z]:[\/\\]|\/)/.test(p))) return { status: 'BLOCKED', reason: 'all path args must be absolute paths of safe characters' }
+if (!/^[0-9a-f]{64}$/.test(A.manifest_sha256)) return { status: 'BLOCKED', reason: 'manifest_sha256 must be the frozen 64-hex design hash' }
+if (!/^[A-Za-z0-9._-]+$/.test(A.feature_id)) return { status: 'BLOCKED', reason: 'feature_id must match [A-Za-z0-9._-]' }
 if (!SAFE_REF.test(A.work_branch) || !SAFE_REF.test(A.trunk_branch)) return { status: 'BLOCKED', reason: 'branch names must match [A-Za-z0-9._/-]' }
 if (!SAFE_TEXT.test(A.title)) return { status: 'BLOCKED', reason: 'title may only use letters, digits, spaces and ._,:;()#/+@-' }
 if (A.ci_wait_min !== undefined && !(Number.isInteger(A.ci_wait_min) && A.ci_wait_min > 0)) return { status: 'BLOCKED', reason: 'ci_wait_min must be a positive integer' }
 if (!/^[0-9a-f]{40}$/.test(A.reviewed_sha)) return { status: 'BLOCKED', reason: 'reviewed_sha must be a full 40-hex commit id' }
 // git reports forward-slash paths, so state prefixes are normalized to that form before comparing.
-const statePaths = (A.state_paths || []).filter(p => SAFE_PATH.test(p)).map(p => p.replace(/\\/g, '/').replace(/^\.\//, ''))
+const normalizeState = paths => paths.map(p => p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '')).sort()
 const q = s => `'${s}'`
 
 const RULES = [
@@ -30,6 +33,23 @@ const RULES = [
   'Never trigger deploy workflows or workflow_dispatch runs. Re-running a failed check is the only CI action allowed.',
   'If any command is blocked, or a tool or the API refuses, STOP and report blocked=true. Never reproduce its effect another way.',
 ].join('\n- ')
+
+phase('Completion')
+const completion = await agent(
+  `Revalidate completion before opening or reusing any PR. Run exactly:\n` +
+  `node ${q(A.completion_runner)} --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --reviewed-sha ${A.reviewed_sha} ` +
+  `--manifest ${q(A.manifest_path)} --manifest-sha256 ${A.manifest_sha256} --spec ${q(A.spec_path)} ` +
+  `--build-result ${q(A.build_result_path)} --verify-result ${q(A.verify_result_path)} --previous-proof ${q(A.proof_path)} --out ${q(A.proof_path)}\n` +
+  `Report passed=true only on exit 0 with a written proof; copy proof_path, reviewed_sha, manifest_sha256 and frozen state_paths from output. ` +
+  `A previous PASS or an existing proof file is insufficient. Do not open a PR if validation fails.\n- ${RULES}`,
+  { label: 'completion proof', phase: 'Completion', effort: 'low', schema: {
+    type: 'object', properties: { passed: { type: 'boolean' }, blocked: { type: 'boolean' }, reason: { type: 'string' }, proof_path: { type: 'string' }, reviewed_sha: { type: 'string' }, manifest_sha256: { type: 'string' }, state_paths: { type: 'array', items: { type: 'string' } } },
+    required: ['passed', 'proof_path', 'reviewed_sha', 'manifest_sha256', 'state_paths'],
+  } })
+if (!completion || completion.blocked || !completion.passed || completion.proof_path !== A.proof_path || completion.reviewed_sha !== A.reviewed_sha || completion.manifest_sha256 !== A.manifest_sha256) return { status: 'BLOCKED', stage: 'completion', completion }
+if (!Array.isArray(completion.state_paths) || completion.state_paths.some(p => typeof p !== 'string' || !SAFE_PATH.test(p))) return { status: 'BLOCKED', stage: 'completion', reason: 'validator did not return frozen state paths', completion }
+const statePaths = normalizeState(completion.state_paths)
+if (A.state_paths !== undefined && (!Array.isArray(A.state_paths) || A.state_paths.some(p => typeof p !== 'string' || !SAFE_PATH.test(p)) || JSON.stringify(normalizeState(A.state_paths)) !== JSON.stringify(statePaths))) return { status: 'BLOCKED', stage: 'completion', reason: 'state_paths differs from the frozen plan', completion }
 
 const HEAD = {
   head_sha: { type: 'string' },
@@ -110,4 +130,4 @@ if (!headExtra.length && shaMismatch) return { status: 'CI_PENDING', reason: `ch
 const ciExtra = headExtra.concat(shaMismatch ? [`(CI ran on ${ci.checks_head_sha}, PR head is ${ci.head_sha})`] : [])
 const status = ciExtra.length ? 'HEAD_MOVED'
   : ci.state === 'GREEN' || ci.state === 'NONE' ? 'READY_FOR_HUMAN_MERGE' : ci.state === 'PENDING' ? 'CI_PENDING' : 'CI_RED'
-return { status, unreviewed: ciExtra, pr, ci }
+return { status, unreviewed: ciExtra, pr, ci, completion }

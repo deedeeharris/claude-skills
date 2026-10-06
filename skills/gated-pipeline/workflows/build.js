@@ -11,7 +11,7 @@ export const meta = {
 }
 
 const A = args || {}
-const need = ['feature_id', 'repo', 'work_branch', 'run_dir', 'review_runner', 'suite_cmd']
+const need = ['feature_id', 'repo', 'work_branch', 'run_dir', 'review_runner', 'suite_cmd', 'security_schema']
 const missing = need.filter(k => !A[k])
 if (missing.length) return { status: 'BLOCKED', reason: 'missing args: ' + missing.join(', ') }
 if (!A.spec_path && !A.charge) return { status: 'BLOCKED', reason: 'need spec_path or charge' }
@@ -53,6 +53,8 @@ const RULES = [
   'Commit with explicit pathspecs only (never git add -A or .). Never git rm, never glob-delete, never --no-verify.',
   'Before each commit, scan the staged diff for secrets (.env, service-account json, .pem, id_rsa, API keys) and abort if any are present.',
   'Never deploy, never run Terraform, never touch production resources.',
+  'Use the checkout selected by the orchestrator at the supplied repo path; an existing checkout is supported and a dedicated feature worktree is optional. Follow the orchestrator\'s checkout ownership and writer coordination. Check branch, clean baseline and the correct dev/client environment before the first edit. Never weaken a guard or verification harness to unblock work.',
+  `Keep atomic per-acceptance checkpoints at ${A.run_dir}/execution-ledger.json: id, status, command, exit code, log_path, log_sha256 and commit. Preserve failed/interrupted output. Stop on unapproved scope expansion.`,
   A.lock_note ? `Test runs: ${A.lock_note}` : '',
   A.live_budget_min ? `Live or paid tests: hard cap ${A.live_budget_min} minutes total; keep a ledger at ${A.run_dir}/live-ledger.txt; record anything that cannot fit as NOT RUN.` : 'Do not run live or paid external-API tests.',
   'Report only numbers you observed in command output. A skipped check is NOT RUN, never a pass.',
@@ -108,10 +110,11 @@ const SUITE = {
     completed: { type: 'boolean' },
     other_failures: { type: 'array', items: { type: 'string' } },
     log_path: { type: 'string' },
+    log_sha256: { type: 'string' },
     blocked: { type: 'boolean' },
     ...STATE,
   },
-  required: ['passed', 'counts', 'failures', 'completed', 'other_failures', 'head_before', 'status_before', 'head_after', 'status_after'],
+  required: ['passed', 'counts', 'failures', 'completed', 'other_failures', 'log_path', 'log_sha256', 'head_before', 'status_before', 'head_after', 'status_after'],
 }
 
 // Known pre-existing failures are matched in code by EXACT test id, never left to an agent's judgement, and only
@@ -132,7 +135,7 @@ const workReport = A.base_commit
 phase('Implement')
 const work = await agent(
   `You are the implementer for feature ${A.feature_id}. Implement ${target}.${chargeText}\n\n` +
-  `Work test-first: for each acceptance item write the test, run it and see it FAIL, implement, run it and see it PASS. ` +
+  `Work test-first: for each behavioral acceptance item write the test, run it and see it FAIL, implement, run it and see it PASS. Static-only items use the frozen spec's applicable static evidence. ` +
   `Run the focused tests with: ${A.unit_cmd || '(the repo\'s focused test command)'}. Keep the change minimal and in the repo's style. ` +
   `Commit on ${A.work_branch} and push the branch. Save the red and green outputs under ${A.run_dir}/implement/. ${workReport}\n\nRules:\n- ${RULES}`,
   { label: 'implement', phase: 'Implement', schema: WORK, effort: IMPL_EFFORT })
@@ -236,7 +239,7 @@ for (let round = 1; round <= MAX + 1; round++) {
       : `in ${A.repo} on branch ${A.work_branch}. `
     suite = await agent(
       `Run the full test suite as the LAST step, ${where}Suite command: ${A.suite_cmd}\n` +
-      `Save the full output to ${A.run_dir}/suite-${round}.txt. Report the observed counts, each failing test id exactly as the runner prints it, and in other_failures every failure that is not a test (coverage threshold, lint/type step, post-test command, a non-zero exit not explained by a listed test). ` +
+      `Save the full output to ${A.run_dir}/suite-${round}.txt; return log_path and SHA256 of those exact saved bytes as log_sha256. Report the observed counts, each failing test id exactly as the runner prints it, and in other_failures every failure that is not a test (coverage threshold, lint/type step, post-test command, a non-zero exit not explained by a listed test). ` +
       `${stateNoteAt(A.suite_isolated ? swt : A.repo)}${A.suite_isolated ? ' (the "before" state is taken after the setup command, the "after" state before removing the checkout)' : ''} ` +
       `completed=true ONLY if the whole suite ran to the end; a crash, timeout, collection/import error or interrupted run is completed=false.\n- ${RULES}`,
       { label: `suite ${round}`, phase: 'Suite', schema: SUITE, effort: 'low' })
@@ -247,7 +250,7 @@ for (let round = 1; round <= MAX + 1; round++) {
     // Accept only a completed run with no failure outside the known baseline ids (exact match), and never a report that
     // claims failure without naming it. Known failures are reported, never sent to the fixer.
     const fresh = newFailures(suite)
-    if (suite.completed && !fresh.length && !suite.other_failures.length && (suite.passed || suite.failures.length)) return { status: 'PASS', rounds: round, reviewed_sha: reviewedSha, review: r, security: sec, suite, known_failures_seen: suite.failures.filter(f => !fresh.includes(f.trim())), base_commit: base, files: [...files], deleted: [...deleted], history }
+    if (suite.completed && !fresh.length && !suite.other_failures.length && (suite.passed || suite.failures.length)) return { status: 'PASS', feature_id: A.feature_id, rounds: round, reviewed_sha: reviewedSha, review: r, security: sec, suite, known_failures_seen: suite.failures.filter(f => !fresh.includes(f.trim())), base_commit: base, files: [...files], deleted: [...deleted], history }
     log(`suite failed in round ${round}: ${suite.counts}${suite.completed ? '' : ' (run did not complete)'}`)
   }
   if (round > MAX) break
@@ -268,4 +271,4 @@ for (let round = 1; round <= MAX + 1; round++) {
   track(fix)
   history.push({ round, findings: items, fix })
 }
-return { status: 'FAIL', reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history }
+return { status: 'FAIL', feature_id: A.feature_id, reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history }
