@@ -29,6 +29,7 @@ const q = s => `'${s}'`
 if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 'BLOCKED', reason: 'codex_model must match [A-Za-z0-9._-]' }
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
 if (A.review_timeout_seconds !== undefined && !(Number.isInteger(A.review_timeout_seconds) && A.review_timeout_seconds > 0)) return { status: 'BLOCKED', reason: 'review_timeout_seconds must be a positive integer' }
+if (A.review_fallback !== undefined && !['none', 'opus-high'].includes(A.review_fallback)) return { status: 'BLOCKED', reason: 'review_fallback must be none|opus-high' }
 const DOTDOT = /(^|[\/\\])\.\.([\/\\]|$)/
 const ABS0 = /^([A-Za-z]:|[\/\\])/
 // A suite result certifies reviewed_sha only if HEAD was that commit and the tree was clean before AND after the run.
@@ -101,6 +102,29 @@ const SEC = {
   properties: { verdict: { type: 'string', enum: ['PASS', 'FAIL', 'ERROR'] }, blocking: FINDINGS, note: { type: 'string' }, blocked: { type: 'boolean' } },
   required: ['verdict', 'blocking'],
 }
+// Codex relays also report whether codex exists here at all; the Opus stand-in uses the plain schemas.
+const relay = s => ({ ...s, properties: { ...s.properties, codex_available: { type: 'boolean' } }, required: [...s.required, 'codex_available'] })
+const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
+const availNote = runner => `First check that codex is AVAILABLE in this environment: run codex --version${runner ? ` and node ${q(A.review_runner)} --help` : ''}. ` +
+  `If ${runner ? 'either' : 'it'} cannot run or exits non-zero (not installed, command not found), do NOT start the review: return codex_available=false, verdict ERROR, empty finding lists, and the observed output in note. ` +
+  'Otherwise codex_available=true. A usage cap or quota error is NOT unavailability: it stays codex_available=true with verdict ERROR.\n'
+// Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
+// Every review step is recorded, so an earlier Opus fallback round stays visible after a later codex PASS.
+const reviewers = []
+const disclose = o => ({ ...o, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
+async function reviewed(step, viaCodex, fallback) {
+  const r = await viaCodex()
+  let res
+  // An explicit relay blocker (refused command, failed setup) always stops the stage; it never falls back.
+  if (!r || r.blocked || r.codex_available !== false) res = r && { ...r, reviewer: 'codex' }
+  else if ((A.review_fallback || 'none') !== 'opus-high') res = { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
+  else {
+    const f = await fallback()
+    res = f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }
+  }
+  if (res) reviewers.push({ step, reviewer: res.reviewer })
+  return res
+}
 const SUITE = {
   type: 'object',
   properties: {
@@ -171,33 +195,54 @@ function scopePrep(out) {
     `After result.json exists (or the run fails), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(wt)}\n`
 }
 const scopeArgs = out => `--uncommitted --repo ${q(out + '/wt')}`
-const waitNote = out => `It can run for up to ~${Math.ceil(TIMEOUT_S * 6 / 60) + 5} minutes: run it in the background and poll for ${out}/*/result.json with a bounded wait loop of that length.`
+// Wait in the FOREGROUND: a relay that ends its turn while codex runs in the background kills the review.
+const waitNote = (lsTarget, minutes) => `It can run for up to ~${minutes} minutes. Start it with the Bash tool's run_in_background, then WAIT IN THE FOREGROUND: ` +
+  `make repeated foreground Bash calls (Bash timeout 600000 ms), each a bounded loop of at most 9 minutes: ` +
+  `for i in $(seq 1 54); do ls ${lsTarget} >/dev/null 2>&1 && break; sleep 10; done ; repeat until the result exists or that total time has passed. ` +
+  'NEVER return or end your turn while the review process is still running: returning kills it and loses the review. ' +
+  'If the total time passes with no result, report ERROR with what the run folder contains.'
 
 async function review(round) {
   const out = `${A.run_dir}/review-${round}`
-  return agent(
-    `Run an independent codex implementation review of the CHANGE and report its verdict. Do not review the code yourself.\n${scopePrep(out)}` +
+  return reviewed(`review ${round}`, () => agent(
+    `Run an independent codex implementation review of the CHANGE and report its verdict. Do not review the code yourself.\n${availNote(true)}${scopePrep(out)}` +
     `Command (Bash): node ${q(A.review_runner)} --kind implementation ${scopeArgs(out)} --out-dir ${q(out)}` +
-    `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}\n${waitNote(out)}\n` +
+    `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}\n` +
+    `${waitNote(`${q(out)}/*/result.json`, Math.ceil(TIMEOUT_S * 6 / 60) + 5)}\n` +
     `Exit codes: 0 PASS, 1 FAIL, 3 NEEDS_HUMAN, 2 setup error (report ERROR). Read the result.json of the run folder THIS command created (the newest; ignore older folders). ` +
     `Put findings whose validation.status is "confirmed" in confirmed_findings, every other non-refuted finding in other_findings, and copy result.json's verdict_reasons verbatim. ` +
     `If codex reports a usage cap or quota error, return verdict ERROR with that text in note.\n- ${RULES}`,
-    { label: `codex review ${round}`, phase: 'Review', schema: REVIEW, effort: 'low' })
+    { label: `codex review ${round}`, phase: 'Review', schema: relay(REVIEW), effort: 'low' }),
+  () => agent(
+    `Codex is not available in this environment, so YOU are the independent implementation reviewer of the CHANGE in its place (the repo config chose review_fallback: opus-high). ` +
+    `Do not change the work branch.\n${scopePrep(out)}` +
+    `Review the change as it stands in that checkout (git -C ${q(out + '/wt')} diff --cached is the whole change ${base}..$H; read any other file there for context) for correctness bugs, ` +
+    `missing or broken acceptance behaviour from ${target}, and unsafe code. Report findings ONLY in that change. ` +
+    'Put each defect you verified against the code in confirmed_findings, anything plausible but unverified in other_findings, and one short line per reason for your verdict in verdict_reasons. ' +
+    `verdict PASS only when confirmed_findings is empty. When your review is done (there is no result.json here), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}${chargeText}\n- ${RULES}`,
+    { label: `opus review ${round} (codex unavailable)`, phase: 'Review', schema: REVIEW, model: 'opus', effort: 'high' }))
 }
 
+const secTask = () => 'Security review (OWASP Top 10, secrets, injection, authz, unsafe deserialization, SSRF, path traversal, logging of sensitive data) ' +
+  `of the change ${base}..${reviewedSha} in this repository (all of it: git diff ${base} ${reviewedSha}). Read any other file you need for context, but report findings ONLY in that change. ` +
+  'Quote the code for every finding. verdict FAIL if any critical or high finding exists, else PASS.'
 async function security(round) {
   const out = `${A.run_dir}/security-${round}`
-  return agent(
-    `Run an independent codex SECURITY review of the change and report its verdict. Do not review the code yourself.\n` +
-    `0. Create ${out}/ and an isolated checkout of the reviewed commit, so every file codex reads is that commit's: git -C ${q(A.repo)} worktree add --detach ${q(out + '/wt')} ${reviewedSha}. ` +
+  const isolate = `0. Create ${out}/ and an isolated checkout of the reviewed commit, so every file read is that commit's: git -C ${q(A.repo)} worktree add --detach ${q(out + '/wt')} ${reviewedSha}. `
+  return reviewed(`security ${round}`, () => agent(
+    `Run an independent codex SECURITY review of the change and report its verdict. Do not review the code yourself.\n${availNote(false)}` +
+    isolate +
     `After security.json exists (or the run fails), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}\n` +
-    `1. Write ${out}/prompt.md containing: "Security review (OWASP Top 10, secrets, injection, authz, unsafe deserialization, SSRF, path traversal, logging of sensitive data) ` +
-    `of the change ${base}..${reviewedSha} in this repository (all of it: git diff ${base} ${reviewedSha}). Read any other file you need for context, but report findings ONLY in that change. ` +
-    `Quote the code for every finding. verdict FAIL if any critical or high finding exists, else PASS."\n` +
-    `2. Run under a HARD process timeout so codex can never outlive this step (Bash, in the background, then poll up to ~32 minutes for ${out}/security.json; if the timeout fires the process is already killed: report ERROR): ` +
-    `timeout --kill-after=60 1800 codex exec${A.codex_model ? ` -m ${q(A.codex_model)}` : ''} -c model_reasoning_effort=${A.codex_effort || 'high'} -s read-only -C ${q(out + '/wt')} --output-schema ${q(A.security_schema)} -o ${q(out + '/security.json')} - < ${q(out + '/prompt.md')}\n` +
+    `1. Write ${out}/prompt.md containing: "${secTask()}"\n` +
+    `2. Run under a HARD process timeout so codex can never outlive this step; if the timeout fires the process is already killed: report ERROR. ${waitNote(q(out + '/security.json'), 32)}\n` +
+    `Command: timeout --kill-after=60 1800 codex exec${A.codex_model ? ` -m ${q(A.codex_model)}` : ''} -c model_reasoning_effort=${A.codex_effort || 'high'} -s read-only -C ${q(out + '/wt')} --output-schema ${q(A.security_schema)} -o ${q(out + '/security.json')} - < ${q(out + '/prompt.md')}\n` +
     `3. Return verdict and ONLY the critical/high findings as blocking. If codex errors, hits a usage cap, or writes no valid JSON, return ERROR with the reason in note.\n- ${RULES}`,
-    { label: `codex security ${round}`, phase: 'Review', schema: SEC, effort: 'low' })
+    { label: `codex security ${round}`, phase: 'Review', schema: relay(SEC), effort: 'low' }),
+  () => agent(
+    `Codex is not available in this environment, so YOU are the independent SECURITY reviewer in its place (the repo config chose review_fallback: opus-high). Do not change any file.\n` +
+    isolate + `Review in that checkout. Afterwards remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}\n` +
+    `1. ${secTask()}\n2. Return verdict and ONLY the critical/high findings as blocking.\n- ${RULES}`,
+    { label: `opus security ${round} (codex unavailable)`, phase: 'Review', schema: SEC, model: 'opus', effort: 'high' }))
 }
 
 let verdict = null
@@ -205,18 +250,18 @@ let lastSuite = null
 let lastSec = null
 let reviewedSha = ''
 for (let round = 1; round <= MAX + 1; round++) {
-  if (unsafe().length) return { status: 'BLOCKED', stage: 'review', reason: 'file names must be repo-relative and safe: ' + unsafe().join(', '), history }
+  if (unsafe().length) return disclose({ status: 'BLOCKED', stage: 'review', reason: 'file names must be repo-relative and safe: ' + unsafe().join(', '), history })
   const r = await review(round)
-  if (!r || r.blocked || r.verdict === 'ERROR' || (r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && !disagreementOnly(r))) return { status: 'BLOCKED', stage: 'review', round, review: r, history }
-  if (!/^[0-9a-f]{40}$/.test(r.head_sha)) return { status: 'BLOCKED', stage: 'review', round, reason: 'review did not report a 40-hex head_sha', review: r, history }
-  if (!r.changed.length) return { status: 'BLOCKED', stage: 'review', round, reason: `git shows no change between ${base} and ${r.head_sha}`, review: r, history }
+  if (!r || r.blocked || r.verdict === 'ERROR' || (r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && !disagreementOnly(r))) return disclose({ status: 'BLOCKED', stage: 'review', round, review: r, history })
+  if (!/^[0-9a-f]{40}$/.test(r.head_sha)) return disclose({ status: 'BLOCKED', stage: 'review', round, reason: 'review did not report a 40-hex head_sha', review: r, history })
+  if (!r.changed.length) return disclose({ status: 'BLOCKED', stage: 'review', round, reason: `git shows no change between ${base} and ${r.head_sha}`, review: r, history })
   // git's list is authoritative: report what the agents left out, then adopt it.
   const gitPaths = r.changed.map(c => c.path)
   const unreported = gitPaths.filter(p => !files.has(p) && !deleted.has(p))
   if (unreported.length) log(`round ${round}: ${unreported.length} changed path(s) the agents did not report: ${unreported.join(', ')}`)
   files.clear(); deleted.clear()
   r.changed.forEach(c => (c.status.startsWith('D') ? deleted : files).add(c.path))
-  if (unsafe().length) return { status: 'BLOCKED', stage: 'review', reason: 'changed paths must be repo-relative and safe: ' + unsafe().join(', '), history }
+  if (unsafe().length) return disclose({ status: 'BLOCKED', stage: 'review', reason: 'changed paths must be repo-relative and safe: ' + unsafe().join(', '), history })
   reviewedSha = r.head_sha
   if (r.verdict === 'PASS' && r.confirmed_findings.length) r.verdict = 'FAIL'
   verdict = r
@@ -225,7 +270,7 @@ for (let round = 1; round <= MAX + 1; round++) {
   if (r.verdict === 'PASS' && A.security_schema) {
     sec = await security(round)
     lastSec = sec
-    if (!sec || sec.blocked || sec.verdict === 'ERROR') return { status: 'BLOCKED', stage: 'security', round, security: sec, history }
+    if (!sec || sec.blocked || sec.verdict === 'ERROR') return disclose({ status: 'BLOCKED', stage: 'security', round, security: sec, history })
     // Findings decide, not the self-reported verdict: any blocking finding is a FAIL.
     if (sec.blocking.length) sec.verdict = 'FAIL'
     if (sec.verdict === 'FAIL') log(`security pass failed in round ${round}: ${sec.blocking.length} high/critical`)
@@ -243,21 +288,21 @@ for (let round = 1; round <= MAX + 1; round++) {
       `${stateNoteAt(A.suite_isolated ? swt : A.repo)}${A.suite_isolated ? ' (the "before" state is taken after the setup command, the "after" state before removing the checkout)' : ''} ` +
       `completed=true ONLY if the whole suite ran to the end; a crash, timeout, collection/import error or interrupted run is completed=false.\n- ${RULES}`,
       { label: `suite ${round}`, phase: 'Suite', schema: SUITE, effort: 'low' })
-    if (!suite || suite.blocked) return { status: 'BLOCKED', stage: 'suite', suite, history }
+    if (!suite || suite.blocked) return disclose({ status: 'BLOCKED', stage: 'suite', suite, history })
     lastSuite = suite
     const drift = pinned(suite, reviewedSha)
-    if (drift.length) return { status: 'BLOCKED', stage: 'suite', reason: 'the suite did not run on the clean reviewed commit: ' + drift.join('; '), suite, history }
+    if (drift.length) return disclose({ status: 'BLOCKED', stage: 'suite', reason: 'the suite did not run on the clean reviewed commit: ' + drift.join('; '), suite, history })
     // Accept only a completed run with no failure outside the known baseline ids (exact match), and never a report that
     // claims failure without naming it. Known failures are reported, never sent to the fixer.
     const fresh = newFailures(suite)
-    if (suite.completed && !fresh.length && !suite.other_failures.length && (suite.passed || suite.failures.length)) return { status: 'PASS', feature_id: A.feature_id, rounds: round, reviewed_sha: reviewedSha, review: r, security: sec, suite, known_failures_seen: suite.failures.filter(f => !fresh.includes(f.trim())), base_commit: base, files: [...files], deleted: [...deleted], history }
+    if (suite.completed && !fresh.length && !suite.other_failures.length && (suite.passed || suite.failures.length)) return disclose({ status: 'PASS', feature_id: A.feature_id, rounds: round, reviewed_sha: reviewedSha, review: r, security: sec, suite, known_failures_seen: suite.failures.filter(f => !fresh.includes(f.trim())), base_commit: base, files: [...files], deleted: [...deleted], history })
     log(`suite failed in round ${round}: ${suite.counts}${suite.completed ? '' : ' (run did not complete)'}`)
   }
   if (round > MAX) break
   phase('Fix')
   const items = [
-    ...(r.verdict !== 'PASS' ? (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => `[codex ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`) : []),
-    ...(sec && sec.verdict === 'FAIL' ? sec.blocking.map(f => `[security ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`) : []),
+    ...(r.verdict !== 'PASS' ? (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => `[${r.reviewer} ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`) : []),
+    ...(sec && sec.verdict === 'FAIL' ? sec.blocking.map(f => `[security ${sec.reviewer} ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`) : []),
     ...(suite ? newFailures(suite).map(f => `[suite] ${f}`) : []),
     ...(suite ? suite.other_failures.map(f => `[suite, not a test] ${f}`) : []),
     ...(suite && !suite.completed ? [`[suite] the full suite did not run to completion (${suite.counts}); see ${A.run_dir}/suite-${round}.txt`] : []),
@@ -267,8 +312,8 @@ for (let round = 1; round <= MAX + 1; round++) {
     `You are fixing feature ${A.feature_id} on ${A.work_branch} (implemented against ${target}).${chargeText}\n` +
     `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. Add or adjust tests test-first. Commit and push. ${workReport}\nITEMS:\n${items.join('\n')}\n\nRules:\n- ${RULES}`,
     { label: `fix ${round}`, phase: 'Fix', schema: WORK, effort: IMPL_EFFORT })
-  if (!fix || fix.blocked) return { status: 'BLOCKED', stage: 'fix', round, reason: fix ? fix.blocked_reason : 'fixer died', history }
+  if (!fix || fix.blocked) return disclose({ status: 'BLOCKED', stage: 'fix', round, reason: fix ? fix.blocked_reason : 'fixer died', history })
   track(fix)
   history.push({ round, findings: items, fix })
 }
-return { status: 'FAIL', feature_id: A.feature_id, reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history }
+return disclose({ status: 'FAIL', feature_id: A.feature_id, reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history })

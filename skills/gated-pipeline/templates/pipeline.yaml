@@ -9,6 +9,8 @@ reviews:
   codex_model: ""           # empty = let codex-review pick from the live catalog
   codex_effort: high
   review_timeout_seconds: 1200   # per codex attempt; a real review of a few files takes 10+ minutes
+  review_fallback: none     # none | opus-high. opus-high: ONLY when codex is NOT AVAILABLE in the environment, Claude Opus 5.5 at
+                            # high effort runs the same review, labelled "claude-opus-high (codex unavailable)". A capped codex still WAITs.
 agents:
   impl_effort: medium       # Claude implementer/fixer reasoning effort
   author_effort: medium     # PRD/spec author

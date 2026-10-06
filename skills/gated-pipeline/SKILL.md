@@ -14,7 +14,7 @@ Invoking this skill is the user's opt-in to run the Workflow tool for these stag
 2. Read the repo's CLAUDE.md. Its rules win over this skill.
 3. Pick a run id and a run directory: `<state_dir>/<feature>/<stage>/<run_id>`, where `state_dir` is an ABSOLUTE path OUTSIDE the repo (default `<home>/.pipeline-state/<repo-name>`). Create it. A run dir inside the repo makes the tree dirty and blocks the suite's clean-tree check unless its prefix is in `clean_ignore`.
 4. Pass config values to the workflow through `args`. Workflow scripts cannot read files, so the main session reads the config and passes what the stage needs.
-5. Every path arg must be ABSOLUTE and use only letters, digits, space and `._/\:+@-` (no `~`, quotes, `$`, backticks). The workflows single-quote paths into shell commands and refuse anything else with BLOCKED. `review_timeout_seconds` (default 1200) is the per-attempt codex timeout; real reviews of a few files take 10+ minutes.
+5. Every path arg must be ABSOLUTE and use only letters, digits, space and `._/\:+@-` (no `~`, quotes, `$`, backticks). The workflows single-quote paths into shell commands and refuse anything else with BLOCKED. `review_timeout_seconds` (default 1200) is the per-attempt codex timeout; real reviews of a few files take 10+ minutes. `review_fallback` is `none` (default) or `opus-high` (see Hard rules); any other value is BLOCKED.
 
 6. Before implementation, use the checkout and `work_branch` selected by the orchestrator; an existing checkout is supported and a dedicated feature worktree is optional. Record the original base SHA, check the clean baseline and the correct dev/client environment, and capture the current behaviour. Let the orchestrator coordinate checkout ownership and parallel lanes. Do not weaken guards or verification criteria to get past a blocker.
 7. Keep a visible phase list. Read the existing feature failure/checkpoint ledger if one exists; initialize it when absent. Preserve the original base, plan hashes, evidence locations and outstanding IDs across interruptions.
@@ -26,7 +26,7 @@ Task text → `prd.md` → codex PRD review → revise until PASS → `spec.md` 
 ```
 Workflow({ scriptPath: "<skill-dir>/workflows/design.js", args: {
   feature_id, repo, task, run_dir, review_runner, codex_model, codex_effort,
-  review_timeout_seconds, max_rounds, author_effort, execution_schema } })
+  review_timeout_seconds, max_rounds, author_effort, execution_schema, review_fallback } })
 ```
 
 ## Stage 2: build (`workflows/build.js`)
@@ -37,7 +37,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/build.js", args: {
   feature_id, repo, work_branch, spec_path, charge, run_dir, review_runner,
   codex_model, codex_effort, impl_effort, max_fix_rounds, unit_cmd, suite_cmd,
   lock_note, live_budget_min, known_failures, clean_ignore, suite_isolated, isolated_setup,
-  security_schema, review_timeout_seconds, base_commit } })
+  security_schema, review_timeout_seconds, base_commit, review_fallback } })
 ```
 When re-running build after land returns `HEAD_MOVED` or `CI_RED`, pass the feature's ORIGINAL `base_commit` (from the first build result) so every commit since then is inside the reviewed range.
 
@@ -50,7 +50,7 @@ Service boot/connectivity, success/failure/edge cases, side-effect readback, lin
 Workflow({ scriptPath: "<skill-dir>/workflows/verify.js", args: {
   feature_id, repo, work_branch, run_dir, review_runner, files, deleted, base_commit, reviewed_sha, clean_ignore,
   spec_path, compliance_schema, checks, codex_model, codex_effort, review_timeout_seconds,
-  manifest_path, manifest_sha256, build_result_path, completion_runner } })
+  manifest_path, manifest_sha256, build_result_path, completion_runner, review_fallback } })
 ```
 `base_commit` and `reviewed_sha` are REQUIRED (pass build's values straight through); the final review and the compliance trace cover the whole change `base_commit..reviewed_sha`. `files`/`deleted` are informational and must be repo-relative. A check with no `budget_min > 0` may make no live or paid calls.
 
@@ -88,7 +88,9 @@ For necessary scope expansion, stop before editing the extra paths. Obtain autho
 The clean-tree checks compare HEAD and `git status` at the START and END of each test run; they cannot see a checkout that another process swaps and restores mid-run. So **nothing else may write to the work checkout while a stage runs**. Have the orchestrator serialize writers in a shared checkout or choose separate checkouts for concurrent lanes; dedicated feature worktrees are optional. Set `suite_isolated: true` to run the suite in a fresh worktree of the reviewed commit, which removes this assumption for the suite.
 
 ## Hard rules (every stage, every repo)
-- Reviews are cross-family: codex first; if codex is capped, use the fallback in config (for example agy); if every option is capped, WAIT. Never a Claude review of Claude-built code.
+- Reviews are cross-family by default: codex reviews every artifact. A capped codex (usage cap, quota error) is NOT a reason to switch reviewer: the stage returns BLOCKED and you WAIT for the cap to reset.
+- The one exception is codex NOT AVAILABLE in the environment (`codex --version` or `node <review_runner> --help` cannot run or exits non-zero). Every codex relay checks this first and reports `codex_available`. Only when it is `false` AND the repo config sets `reviews.review_fallback: opus-high` (passed as the `review_fallback` arg) does Claude Opus 5.5 at high effort run the same review, with the same schema and scope (design: the doc against the PRD; build: the whole change in the throwaway worktree, plus security; verify: final review and compliance trace). That result is stamped `reviewer: "claude-opus-high (codex unavailable)"` and must never be reported as a codex verdict. With `review_fallback: none` (the default), unavailable codex is BLOCKED.
+- Every codex relay starts codex with the Bash tool's `run_in_background`, then WAITS IN THE FOREGROUND with repeated bounded foreground poll loops (at most 9 minutes per Bash call) until the result file exists or the time limit passes. A relay that ends its turn while codex runs kills the review.
 - Never deploy, run Terraform against real state, publish packages, or touch production resources without the user's explicit yes.
 - No `git add -A` or `.`; use explicit pathspecs. Never `git rm` or glob deletes. Delete only literal paths you created. Never `--no-verify`. Scan the diff for secrets before every commit.
 - Live or paid test runs need a hard budget from the spec or config, plus a ledger in the run dir.
@@ -96,6 +98,6 @@ The clean-tree checks compare HEAD and `git status` at the START and END of each
 - Agents report test numbers they observed, never estimates. A skipped check is reported as NOT RUN, never as a pass.
 
 ## After a workflow returns
-Stamp the time on the result (scripts cannot read the clock), write `result.json` into the run dir, update the repo's state (see `state.mode` in config), and tell the user in plain words: what passed, what failed, what is next.
+Stamp the time on the result (scripts cannot read the clock), write `result.json` into the run dir, update the repo's state (see `state.mode` in config), and tell the user in plain words: what passed, what failed, what is next. Every review result carries `reviewer` (`codex`, or `claude-opus-high (codex unavailable)`; design reports the final one on `prd.reviewer` and `spec.reviewer`). Every stage result also carries `reviewers` (one `{ step, reviewer }` per review round, e.g. `prd review 1`, `review 2`, `security 2`, `final review`, `compliance`) and `fallback_used`. A later codex PASS does not erase an earlier fallback round, so read `reviewers`, not only the final review: if `fallback_used` is true, say so explicitly, name EVERY step the Opus fallback reviewed, and do not call the result cross-family reviewed.
 
 **Where state lives matters for land.** Prefer a `state_dir` OUTSIDE the repo. If the repo keeps state on the work branch (a harness), committing it after build moves the branch past `reviewed_sha`; land then accepts the PR only if every later commit touches nothing but the paths in `state_paths` (repo-relative prefixes, e.g. the state directory), and returns `HEAD_MOVED` otherwise. PR titles may only use letters, digits, spaces and `._,:;()#/+@-`.
