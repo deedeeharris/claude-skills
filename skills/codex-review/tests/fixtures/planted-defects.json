@@ -1,0 +1,39 @@
+[
+  {
+    "fixture": "prd-planted",
+    "id": "D1",
+    "meaning": "R2 'fast and reliable' has no measurable target: no latency number, no success-rate percentage.",
+    "location": { "file": "prd-planted.md", "sectionRegex": "R2" },
+    "isoProperties": ["ambiguous", "unverifiable", "missing_acceptance_criteria"]
+  },
+  {
+    "fixture": "prd-planted",
+    "id": "D2",
+    "meaning": "R1 'important account event' is undefined, and the requirement has no acceptance criterion.",
+    "location": { "file": "prd-planted.md", "sectionRegex": "R1" },
+    "isoProperties": ["ambiguous", "unverifiable", "missing_acceptance_criteria", "incomplete"]
+  },
+  {
+    "fixture": "spec-planted",
+    "id": "D3",
+    "meaning": "Work items A and B are marked as parallel but both own delivery-router.ts, an ownership conflict.",
+    "location": { "file": "spec-planted.md", "sectionRegex": "^(work item\\s+)?[ab]\\b" },
+    "isoProperties": ["inconsistent"]
+  },
+  {
+    "fixture": "code-planted",
+    "id": "D4",
+    "meaning": "findUserById builds a SQL query by string-concatenating userId, a SQL injection path.",
+    "location": { "file": "code-planted.js", "lineRange": [8, 12] },
+    "categories": ["security"],
+    "claimPattern": "sql|inject|concatenat|interpolat|or 1=1|unsanitized|unescaped|parameteri|prepared statement|query string built from input"
+  },
+  {
+    "fixture": "code-planted",
+    "id": "D5",
+    "meaning": "searchUsersByName builds a SQL query by string-concatenating namePrefix, a SQL injection path.",
+    "location": { "file": "code-planted.js", "lineRange": [14, 18] },
+    "categories": ["security"],
+    "claimPattern": "sql|inject|concatenat|interpolat|or 1=1|unsanitized|unescaped|parameteri|prepared statement|query string built from input"
+  }
+]

@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "unable_to_review", "findings"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "NEEDS_HUMAN"],
+      "description": "The model's own opinion. The runner computes the real verdict separately and stores this as model_verdict."
+    },
+    "summary": {
+      "type": "string"
+    },
+    "unable_to_review": {
+      "type": ["string", "null"],
+      "description": "Non-null only when the artifact could not be reviewed at all (wrong content, unreadable scope, etc.)."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "confidence",
+          "category",
+          "iso_property",
+          "location",
+          "claim",
+          "evidence",
+          "suggested_fix"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "A short stable id for this finding within the run, e.g. F1, F2."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["BLOCKING", "MAJOR", "MINOR", "NIT"]
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Probability the finding is real, 0 to 1. The runner enforces the range."
+          },
+          "category": {
+            "type": "string"
+          },
+          "iso_property": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ambiguous",
+                  "unverifiable",
+                  "missing_acceptance_criteria",
+                  "inconsistent",
+                  "infeasible",
+                  "incomplete"
+                ]
+              },
+              { "type": "null" }
+            ]
+          },
+          "location": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "line", "section"],
+            "properties": {
+              "file": { "type": ["string", "null"] },
+              "line": { "type": ["integer", "null"] },
+              "section": { "type": ["string", "null"] }
+            }
+          },
+          "claim": { "type": "string" },
+          "evidence": { "type": "string" },
+          "suggested_fix": { "type": "string" }
+        }
+      }
+    }
+  }
+}
