@@ -102,13 +102,21 @@ const waitNote = (lsTarget, minutes) => `It can run for up to ~${minutes} minute
   'NEVER return or end your turn while the review process is still running: returning kills it and loses the review. ' +
   'If the total time passes with no result, report ERROR with what the run folder contains.'
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
-async function reviewed(viaCodex, fallback) {
+// Every review step is recorded, so the result discloses any Opus fallback review.
+const reviewers = []
+const disclose = o => ({ ...o, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
+async function reviewed(step, viaCodex, fallback) {
   const r = await viaCodex()
+  let res
   // An explicit relay blocker (refused command, failed setup) always stops the stage; it never falls back.
-  if (!r || r.blocked || r.codex_available !== false) return r && { ...r, reviewer: 'codex' }
-  if ((A.review_fallback || 'none') !== 'opus-high') return { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
-  const f = await fallback()
-  return f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }
+  if (!r || r.blocked || r.codex_available !== false) res = r && { ...r, reviewer: 'codex' }
+  else if ((A.review_fallback || 'none') !== 'opus-high') res = { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
+  else {
+    const f = await fallback()
+    res = f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }
+  }
+  if (res) reviewers.push({ step, reviewer: res.reviewer })
+  return res
 }
 
 phase('Plan preflight')
@@ -172,7 +180,7 @@ const finSetup = `Report head_sha = git -C ${q(A.repo)} rev-parse HEAD, read fir
   `1. mkdir -p ${q(out)} && git -C ${q(A.repo)} diff --binary --no-renames ${A.base_commit} ${A.reviewed_sha} > ${q(patch)}\n` +
   `2. git -C ${q(A.repo)} worktree add --detach ${q(wt)} ${A.base_commit}\n` +
   `3. git -C ${q(wt)} apply --index ${q(patch)}\n`
-const fin = await reviewed(() => agent(
+const fin = await reviewed('final review', () => agent(
   `Run an independent codex implementation review of the CHANGE this feature made and report its verdict. Do not review the code yourself.\n${availNote(true)}` +
   finSetup +
   `After result.json exists (or the run fails), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(wt)}\n` +
@@ -188,10 +196,10 @@ const fin = await reviewed(() => agent(
   `for correctness bugs, behaviour that contradicts the spec ${A.spec_path}, and unsafe code. Report findings ONLY in that change, and ONLY defects you verified against the code, as confirmed_findings. ` +
   `verdict PASS only when there are none. When your review is done, remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(wt)}\n- ${RULES}`,
   { label: 'opus final review (codex unavailable)', phase: 'Final review', schema: REVIEW, model: 'opus', effort: 'high' }))
-if (!fin || fin.blocked || fin.verdict === 'ERROR' || (fin.verdict === 'NEEDS_HUMAN' && !fin.confirmed_findings.length)) return { status: 'BLOCKED', stage: 'final review', results, final_review: fin }
+if (!fin || fin.blocked || fin.verdict === 'ERROR' || (fin.verdict === 'NEEDS_HUMAN' && !fin.confirmed_findings.length)) return disclose({ status: 'BLOCKED', stage: 'final review', results, final_review: fin })
 // Findings decide, not the self-reported verdict.
 if (fin.verdict === 'PASS' && fin.confirmed_findings.length) fin.verdict = 'FAIL'
-if (fin.head_sha !== A.reviewed_sha) return { status: 'HEAD_MOVED', reason: `branch head is ${fin.head_sha}, build reviewed ${A.reviewed_sha}: re-run build`, results, final_review: fin }
+if (fin.head_sha !== A.reviewed_sha) return disclose({ status: 'HEAD_MOVED', reason: `branch head is ${fin.head_sha}, build reviewed ${A.reviewed_sha}: re-run build`, results, final_review: fin })
 
 const cout = `${A.run_dir}/compliance`
 const compIsolate = `0. Create ${cout}/ and an isolated checkout of the reviewed commit, so every file read is that commit's: git -C ${q(A.repo)} worktree add --detach ${q(cout + '/wt')} ${A.reviewed_sha}. `
@@ -202,7 +210,7 @@ const compTask = `Trace every requirement and acceptance check in the spec ${A.s
   `Return requirements with EVERY frozen ID exactly once and PASS/FAIL/NOT_RUN plus its actual evidence records. ` +
   `Runtime acceptance needs an exact executed command, exit code, nonempty output file and head_sha=${A.reviewed_sha}; a file/line alone only proves a static claim. ` +
   `Do not execute commands or invent missing evidence. verdict FAIL for any missing/wrong/unproven item, else PASS.`
-const comp = await reviewed(() => agent(
+const comp = await reviewed('compliance', () => agent(
   `Run an independent codex SPEC-COMPLIANCE trace and report its verdict. Do not judge it yourself.\n${availNote(false)}` +
   compIsolate +
   `After compliance.json exists (or the run fails), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(cout + '/wt')}\n` +
@@ -219,14 +227,14 @@ const comp = await reviewed(() => agent(
   `2. Return verdict, requirements (each shaped exactly as the requirements items in ${A.compliance_schema}: id, status and evidence records copied from the ledger), and EVERY finding as blocking (each one is a requirement missing, wrong or unproven).\n` +
   `Around the whole of steps 0-1 (on the main repo, not the isolated checkout): ${stateNote}\n- ${RULES}`,
   { label: 'opus spec compliance (codex unavailable)', phase: 'Final review', schema: COMPLY, model: 'opus', effort: 'high' }))
-if (!comp || comp.blocked || comp.verdict === 'ERROR') return { status: 'BLOCKED', stage: 'compliance', results, final_review: fin, compliance: comp }
+if (!comp || comp.blocked || comp.verdict === 'ERROR') return disclose({ status: 'BLOCKED', stage: 'compliance', results, final_review: fin, compliance: comp })
 if (comp.blocking.length) comp.verdict = 'FAIL'
 const compDrift = pinned(comp)
-if (compDrift.length) return { status: 'HEAD_MOVED', stage: 'compliance', reason: 'compliance trace did not run on the clean reviewed commit: ' + compDrift.join('; '), results, final_review: fin, compliance: comp }
+if (compDrift.length) return disclose({ status: 'HEAD_MOVED', stage: 'compliance', reason: 'compliance trace did not run on the clean reviewed commit: ' + compDrift.join('; '), results, final_review: fin, compliance: comp })
 
 const failed = results.filter(r => r.status !== 'PASS')
 const status = fin.verdict !== 'PASS' || comp.verdict !== 'PASS' ? 'FAIL' : failed.length ? 'INCOMPLETE' : 'PASS'
-const report = { status, feature_id: A.feature_id, base_commit: A.base_commit, reviewed_sha: A.reviewed_sha, manifest_sha256: A.manifest_sha256, results, final_review: fin, compliance: comp }
+const report = disclose({ status, feature_id: A.feature_id, base_commit: A.base_commit, reviewed_sha: A.reviewed_sha, manifest_sha256: A.manifest_sha256, results, final_review: fin, compliance: comp })
 if (status !== 'PASS') return report
 phase('Completion')
 const reportPath = `${A.run_dir}/verify-result.json`

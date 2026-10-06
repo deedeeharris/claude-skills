@@ -72,13 +72,21 @@ const availNote = `First check that codex is AVAILABLE in this environment: run 
   'If either cannot run or exits non-zero (not installed, command not found), do NOT start the review: return codex_available=false, verdict ERROR, empty finding lists, and the observed output in note. ' +
   'Otherwise codex_available=true. A usage cap or quota error is NOT unavailability: it stays codex_available=true with verdict ERROR.\n'
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
-async function reviewed(relay, fallback) {
+// Every review step is recorded, so an earlier Opus fallback round stays visible after a later codex PASS.
+const reviewers = []
+const disclose = o => ({ ...o, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
+async function reviewed(step, relay, fallback) {
   const r = await relay()
+  let res
   // An explicit relay blocker (refused command, failed setup) always stops the stage; it never falls back.
-  if (!r || r.blocked || r.codex_available !== false) return r && { ...r, reviewer: 'codex' }
-  if ((A.review_fallback || 'none') !== 'opus-high') return { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
-  const f = await fallback()
-  return f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }
+  if (!r || r.blocked || r.codex_available !== false) res = r && { ...r, reviewer: 'codex' }
+  else if ((A.review_fallback || 'none') !== 'opus-high') res = { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
+  else {
+    const f = await fallback()
+    res = f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }
+  }
+  if (res) reviewers.push({ step, reviewer: res.reviewer })
+  return res
 }
 // NEEDS_HUMAN only because codex's own verdict disagreed with the runner's rule, with findings still listed: those findings
 // are revisable, so they go to the author instead of stopping the stage. Every other NEEDS_HUMAN without confirmed findings stops.
@@ -86,7 +94,7 @@ const disagreementOnly = r => r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findin
   r.verdict_reasons.length > 0 && r.verdict_reasons.every(x => /model_rule_disagreement/.test(x))
 
 function codex(kind, file, against, out, label, ph, inventory) {
-  return reviewed(() => agent(
+  return reviewed(label.replace(/^codex /, ''), () => agent(
     `Run an independent codex ${kind} review and report its verdict. Do not review the document yourself.\n${availNote}` +
     (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
     `Command (Bash): node ${q(A.review_runner)} --kind ${kind} --files ${q(file)}${inventory ? ' ' + q(inventory) : ''}${against ? ` --against ${q(against)}` : ''} --repo ${q(A.repo)} --out-dir ${q(out)}` +
@@ -114,7 +122,7 @@ async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
     if (!r || r.blocked || r.verdict === 'ERROR' || (r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && !disagreementOnly(r))) return { status: 'BLOCKED', stage: `${kind} review`, round, review: r }
     if (r.verdict === 'PASS' && !r.confirmed_findings.length) return { status: 'PASS', rounds: round, path, reviewer: r.reviewer }
     if (round === MAX) return { status: 'FAIL', stage: `${kind} review`, rounds: round, review: r }
-    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => `[${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`).join('\n')
+    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => `[${r.reviewer} ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`).join('\n')
     doc = await agent(writePrompt(items), { label: `${kind} revise ${round}`, phase: ph, schema: DOC, effort: EFFORT })
     if (!doc || doc.blocked) return { status: 'BLOCKED', stage: kind, reason: doc ? doc.blocked_reason : 'author died' }
   }
@@ -128,7 +136,7 @@ const p = await loop('prd', prd, items => items
     `Cover: the problem and who has it; the user-visible behaviour wanted; scope and explicit non-goals; constraints from the repo's CLAUDE.md; ` +
     `risks; and measurable success criteria. Keep it short and concrete.\n- ${RULES}`,
   null, 'PRD', 'PRD review')
-if (p.status !== 'PASS') return { status: p.status, prd: p }
+if (p.status !== 'PASS') return disclose({ status: p.status, prd: p })
 
 phase('Spec')
 const s = await loop('spec', spec, items => items
@@ -144,7 +152,7 @@ const s = await loop('spec', spec, items => items
     `checks inventories the configured extra checks; explicitly state applicability and reason for service smoke, lint and types. ` +
     `No check may depend on behaviour the repo does not control. You may write ONLY these two design artifacts.\n- ${RULES.replace('Write ONLY the file you are asked to write', 'Write ONLY the design artifacts you are asked to write')}`,
   prd, 'Spec', 'Spec review', manifest)
-if (s.status !== 'PASS') return { status: s.status, prd: p, spec: s, prd_path: prd, spec_path: spec }
+if (s.status !== 'PASS') return disclose({ status: s.status, prd: p, spec: s, prd_path: prd, spec_path: spec })
 phase('Freeze')
 const frozen = await agent(
   `Read-only: compute SHA256 of the exact bytes of ${spec} and ${manifest} with Node crypto or sha256sum. ` +
@@ -153,5 +161,5 @@ const frozen = await agent(
     type: 'object', properties: { blocked: { type: 'boolean' }, reason: { type: 'string' }, spec_sha256: { type: 'string' }, manifest_sha256: { type: 'string' } },
     required: ['blocked', 'spec_sha256', 'manifest_sha256'],
   } })
-if (!frozen || frozen.blocked || !/^[0-9a-f]{64}$/.test(frozen.spec_sha256) || !/^[0-9a-f]{64}$/.test(frozen.manifest_sha256)) return { status: 'BLOCKED', stage: 'freeze', reason: frozen && frozen.reason || 'missing observed plan hashes' }
-return { status: 'PASS', feature_id: A.feature_id, prd: p, spec: s, prd_path: prd, spec_path: spec, manifest_path: manifest, spec_sha256: frozen.spec_sha256, manifest_sha256: frozen.manifest_sha256 }
+if (!frozen || frozen.blocked || !/^[0-9a-f]{64}$/.test(frozen.spec_sha256) || !/^[0-9a-f]{64}$/.test(frozen.manifest_sha256)) return disclose({ status: 'BLOCKED', stage: 'freeze', reason: frozen && frozen.reason || 'missing observed plan hashes' })
+return disclose({ status: 'PASS', feature_id: A.feature_id, prd: p, spec: s, prd_path: prd, spec_path: spec, manifest_path: manifest, spec_sha256: frozen.spec_sha256, manifest_sha256: frozen.manifest_sha256 })

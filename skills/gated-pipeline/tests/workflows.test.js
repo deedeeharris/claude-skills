@@ -243,6 +243,44 @@ test('when codex is capped, opus-high does not fall back and design returns BLOC
 });
 
 const blockedUnavailable = { ...unavailable, blocked: true, note: 'git worktree add was refused' };
+const opusFinding = { severity: 'major', location: 'x', title: 'gap', detail: 'd' };
+
+test('when design round 1 is an Opus fallback and round 2 a codex PASS, the result still discloses the Opus round', async () => {
+  const opusFail = { verdict: 'FAIL', confirmed_findings: [opusFinding], verdict_reasons: ['gap'], other_findings: [] };
+  const { result, calls } = await run('design', { ...designArgs, review_fallback: 'opus-high' },
+    [{ blocked: false }, unavailable, opusFail, { blocked: false }, docReview, { blocked: false }, docReview, freeze]);
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.prd.reviewer, 'codex');
+  assert.equal(result.fallback_used, true);
+  assert.deepEqual(result.reviewers, [
+    { step: 'prd review 1', reviewer: FALLBACK_REVIEWER },
+    { step: 'prd review 2', reviewer: 'codex' },
+    { step: 'spec review 1', reviewer: 'codex' },
+  ]);
+  assert.ok(calls[3].prompt.includes(`[${FALLBACK_REVIEWER} major]`), 'revision findings name their actual reviewer');
+});
+
+test('when build round 1 is an Opus fallback and round 2 a codex PASS, the result still discloses the Opus round', async () => {
+  const opusFail = { verdict: 'FAIL', confirmed_findings: [opusFinding], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [] };
+  const { result, calls } = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
+    [work, { ...unavailable, head_sha: '', changed: [] }, opusFail, work, codeReview, secPass, suitePass]);
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.review.reviewer, 'codex');
+  assert.equal(result.fallback_used, true);
+  assert.deepEqual(result.reviewers, [
+    { step: 'review 1', reviewer: FALLBACK_REVIEWER },
+    { step: 'review 2', reviewer: 'codex' },
+    { step: 'security 2', reviewer: 'codex' },
+  ]);
+  assert.ok(calls.find(c => c.options.label === 'fix 1').prompt.includes(`[${FALLBACK_REVIEWER} major]`), 'fix items name their actual reviewer');
+});
+
+test('when verify reviews come only from codex, fallback_used is false and both reviews are listed', async () => {
+  const { result } = await run('verify', verifyArgs, [preflight, proofs, { ...finalReview, codex_available: true }, { ...compliance, codex_available: true }, gate]);
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.fallback_used, false);
+  assert.deepEqual(result.reviewers, [{ step: 'final review', reviewer: 'codex' }, { step: 'compliance', reviewer: 'codex' }]);
+});
 
 test('when a design relay reports blocked with codex unavailable and opus-high, design returns BLOCKED without an Opus review', async () => {
   const { result, calls } = await run('design', { ...designArgs, review_fallback: 'opus-high' }, [{ blocked: false }, blockedUnavailable]);
@@ -301,6 +339,7 @@ test('when codex is unavailable and review_fallback is opus-high, verify final r
   assert.equal(result.status, 'PASS');
   assert.equal(result.final_review.reviewer, FALLBACK_REVIEWER);
   assert.equal(result.compliance.reviewer, FALLBACK_REVIEWER);
+  assert.equal(result.fallback_used, true);
   const opus = calls.filter(c => c.options.model === 'opus');
   assert.deepEqual(opus.map(c => c.options.effort), ['high', 'high']);
 });
