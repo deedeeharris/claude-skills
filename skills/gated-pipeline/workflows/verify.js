@@ -1,24 +1,29 @@
 export const meta = {
   name: 'gated-verify',
   description: 'Repo-specific extra checks one at a time, then codex final review + spec-compliance trace',
-  whenToUse: 'Stage 3 of the gated-pipeline skill, only for features whose spec needs more than unit + suite proofs',
+  whenToUse: 'Mandatory stage 3: acceptance evidence and compliance, with configured extra checks',
   phases: [
+    { title: 'Plan preflight', detail: 'validate frozen spec and inventory before executing commands' },
     { title: 'Checks', detail: 'each configured check, sequentially' },
+    { title: 'Acceptance proofs', detail: 'save final-commit evidence for every frozen acceptance item' },
     { title: 'Final review', detail: 'codex defect review of the whole change, then a spec-compliance trace' },
+    { title: 'Completion', detail: 'mechanically reconcile inventory, artifacts and approved scope' },
   ],
 }
 
 const A = args || {}
-const need = ['feature_id', 'repo', 'work_branch', 'run_dir', 'review_runner', 'spec_path', 'compliance_schema']
+const need = ['feature_id', 'repo', 'work_branch', 'run_dir', 'review_runner', 'spec_path', 'compliance_schema', 'manifest_path', 'manifest_sha256', 'build_result_path', 'completion_runner']
 const missing = need.filter(k => !A[k])
 if (missing.length) return { status: 'BLOCKED', reason: 'missing args: ' + missing.join(', ') }
 // Paths go into shell commands: single-quoted, and only from a conservative character set.
 const SAFE = /^[A-Za-z0-9._\/\\: +@-]+$/
 const ABS = /^([A-Za-z]:|[\/\\])/
 const DOTDOT = /(^|[\/\\])\.\.([\/\\]|$)/
-for (const k of ['repo', 'run_dir', 'review_runner', 'spec_path', 'compliance_schema']) {
+for (const k of ['repo', 'run_dir', 'review_runner', 'spec_path', 'compliance_schema', 'manifest_path', 'build_result_path', 'completion_runner']) {
   if (!SAFE.test(A[k]) || !/^([A-Za-z]:[\/\\]|\/)/.test(A[k])) return { status: 'BLOCKED', reason: `${k} must be an absolute path of safe characters (no ~, quotes, $ or backticks): ${A[k]}` }
 }
+if (!/^[0-9a-f]{64}$/.test(A.manifest_sha256)) return { status: 'BLOCKED', reason: 'manifest_sha256 must be the frozen 64-hex design hash' }
+if (!/^[A-Za-z0-9._-]+$/.test(A.feature_id)) return { status: 'BLOCKED', reason: 'feature_id must match [A-Za-z0-9._-]' }
 // Scope is the whole change base_commit..reviewed_sha taken from git; files/deleted are informational only.
 const files = A.files || []
 const deleted = A.deleted || []
@@ -65,9 +70,10 @@ const CHECK = {
     observed: { type: 'string' },
     minutes_used: { type: 'number' },
     evidence_path: { type: 'string' },
+    evidence_sha256: { type: 'string' },
     ...STATE,
   },
-  required: ['status', 'observed', ...STATE_REQ],
+  required: ['status', 'observed', 'evidence_path', 'evidence_sha256', ...STATE_REQ],
 }
 const FINDINGS = { type: 'array', items: { type: 'object', properties: {
   severity: { type: 'string' }, location: { type: 'string' }, title: { type: 'string' }, detail: { type: 'string' } },
@@ -79,9 +85,22 @@ const REVIEW = {
 }
 const COMPLY = {
   type: 'object',
-  properties: { verdict: { type: 'string', enum: ['PASS', 'FAIL', 'ERROR'] }, blocking: FINDINGS, note: { type: 'string' }, blocked: { type: 'boolean' }, ...STATE },
-  required: ['verdict', 'blocking', ...STATE_REQ],
+  properties: { verdict: { type: 'string', enum: ['PASS', 'FAIL', 'ERROR'] }, blocking: FINDINGS, requirements: { type: 'array', items: { type: 'object' } }, note: { type: 'string' }, blocked: { type: 'boolean' }, ...STATE },
+  required: ['verdict', 'blocking', 'requirements', ...STATE_REQ],
 }
+
+phase('Plan preflight')
+const plan = await agent(
+  `Validate the frozen plan BEFORE running any check or proof command. Run the read-only validator:\n` +
+  `node ${q(A.completion_runner)} --mode plan --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --reviewed-sha ${A.reviewed_sha} ` +
+  `--manifest ${q(A.manifest_path)} --manifest-sha256 ${A.manifest_sha256} --spec ${q(A.spec_path)}\n` +
+  `Return passed=true only on exit 0; copy the observed manifest_sha256, spec_sha256 and reviewed_sha. ` +
+  `STOP on mismatch or error; do not execute anything from a changed manifest.\n- ${RULES}`,
+  { label: 'plan preflight', phase: 'Plan preflight', effort: 'low', schema: {
+    type: 'object', properties: { passed: { type: 'boolean' }, blocked: { type: 'boolean' }, reason: { type: 'string' }, manifest_sha256: { type: 'string' }, spec_sha256: { type: 'string' }, reviewed_sha: { type: 'string' } },
+    required: ['passed', 'manifest_sha256', 'spec_sha256', 'reviewed_sha'],
+  } })
+if (!plan || plan.blocked || !plan.passed || plan.manifest_sha256 !== A.manifest_sha256 || plan.reviewed_sha !== A.reviewed_sha || !/^[0-9a-f]{64}$/.test(plan.spec_sha256)) return { status: 'BLOCKED', stage: 'plan preflight', plan }
 
 phase('Checks')
 const results = []
@@ -92,13 +111,33 @@ for (const c of (A.checks || [])) {
   const r = await agent(
     `Run the "${c.name}" check for feature ${A.feature_id}.\n${c.how}\n${budget}` +
     (c.quiet ? 'Run only on a quiet machine: before launching, check that no other heavy test process is running. Wait (bounded) if one is, and report NOT_RUN if the machine never goes quiet.\n' : '') +
-    `Save evidence under ${A.run_dir}/${c.name}/. ${stateNote}\n- ${RULES}`,
+    `Save the full evidence output as a file under ${A.run_dir}/${c.name}/; return evidence_path and SHA256 of its saved bytes as evidence_sha256. ${stateNote}\n- ${RULES}`,
     { label: c.name, phase: 'Checks', schema: CHECK, effort: c.effort || 'medium' })
   if (!r || r.blocked) return { status: 'BLOCKED', stage: c.name, check: r, results }
   const drift = pinned(r)
   if (drift.length) return { status: 'HEAD_MOVED', stage: c.name, reason: 'check did not run on the clean reviewed commit: ' + drift.join('; '), check: r, results }
   results.push({ name: c.name, ...r })
 }
+
+phase('Acceptance proofs')
+const ledger = `${A.run_dir}/acceptance-ledger.json`
+const proofs = await agent(
+  `Read the frozen inventory ${A.manifest_path} (SHA256 must be ${A.manifest_sha256}) and spec ${A.spec_path} (SHA256 must be ${plan.spec_sha256}). ` +
+  `Compute and compare both hashes immediately before executing each command; STOP on any mismatch. ` +
+  `In ${A.repo} at ${A.reviewed_sha}, execute each runtime proof_command exactly, sequentially, with the repo's test lock rules. ` +
+  `Capture the full output in a distinct file under ${A.run_dir}/acceptance/ and record id, status PASS/FAIL/NOT_RUN and evidence ` +
+  `(kind, head_sha, command, exit_code, log_path, log_sha256, file, line; unused values are null). Hash the actual saved output bytes at capture. Use actual source file/line for static items. ` +
+  `Do not edit code or run negative-control mutations on this checkout. Do not make live or paid calls here: reuse final-commit outputs ` +
+  `from the budgeted configured checks when their exact command matches, or mark that item NOT_RUN. ` +
+  `Save the per-ID records atomically to ${ledger}; preserve failed output too. ${stateNote}\n- ${RULES}`,
+  { label: 'acceptance proofs', phase: 'Acceptance proofs', effort: 'medium', schema: {
+    type: 'object', properties: { blocked: { type: 'boolean' }, reason: { type: 'string' }, ledger_path: { type: 'string' }, ...STATE },
+    required: ['blocked', 'ledger_path', ...STATE_REQ],
+  } })
+if (!proofs || proofs.blocked) return { status: 'BLOCKED', stage: 'acceptance proofs', reason: proofs && proofs.reason || 'proof runner unavailable', results }
+const proofDrift = pinned(proofs)
+if (proofDrift.length) return { status: 'HEAD_MOVED', stage: 'acceptance proofs', reason: proofDrift.join('; '), results }
+if (proofs.ledger_path !== ledger) return { status: 'BLOCKED', stage: 'acceptance proofs', reason: 'proof runner did not save the expected ledger', results }
 
 phase('Final review')
 const out = `${A.run_dir}/final-review`
@@ -129,12 +168,16 @@ const comp = await agent(
   `Run an independent codex SPEC-COMPLIANCE trace and report its verdict. Do not judge it yourself.\n` +
   `0. Create ${cout}/ and an isolated checkout of the reviewed commit, so every file codex reads is that commit's: git -C ${q(A.repo)} worktree add --detach ${q(cout + '/wt')} ${A.reviewed_sha}. ` +
   `After compliance.json exists (or the run fails), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(cout + '/wt')}\n` +
-  `1. Write ${cout}/prompt.md containing: "Trace every requirement and acceptance check in the spec ${A.spec_path} to the implementation in this repository ` +
+  `1. Write ${cout}/prompt.md containing: "Trace every requirement and acceptance check in the spec ${A.spec_path} and frozen inventory ${A.manifest_path} to the implementation in this repository ` +
   `(the change is git diff ${A.base_commit} ${A.reviewed_sha}; this checkout is at ${A.reviewed_sha}) and its tests. For each requirement that is missing, implemented differently from the spec, ` +
-  `or not covered by a test that would fail if it broke, report a finding of severity high that quotes the spec line and the code (a requirement with no test that would fail if it broke is high, never lower). verdict FAIL if any such finding exists, else PASS."\n` +
+  `or not covered by an applicable proof that would fail if it broke, report a finding of severity high that quotes the spec line and the code. ` +
+  `Read the actual acceptance ledger ${ledger}, build result ${A.build_result_path} and check outputs under ${A.run_dir}. ` +
+  `Return requirements with EVERY frozen ID exactly once and PASS/FAIL/NOT_RUN plus its actual evidence records. ` +
+  `Runtime acceptance needs an exact executed command, exit code, nonempty output file and head_sha=${A.reviewed_sha}; a file/line alone only proves a static claim. ` +
+  `Do not execute commands or invent missing evidence. verdict FAIL for any missing/wrong/unproven item, else PASS."\n` +
   `2. Run under a HARD process timeout so codex can never outlive this step (Bash, in the background, then poll up to ~32 minutes for ${cout}/compliance.json; if the timeout fires the process is already killed: report ERROR): ` +
   `timeout --kill-after=60 1800 codex exec${A.codex_model ? ` -m ${q(A.codex_model)}` : ''} -c model_reasoning_effort=${A.codex_effort || 'high'} -s read-only -C ${q(cout + '/wt')} --output-schema ${q(A.compliance_schema)} -o ${q(cout + '/compliance.json')} - < ${q(cout + '/prompt.md')}\n` +
-  `3. Return verdict and EVERY finding as blocking (each one is a requirement missing, wrong or untested). If codex errors, hits a usage cap, or writes no valid JSON, return ERROR with the reason in note.\n` +
+  `3. Return verdict, requirements verbatim, and EVERY finding as blocking (each one is a requirement missing, wrong or unproven). If codex errors, hits a usage cap, or writes no valid JSON, return ERROR with the reason in note.\n` +
   `Around the whole of steps 0-2 (on the main repo, not the isolated checkout): ${stateNote}\n- ${RULES}`,
   { label: 'codex spec compliance', phase: 'Final review', schema: COMPLY, effort: 'low' })
 if (!comp || comp.blocked || comp.verdict === 'ERROR') return { status: 'BLOCKED', stage: 'compliance', results, final_review: fin, compliance: comp }
@@ -144,4 +187,22 @@ if (compDrift.length) return { status: 'HEAD_MOVED', stage: 'compliance', reason
 
 const failed = results.filter(r => r.status !== 'PASS')
 const status = fin.verdict !== 'PASS' || comp.verdict !== 'PASS' ? 'FAIL' : failed.length ? 'INCOMPLETE' : 'PASS'
-return { status, results, final_review: fin, compliance: comp }
+const report = { status, feature_id: A.feature_id, base_commit: A.base_commit, reviewed_sha: A.reviewed_sha, manifest_sha256: A.manifest_sha256, results, final_review: fin, compliance: comp }
+if (status !== 'PASS') return report
+phase('Completion')
+const reportPath = `${A.run_dir}/verify-result.json`
+const proofPath = `${A.run_dir}/completion-proof.json`
+const completion = await agent(
+  `Write this exact Workflow result JSON atomically to ${reportPath}, without changing fields:\n${JSON.stringify(report)}\n` +
+  `Then run the real deterministic completion validator (do not substitute your own judgement):\n` +
+  `node ${q(A.completion_runner)} --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --reviewed-sha ${A.reviewed_sha} ` +
+  `--manifest ${q(A.manifest_path)} --manifest-sha256 ${A.manifest_sha256} --spec ${q(A.spec_path)} ` +
+  `--build-result ${q(A.build_result_path)} --verify-result ${q(reportPath)} --out ${q(proofPath)}\n` +
+  `Return passed=true only for exit 0 and a written proof; return its proof_path, reviewed_sha and manifest_sha256 from observed output.\n- ${RULES}`,
+  { label: 'completion proof', phase: 'Completion', effort: 'low', schema: {
+    type: 'object', properties: { passed: { type: 'boolean' }, blocked: { type: 'boolean' }, reason: { type: 'string' }, proof_path: { type: 'string' }, reviewed_sha: { type: 'string' }, manifest_sha256: { type: 'string' } },
+    required: ['passed', 'proof_path', 'reviewed_sha', 'manifest_sha256'],
+  } })
+if (!completion || completion.blocked) return { ...report, status: 'BLOCKED', stage: 'completion', completion }
+if (!completion.passed || completion.proof_path !== proofPath || completion.reviewed_sha !== A.reviewed_sha || completion.manifest_sha256 !== A.manifest_sha256) return { ...report, status: 'INCOMPLETE', stage: 'completion', completion }
+return { ...report, verify_result_path: reportPath, completion }
