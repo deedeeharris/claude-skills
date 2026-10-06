@@ -26,6 +26,7 @@ const q = s => `'${s}'`
 if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 'BLOCKED', reason: 'codex_model must match [A-Za-z0-9._-]' }
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
 if (A.review_timeout_seconds !== undefined && !(Number.isInteger(A.review_timeout_seconds) && A.review_timeout_seconds > 0)) return { status: 'BLOCKED', reason: 'review_timeout_seconds must be a positive integer' }
+if (A.review_fallback !== undefined && !['none', 'opus-high'].includes(A.review_fallback)) return { status: 'BLOCKED', reason: 'review_fallback must be none|opus-high' }
 const TIMEOUT_S = A.review_timeout_seconds || 1200
 const MAX = A.max_rounds ?? 3
 const EFFORT = A.author_effort || 'medium'
@@ -58,22 +59,50 @@ const REVIEW = {
   },
   required: ['verdict', 'confirmed_findings', 'verdict_reasons', 'other_findings'],
 }
+// The codex relay also reports whether codex exists here at all; the Opus stand-in uses the plain review schema.
+const RELAY = { ...REVIEW, properties: { ...REVIEW.properties, codex_available: { type: 'boolean' } }, required: [...REVIEW.required, 'codex_available'] }
+const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
+// Wait in the FOREGROUND: a relay that ends its turn while codex runs in the background kills the review.
+const waitNote = (lsTarget, minutes) => `It can run for up to ~${minutes} minutes. Start it with the Bash tool's run_in_background, then WAIT IN THE FOREGROUND: ` +
+  `make repeated foreground Bash calls (Bash timeout 600000 ms), each a bounded loop of at most 9 minutes: ` +
+  `for i in $(seq 1 54); do ls ${lsTarget} >/dev/null 2>&1 && break; sleep 10; done ; repeat until the result exists or that total time has passed. ` +
+  'NEVER return or end your turn while the review process is still running: returning kills it and loses the review. ' +
+  'If the total time passes with no result, report ERROR with what the run folder contains.'
+const availNote = `First check that codex is AVAILABLE in this environment: run codex --version and node ${q(A.review_runner)} --help. ` +
+  'If either cannot run or exits non-zero (not installed, command not found), do NOT start the review: return codex_available=false, verdict ERROR, empty finding lists, and the observed output in note. ' +
+  'Otherwise codex_available=true. A usage cap or quota error is NOT unavailability: it stays codex_available=true with verdict ERROR.\n'
+// Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
+async function reviewed(relay, fallback) {
+  const r = await relay()
+  if (!r || r.codex_available !== false) return r && { ...r, reviewer: 'codex' }
+  if ((A.review_fallback || 'none') !== 'opus-high') return { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
+  const f = await fallback()
+  return f && { ...f, codex_available: false, reviewer: FALLBACK_REVIEWER }
+}
 // NEEDS_HUMAN only because codex's own verdict disagreed with the runner's rule, with findings still listed: those findings
 // are revisable, so they go to the author instead of stopping the stage. Every other NEEDS_HUMAN without confirmed findings stops.
 const disagreementOnly = r => r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && r.other_findings.length &&
   r.verdict_reasons.length > 0 && r.verdict_reasons.every(x => /model_rule_disagreement/.test(x))
 
 function codex(kind, file, against, out, label, ph, inventory) {
-  return agent(
-    `Run an independent codex ${kind} review and report its verdict. Do not review the document yourself.\n` +
+  return reviewed(() => agent(
+    `Run an independent codex ${kind} review and report its verdict. Do not review the document yourself.\n${availNote}` +
     (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
     `Command (Bash): node ${q(A.review_runner)} --kind ${kind} --files ${q(file)}${inventory ? ' ' + q(inventory) : ''}${against ? ` --against ${q(against)}` : ''} --repo ${q(A.repo)} --out-dir ${q(out)}` +
     `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}\n` +
-    `It can run for up to ~${Math.ceil(TIMEOUT_S * 6 / 60) + 5} minutes: run it in the background and poll for ${out}/*/result.json with a bounded wait loop of that length.\n` +
+    `${waitNote(`${q(out)}/*/result.json`, Math.ceil(TIMEOUT_S * 6 / 60) + 5)}\n` +
     `Exit codes: 0 PASS, 1 FAIL, 3 NEEDS_HUMAN, 2 setup error (report ERROR). Read the result.json of the run folder THIS command created (the newest; ignore older folders). ` +
     `Put findings whose validation.status is "confirmed" in confirmed_findings, every other non-refuted finding in other_findings, and copy result.json's verdict_reasons verbatim. ` +
     `If codex reports a usage cap or quota error, return ERROR with that text in note.\n- ${RULES}`,
-    { label, phase: ph, schema: REVIEW, effort: 'low' })
+    { label, phase: ph, schema: RELAY, effort: 'low' }),
+  () => agent(
+    `Codex is not available in this environment, so YOU are the independent ${kind} reviewer in its place (the repo config chose review_fallback: opus-high). ` +
+    `Review ${file}${inventory ? ` and the execution inventory ${inventory}` : ''}${against ? ` against ${against}` : ''} for defects: missing or contradicted requirements, ` +
+    'claims the repo does not support (read the code), untestable or vague acceptance checks, and gaps in scope.\n' +
+    (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
+    'Put each defect you verified against the document and the repo in confirmed_findings, anything plausible but unverified in other_findings, and one short line per reason for your verdict in verdict_reasons. ' +
+    `verdict PASS only when confirmed_findings is empty. Do not edit any file.\n- ${RULES}`,
+    { label: `${label} (opus fallback)`, phase: ph, schema: REVIEW, model: 'opus', effort: 'high' }))
 }
 
 async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
@@ -82,7 +111,7 @@ async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
   for (let round = 1; round <= MAX; round++) {
     const r = await codex(kind, path, against, `${A.run_dir}/${kind}-review-${round}`, `codex ${kind} review ${round}`, rph, inventory)
     if (!r || r.blocked || r.verdict === 'ERROR' || (r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && !disagreementOnly(r))) return { status: 'BLOCKED', stage: `${kind} review`, round, review: r }
-    if (r.verdict === 'PASS' && !r.confirmed_findings.length) return { status: 'PASS', rounds: round, path }
+    if (r.verdict === 'PASS' && !r.confirmed_findings.length) return { status: 'PASS', rounds: round, path, reviewer: r.reviewer }
     if (round === MAX) return { status: 'FAIL', stage: `${kind} review`, rounds: round, review: r }
     const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => `[${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`).join('\n')
     doc = await agent(writePrompt(items), { label: `${kind} revise ${round}`, phase: ph, schema: DOC, effort: EFFORT })
