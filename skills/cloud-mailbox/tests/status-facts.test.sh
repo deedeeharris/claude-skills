@@ -47,6 +47,16 @@ out=$(cd "$work/plain" && echo '{}' | env -u CLAUDE_PROJECT_DIR bash "$hook"); r
 [ $rc -eq 0 ] && has "^Time: $stamp" && has '^Branch: - \(not a git repo\)$' && has '^Worktree: - \(not a git repo: .+plain\)$' && r=ok || r=bad
 check "$r" "outside a git repo, with CLAUDE_PROJECT_DIR unset: falls back to the working directory and says so"
 
+# git older than 2.31 does not fail on --path-format: rev-parse echoes the unknown option and exits 0.
+# A wrapper renames the option to one no git knows, which reproduces that on any version.
+mkdir "$work/oldgit"
+printf '#!/usr/bin/env bash\na=(); for x; do [ "$x" = --path-format=absolute ] && x=--no-such-path-format; a+=("$x"); done\nexec "%s" "${a[@]}"\n' \
+  "$(command -v git)" > "$work/oldgit/git"
+chmod +x "$work/oldgit/git"
+run "$work/clone" PATH="$work/oldgit:$PATH"
+[ $rc -eq 0 ] && has '^Worktree: .+/clone \(main checkout\)$' && ! has 'no-such-path-format' && r=ok || r=bad
+check "$r" "git without --path-format: real worktree path, still the main checkout"
+
 run "$work/clone" STATUS_FOOTER_TZ=UTC
 [ $rc -eq 0 ] && has "^Time: $stamp UTC\$" && r=ok || r=bad
 check "$r" "STATUS_FOOTER_TZ=UTC: time in UTC, no fallback note"

@@ -34,9 +34,10 @@ echo "Session facts, measured now - copy these into the Status Footer and do not
 echo "Time: $now"
 
 # Top level, own git dir, shared git dir: one line each. Fails outside a repository. git older
-# than 2.31 has no --path-format; its relative paths still compare right from the top level.
-if ! paths=$(g rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir) \
-   && ! paths=$(g rev-parse --show-toplevel --git-dir --git-common-dir); then
+# than 2.31 has no --path-format: it echoes the option back and still exits 0, so a first line
+# starting with "--" means "retry without it". Its relative paths still compare right.
+if paths=$(g rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir) && [ "${paths#--}" = "$paths" ]; then :
+elif ! paths=$(g rev-parse --show-toplevel --git-dir --git-common-dir); then
   echo "Branch: - (not a git repo)"
   echo "Worktree: - (not a git repo: $dir)"
   exit 0
