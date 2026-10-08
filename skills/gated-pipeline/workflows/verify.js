@@ -35,6 +35,9 @@ if (!(A.base_commit && /^[0-9a-f]{7,40}$/.test(A.base_commit))) return { status:
 if (!(A.reviewed_sha && /^[0-9a-f]{40}$/.test(A.reviewed_sha))) return { status: 'BLOCKED', reason: 'need reviewed_sha: the 40-hex commit build reviewed (build result reviewed_sha)' }
 
 const q = s => `'${s}'`
+// The validator reports Windows paths with backslashes; compare by form, not by spelling.
+const pathForm = p => p.replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase())
+const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
 // Every check and the compliance trace must run with HEAD at reviewed_sha and a clean tree, before AND after.
 // clean_ignore: repo-relative prefixes whose dirty/untracked status is tolerated (e.g. a harness state dir).
 if ((A.clean_ignore || []).some(p => !SAFE.test(p) || ABS.test(p))) return { status: 'BLOCKED', reason: 'clean_ignore entries must be repo-relative paths of safe characters' }
@@ -209,6 +212,8 @@ const compTask = `Trace every requirement and acceptance check in the spec ${A.s
   `Read the actual acceptance ledger ${ledger}, build result ${A.build_result_path} and check outputs under ${A.run_dir}. ` +
   `Return requirements with EVERY frozen ID exactly once and PASS/FAIL/NOT_RUN plus its actual evidence records. ` +
   `Runtime acceptance needs an exact executed command, exit code, nonempty output file and head_sha=${A.reviewed_sha}; a file/line alone only proves a static claim. ` +
+  `Each evidence item is a record object, never a summary string. A runtime record copies the ledger record of that ID's frozen proof_command byte for byte (command, exit_code, log_path, log_sha256); ` +
+  `put other commands you relied on (controls, check outputs) in the summary, not in evidence. A static record's file is repo-relative (for example src/a.py), never an absolute path. ` +
   `Do not execute commands or invent missing evidence. verdict FAIL for any missing/wrong/unproven item, else PASS.`
 const comp = await reviewed('compliance', () => agent(
   `Run an independent codex SPEC-COMPLIANCE trace and report its verdict. Do not judge it yourself.\n${availNote(false)}` +
@@ -239,8 +244,16 @@ if (status !== 'PASS') return report
 phase('Completion')
 const reportPath = `${A.run_dir}/verify-result.json`
 const proofPath = `${A.run_dir}/completion-proof.json`
+// The compliance relay can flatten codex's evidence records to strings; put codex's own records back first.
+const merger = A.completion_runner.replace(/check-completion\.js$/, 'merge-compliance.js')
+const mergeStep = comp.reviewer === 'codex' && merger !== A.completion_runner
+  ? `Then restore codex's own compliance evidence (exit 1 means refused: return passed=false with its printed reason):\n` +
+    `node ${q(merger)} --verify-result ${q(reportPath)} --compliance ${q(cout + '/compliance.json')} --manifest ${q(A.manifest_path)} ` +
+    `--ledger ${q(ledger)} --checkout ${q(cout + '/wt')}\n`
+  : ''
 const completion = await agent(
   `Write this exact Workflow result JSON atomically to ${reportPath}, without changing fields:\n${JSON.stringify(report)}\n` +
+  mergeStep +
   `Then run the real deterministic completion validator (do not substitute your own judgement):\n` +
   `node ${q(A.completion_runner)} --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --reviewed-sha ${A.reviewed_sha} ` +
   `--manifest ${q(A.manifest_path)} --manifest-sha256 ${A.manifest_sha256} --spec ${q(A.spec_path)} ` +
@@ -251,5 +264,5 @@ const completion = await agent(
     required: ['passed', 'proof_path', 'reviewed_sha', 'manifest_sha256'],
   } })
 if (!completion || completion.blocked) return { ...report, status: 'BLOCKED', stage: 'completion', completion }
-if (!completion.passed || completion.proof_path !== proofPath || completion.reviewed_sha !== A.reviewed_sha || completion.manifest_sha256 !== A.manifest_sha256) return { ...report, status: 'INCOMPLETE', stage: 'completion', completion }
+if (!completion.passed || !samePath(completion.proof_path, proofPath) || completion.reviewed_sha !== A.reviewed_sha || completion.manifest_sha256 !== A.manifest_sha256) return { ...report, status: 'INCOMPLETE', stage: 'completion', completion }
 return { ...report, verify_result_path: reportPath, completion }

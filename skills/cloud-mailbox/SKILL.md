@@ -54,7 +54,7 @@ Start this as a **background** command and end the turn:
 bash <skill-dir>/scripts/pm-wait.sh
 ```
 
-It exits when any worker comments on an open mailbox issue, and prints `MAILBOX #<n> <time> <url> <first line>`. Read the comment with `gh api repos/<owner>/<repo>/issues/<n>/comments`, act on it, then **start the waiter again**. One waiter covers every open mailbox.
+It exits when any worker comments on an open mailbox issue, and prints `MAILBOX #<n> <time> <url> <first line>` followed by the comment body, each line prefixed `  | `. Bodies longer than `--max-lines` (default 60) end with a line pointing at the URL; read those in full with `gh api`. **Read every body, not only the first line**: a worker can put a request inside an ACK. Act on it, then **start the waiter again**. One waiter covers every open mailbox.
 
 - **Delivery:** comments are tracked by id per issue, kept in `.git/cloud-mailbox.ids`. A relaunch never misses a comment and never reports one twice, and a reply posted before the waiter started is still delivered.
 - **Who counts:** workers post through your GitHub account, so the waiter counts only comments by the account `gh` is signed in as. `--author` overrides it.
