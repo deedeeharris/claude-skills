@@ -26,7 +26,7 @@ Task text → `prd.md` → codex PRD review → revise until PASS → `spec.md` 
 ```
 Workflow({ scriptPath: "<skill-dir>/workflows/design.js", args: {
   feature_id, repo, task, run_dir, review_runner, codex_model, codex_effort,
-  review_timeout_seconds, max_rounds, author_effort, execution_schema, review_fallback } })
+  review_timeout_seconds, max_rounds, author_effort, execution_schema, review_fallback, security_docs } })
 ```
 
 ## Stage 2: build (`workflows/build.js`)
@@ -37,7 +37,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/build.js", args: {
   feature_id, repo, work_branch, spec_path, charge, run_dir, review_runner,
   codex_model, codex_effort, impl_effort, max_fix_rounds, unit_cmd, suite_cmd,
   lock_note, live_budget_min, known_failures, clean_ignore, suite_isolated, isolated_setup,
-  security_schema, review_timeout_seconds, base_commit, review_fallback } })
+  security_schema, review_timeout_seconds, base_commit, review_fallback, security_docs, security_checklist } })
 ```
 When re-running build after land returns `HEAD_MOVED` or `CI_RED`, pass the feature's ORIGINAL `base_commit` (from the first build result) so every commit since then is inside the reviewed range.
 
@@ -50,7 +50,7 @@ Service boot/connectivity, success/failure/edge cases, side-effect readback, lin
 Workflow({ scriptPath: "<skill-dir>/workflows/verify.js", args: {
   feature_id, repo, work_branch, run_dir, review_runner, files, deleted, base_commit, reviewed_sha, clean_ignore,
   spec_path, compliance_schema, checks, codex_model, codex_effort, review_timeout_seconds,
-  manifest_path, manifest_sha256, build_result_path, completion_runner, review_fallback } })
+  manifest_path, manifest_sha256, build_result_path, completion_runner, review_fallback, scan_log, require_scan_row } })
 ```
 `base_commit` and `reviewed_sha` are REQUIRED (pass build's values straight through); the final review and the compliance trace cover the whole change `base_commit..reviewed_sha`. `files`/`deleted` are informational and must be repo-relative. A check with no `budget_min > 0` may make no live or paid calls.
 
@@ -63,6 +63,14 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
   manifest_path, manifest_sha256, spec_path, build_result_path, verify_result_path, completion_runner, proof_path } })
 ```
 A PR with no checks is `CI_PENDING` (CI may not have registered yet) unless `allow_no_ci: true` says the repo has no CI.
+
+## Security scans
+The optional `security:` block in `.claude/pipeline.yaml` makes the security handling repo-owned. The repo's own OWASP checklist and CLAUDE.md win over this skill's defaults; leave the block out and every stage behaves as before.
+- `security.docs` -> `security_docs` (design, build): ABSOLUTE paths to the threat model and accepted-risk docs. Design's spec must carry a Security considerations section (data exposure and authorization scope, input validation and length limits, resource consumption with a server-side bound such as a rate limit or result cap, and accepted risks that cite these docs instead of assuming them).
+- `security.checklist` -> `security_checklist` (build): ABSOLUTE path to the repo's OWASP checklist. The security pass (codex and the Opus fallback) reads the docs and checklist first and covers the OWASP Top 10 and OWASP API Security Top 10 (including API4 unrestricted resource consumption). Client-side controls are not security controls, and an accepted risk elsewhere (e.g. same-origin content that can call the app's API with the user's credentials) widens the attack surface of every new endpoint. The verdict rule is unchanged: FAIL on any critical or high finding.
+- `security.scan_log` + `security.require_scan_row` -> `scan_log`, `require_scan_row` (verify): with `require_scan_row: true`, the compliance trace must cite a dated scan-log row covering the change at `reviewed_sha` (file:line) or report a blocking finding. `scan_log` is repo-relative; `require_scan_row` without it is BLOCKED. The row is part of the change, so list `scan_log` in the frozen inventory's `allowed_paths`.
+
+All three path args go through the same safe-path checks as every other path; an unsafe one is BLOCKED before any agent runs.
 
 ## Completion contract
 

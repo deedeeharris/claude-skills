@@ -422,3 +422,100 @@ test('fallback parity: a design MAJOR with an ISO property triggers at any confi
   assert.equal(result.status, 'PASS', 'FAIL -> revise -> PASS, never NEEDS_HUMAN');
   assert.ok(calls.find(c => c.options.label === 'prd revise 1').prompt.includes('no criterion'));
 });
+
+// --- security scans: repo-owned threat model, OWASP checklist and scan log reach the prompts ---
+const secDocs = ['/repo/docs/threat-model.md', '/repo/docs/accepted-risks.md'];
+// The codex security/compliance task is written into prompt.md between double quotes.
+const quotedTask = p => p.slice(p.indexOf('prompt.md containing: "') + 'prompt.md containing: "'.length, p.indexOf('"\n2. Run'));
+const checklist = '/repo/docs/owasp-checklist.md';
+
+test('design: the spec prompt requires a Security considerations section and reads security_docs when given', async () => {
+  const withDocs = await run('design', { ...designArgs, security_docs: secDocs }, [{ blocked: false }, docReview, { blocked: false }, docReview, freeze]);
+  assert.equal(withDocs.result.status, 'PASS');
+  const spec = withDocs.calls.find(c => c.options.label === 'spec draft').prompt;
+  assert.ok(spec.includes('Security considerations'), 'spec must carry a Security considerations section');
+  assert.match(spec, /authorization scope/);
+  assert.match(spec, /length limits/);
+  assert.match(spec, /server-side bound/);
+  assert.match(spec, /client-side debounce\/throttle is not a security control/);
+  for (const d of secDocs) assert.ok(spec.includes(d), 'spec author reads ' + d);
+  const prd = withDocs.calls.find(c => c.options.label === 'prd draft').prompt;
+  assert.ok(!prd.includes('Security considerations'), 'the PRD prompt is unchanged');
+  const without = await run('design', designArgs, [{ blocked: false }, docReview, { blocked: false }, docReview, freeze]);
+  const plain = without.calls.find(c => c.options.label === 'spec draft').prompt;
+  assert.ok(plain.includes('Security considerations'), 'the section is required even without repo docs');
+  assert.ok(!plain.includes('/repo/docs/'), 'no repo docs are invented when none are given');
+});
+
+test('build: codex and fallback security prompts name OWASP API Security Top 10 / API4 and read the repo docs first', async () => {
+  const args = { ...buildArgs, security_docs: secDocs, security_checklist: checklist };
+  const viaCodex = await run('build', args, [work, codeReview, secPass, suitePass]);
+  assert.equal(viaCodex.result.status, 'PASS');
+  const opusReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [] };
+  const viaOpus = await run('build', { ...args, review_fallback: 'opus-high' },
+    [work, { ...unavailable, head_sha: '', changed: [] }, opusReview, { verdict: 'ERROR', blocking: [], codex_available: false }, { verdict: 'PASS', blocking: [] }, suitePass]);
+  assert.equal(viaOpus.result.status, 'PASS');
+  const prompts = [viaCodex.calls.find(c => c.options.label === 'codex security 1').prompt,
+    viaOpus.calls.find(c => c.options.label === 'opus security 1 (codex unavailable)').prompt];
+  for (const p of prompts) {
+    assert.ok(p.includes('OWASP Top 10'), 'web Top 10 still named');
+    assert.ok(p.includes('OWASP API Security Top 10'), 'API Top 10 named');
+    assert.match(p, /API4[^.]*unrestricted resource consumption/i);
+    assert.match(p, /client-side controls are not security controls/i);
+    assert.match(p, /accepted risk/i);
+    for (const d of [...secDocs, checklist]) assert.ok(p.includes(d), 'security reviewer reads ' + d);
+    assert.ok(p.includes('verdict FAIL if any critical or high finding exists, else PASS'), 'verdict rule unchanged');
+  }
+  const task = quotedTask(prompts[0]);
+  for (const d of [...secDocs, checklist]) assert.ok(task.includes(d), 'the codex task itself carries ' + d);
+  assert.ok(task.includes('API4') && !/["']/.test(task), 'the quoted codex task holds no quote characters');
+  const plain = await run('build', buildArgs, [work, codeReview, secPass, suitePass]);
+  const plainSec = plain.calls.find(c => c.options.label === 'codex security 1').prompt;
+  assert.ok(plainSec.includes('API4'), 'API4 is checked even without repo docs');
+  assert.ok(!plainSec.includes('/repo/docs/'), 'no repo docs are invented when none are given');
+});
+
+test('verify: the compliance trace requires a dated scan-log row only when require_scan_row is true', async () => {
+  const scanArgs = { ...verifyArgs, scan_log: 'docs/security-scan-log.md', require_scan_row: true };
+  const required = await run('verify', scanArgs, [preflight, proofs, finalReview, compliance, gate]);
+  assert.equal(required.result.status, 'PASS');
+  const viaCodex = required.calls.find(c => c.options.label === 'codex spec compliance').prompt;
+  const fallback = await run('verify', { ...scanArgs, review_fallback: 'opus-high' },
+    [preflight, proofs, finalReview, { verdict: 'ERROR', blocking: [], requirements: [], codex_available: false, ...pinned }, compliance, gate]);
+  const viaOpus = fallback.calls.find(c => c.options.label === 'opus spec compliance (codex unavailable)').prompt;
+  for (const p of [viaCodex, viaOpus]) {
+    assert.ok(p.includes('docs/security-scan-log.md'), 'scan log named');
+    assert.match(p, /dated/);
+    assert.ok(p.includes(`at ${sha}`), 'checked at reviewed_sha');
+    assert.match(p, /file:line/);
+    assert.match(p, /severity high/);
+  }
+  const task = quotedTask(viaCodex);
+  assert.ok(task.includes('docs/security-scan-log.md') && !task.includes('"'), 'the quoted codex task carries the scan log and no double quote');
+  for (const args of [verifyArgs, { ...verifyArgs, scan_log: 'docs/security-scan-log.md', require_scan_row: false }]) {
+    const { calls } = await run('verify', args, [preflight, proofs, finalReview, compliance, gate]);
+    const p = calls.find(c => c.options.label === 'codex spec compliance').prompt;
+    assert.ok(!/scan log/i.test(p), 'no scan-row requirement unless require_scan_row is true');
+  }
+});
+
+test('unsafe security config returns BLOCKED before any agent runs', async () => {
+  const cases = [
+    ['design', { ...designArgs, security_docs: ['docs/threat-model.md'] }, /security_docs/],
+    ['design', { ...designArgs, security_docs: ['/repo/$(id).md'] }, /security_docs/],
+    ['design', { ...designArgs, security_docs: '/repo/docs/threat-model.md' }, /security_docs/],
+    ['build', { ...buildArgs, security_docs: ["/repo/it's.md"] }, /security_docs/],
+    ['build', { ...buildArgs, security_checklist: '~/checklist.md' }, /security_checklist/],
+    ['verify', { ...verifyArgs, scan_log: '/repo/docs/scan-log.md', require_scan_row: true }, /scan_log/],
+    ['verify', { ...verifyArgs, scan_log: '../outside/scan-log.md', require_scan_row: true }, /scan_log/],
+    ['verify', { ...verifyArgs, scan_log: 'docs/`id`.md', require_scan_row: true }, /scan_log/],
+    ['verify', { ...verifyArgs, require_scan_row: true }, /scan_log/],
+    ['verify', { ...verifyArgs, scan_log: 'docs/scan-log.md', require_scan_row: 'yes' }, /require_scan_row/],
+  ];
+  for (const [name, args, reason] of cases) {
+    const { result, calls } = await run(name, args, []);
+    assert.equal(result.status, 'BLOCKED', name + ' ' + JSON.stringify(args.security_docs || args.security_checklist || args.scan_log));
+    assert.match(result.reason, reason, name);
+    assert.equal(calls.length, 0, name);
+  }
+});

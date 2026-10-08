@@ -17,9 +17,12 @@ if (missing.length) return { status: 'BLOCKED', reason: 'missing args: ' + missi
 if (!A.spec_path && !A.charge) return { status: 'BLOCKED', reason: 'need spec_path or charge' }
 // Paths go into shell commands: single-quoted, and only from a conservative character set.
 const SAFE = /^[A-Za-z0-9._\/\\: +@-]+$/
-for (const k of ['repo', 'run_dir', 'review_runner', 'spec_path', 'security_schema']) {
+for (const k of ['repo', 'run_dir', 'review_runner', 'spec_path', 'security_schema', 'security_checklist']) {
   if (A[k] && (!SAFE.test(A[k]) || !/^([A-Za-z]:[\/\\]|\/)/.test(A[k]))) return { status: 'BLOCKED', reason: `${k} must be an absolute path of safe characters (no ~, quotes, $ or backticks): ${A[k]}` }
 }
+// Optional repo security docs (threat model, accepted risks): absolute paths, validated like every other path arg.
+if (A.security_docs !== undefined && (!Array.isArray(A.security_docs) || A.security_docs.some(p => typeof p !== 'string' || !SAFE.test(p) || !/^([A-Za-z]:[\/\\]|\/)/.test(p)))) return { status: 'BLOCKED', reason: 'security_docs must be a list of absolute paths of safe characters (no ~, quotes, $ or backticks)' }
+const SEC_READ = [...(A.security_docs || []), ...(A.security_checklist ? [A.security_checklist] : [])]
 
 const MAX = A.max_fix_rounds ?? 4
 const IMPL_EFFORT = A.impl_effort || 'medium'
@@ -264,8 +267,13 @@ async function review(round) {
     { label: `opus review ${round} (codex unavailable)`, phase: 'Review', schema: PARITY_SCHEMA({ head_sha: REVIEW.properties.head_sha, changed: REVIEW.properties.changed }), model: 'opus', effort: 'high' }).then(f => parity('implementation', f)))
 }
 
-const secTask = () => 'Security review (OWASP Top 10, secrets, injection, authz, unsafe deserialization, SSRF, path traversal, logging of sensitive data) ' +
+// The repo's own security docs and checklist come first; the task text is quoted into prompt.md, so it holds no double quotes.
+const secTask = () => (SEC_READ.length ? `First read the repository security docs and OWASP checklist: ${SEC_READ.join(', ')}. Apply that checklist, and check its threat-model premises and accepted risks against the code instead of assuming them. ` : '') +
+  'Security review (OWASP Top 10 and OWASP API Security Top 10, including API1/API3/API5 object, property and function level authorization and API4 unrestricted resource consumption; ' +
+  'secrets, injection, authz, unsafe deserialization, SSRF, path traversal, logging of sensitive data) ' +
   `of the change ${base}..${reviewedSha} in this repository (all of it: git diff ${base} ${reviewedSha}). Read any other file you need for context, but report findings ONLY in that change. ` +
+  'Client-side controls are not security controls: debounce, throttle, hidden or disabled UI and client-side validation do not count; every new endpoint or expensive operation needs server-side authorization, input validation and a bound (rate limit, result cap or size limit). ' +
+  'Accepted risks elsewhere in the threat model can widen the attack surface of new endpoints: for example, content that runs same-origin can call a new endpoint with the credentials of the signed-in user, so judge each new endpoint as reachable by it. ' +
   'Quote the code for every finding. verdict FAIL if any critical or high finding exists, else PASS.'
 async function security(round) {
   const out = `${A.run_dir}/security-${round}`
