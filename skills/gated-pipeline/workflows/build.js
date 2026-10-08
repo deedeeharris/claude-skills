@@ -105,6 +105,48 @@ const SEC = {
 // Codex relays also report whether codex exists here at all; the Opus stand-in uses the plain schemas.
 const relay = s => ({ ...s, properties: { ...s.properties, codex_available: { type: 'boolean' } }, required: [...s.required, 'codex_available'] })
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
+
+// Opus fallback parity with codex-review: same rubric file, severity scale and verdict rule as run-review.js
+// (computeTriggers/computeVerdict). The reviewer reports findings; the verdict is computed here, never by the model.
+const PARITY_RUBRICS = A.review_runner.replace(/[\/\\][^\/\\]+$/, '').replace(/[\/\\]scripts$/, '') + '/rubrics'
+const PARITY_ISO = new Set(['ambiguous', 'unverifiable', 'missing_acceptance_criteria', 'inconsistent', 'infeasible', 'incomplete'])
+const PARITY_SCHEMA = (extra = {}) => ({
+  type: 'object',
+  properties: {
+    findings: { type: 'array', items: { type: 'object', properties: {
+      severity: { type: 'string', enum: ['BLOCKING', 'MAJOR', 'MINOR', 'NIT'] }, confidence: { type: 'number' },
+      iso_property: { type: ['string', 'null'] }, location: { type: 'string' }, title: { type: 'string' }, detail: { type: 'string' } },
+      required: ['severity', 'confidence', 'title'] } },
+    note: { type: 'string' }, blocked: { type: 'boolean' }, ...extra,
+  },
+  required: ['findings', ...Object.keys(extra)],
+})
+const parityNote = kind => `Apply the codex-review rubric at ${PARITY_RUBRICS}/${kind}.md (read it first; report only what it allows) and its severity scale: ` +
+  'BLOCKING = must be fixed before use (data loss, security exposure, crash on a normal path, or unusable as the basis for the next stage); ' +
+  'MAJOR = a real defect that causes wrong behavior or rework; MINOR = real but low-impact; NIT = style. ' +
+  'confidence = probability the finding is real: >= 0.8 only when you checked it against the artifact text or code path, 0.5-0.8 likely, < 0.5 speculative. ' +
+  'Validate every BLOCKING or MAJOR finding yourself before reporting it: re-open the cited location, and drop it if the evidence does not hold. ' +
+  (kind === 'implementation' ? 'iso_property is always null. ' : 'iso_property is one of ambiguous|unverifiable|missing_acceptance_criteria|inconsistent|infeasible|incomplete, or null for other gaps. ') +
+  'Report every finding in findings with location and detail (quote the evidence). Do NOT decide the verdict: the workflow applies the codex-review rule.'
+function parity(kind, f) {
+  if (!f || f.blocked) return f
+  const all = (f.findings || []).map(x => ({ ...x, confidence: Number(x.confidence) || 0 }))
+  const big = x => x.severity === 'BLOCKING' || x.severity === 'MAJOR'
+  const major = all.filter(x => x.severity === 'MAJOR')
+  const trig = kind === 'implementation'
+    ? all.filter(x => x.severity === 'BLOCKING' || (x.severity === 'MAJOR' && x.confidence >= 0.8))
+    : all.filter(x => x.severity === 'BLOCKING' || (x.severity === 'MAJOR' && (PARITY_ISO.has(x.iso_property) || major.length >= 3)))
+  // codex validates each trigger in a second pass; here the reviewer was told to re-check every BLOCKING/MAJOR and drop
+  // what does not hold, so every reported trigger counts as confirmed (codex's trigger rule, not a confidence filter).
+  const confirmed = trig
+  const rest = all.filter(x => !confirmed.includes(x))
+  const { findings, ...extra } = f
+  const out = (verdict, reasons) => ({ ...extra, verdict, confirmed_findings: confirmed, other_findings: rest, verdict_reasons: reasons })
+  if (confirmed.length) return out('FAIL', confirmed.map(x => `${x.severity} conf ${x.confidence} (${kind}): ${x.title}`))
+  const band = rest.find(x => big(x) && x.confidence >= 0.5 && x.confidence < 0.8)
+  if (band) return out('NEEDS_HUMAN', [`${band.severity} conf ${band.confidence} in 0.5-0.8 band: ${band.title}`])
+  return out('PASS', ['no triggering findings' + (rest.length ? ` (${rest.length} non-blocking reported)` : '')])
+}
 const availNote = runner => `First check that codex is AVAILABLE in this environment: run codex --version${runner ? ` and node ${q(A.review_runner)} --help` : ''}. ` +
   `If ${runner ? 'either' : 'it'} cannot run or exits non-zero (not installed, command not found), do NOT start the review: return codex_available=false, verdict ERROR, empty finding lists, and the observed output in note. ` +
   'Otherwise codex_available=true. A usage cap or quota error is NOT unavailability: it stays codex_available=true with verdict ERROR.\n'
@@ -218,9 +260,8 @@ async function review(round) {
     `Do not change the work branch.\n${scopePrep(out)}` +
     `Review the change as it stands in that checkout (git -C ${q(out + '/wt')} diff --cached is the whole change ${base}..$H; read any other file there for context) for correctness bugs, ` +
     `missing or broken acceptance behaviour from ${target}, and unsafe code. Report findings ONLY in that change. ` +
-    'Put each defect you verified against the code in confirmed_findings, anything plausible but unverified in other_findings, and one short line per reason for your verdict in verdict_reasons. ' +
-    `verdict PASS only when confirmed_findings is empty. When your review is done (there is no result.json here), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}${chargeText}\n- ${RULES}`,
-    { label: `opus review ${round} (codex unavailable)`, phase: 'Review', schema: REVIEW, model: 'opus', effort: 'high' }))
+    `${parityNote('implementation')} When your review is done (there is no result.json here), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}${chargeText}\n- ${RULES}`,
+    { label: `opus review ${round} (codex unavailable)`, phase: 'Review', schema: PARITY_SCHEMA({ head_sha: REVIEW.properties.head_sha, changed: REVIEW.properties.changed }), model: 'opus', effort: 'high' }).then(f => parity('implementation', f)))
 }
 
 const secTask = () => 'Security review (OWASP Top 10, secrets, injection, authz, unsafe deserialization, SSRF, path traversal, logging of sensitive data) ' +
