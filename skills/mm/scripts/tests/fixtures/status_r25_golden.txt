@@ -1,0 +1,24 @@
+🎩 PM mode | Task: widget
+Mode: attended
+
+Rows (id | status | item | test level | PR | test page):
+#1 | ⚪ Not started | Build the widget | none | - | -
+#2 | ⚪ Not started | Write the notes | none | - | -
+#3 | ⚪ Not started | Ship it | e2e | PR 12 | http://localhost:3000/w
+#5 | 🔴 Blocked: needs a decision | Pick an API | none | - | -
+#4 | ⚪ Not started | Wrap up: insights review + move to done/ | none | - | -
+
+Waiting on the operator:
+- #3 is user-facing and waits for a human check (HUMAN_VERIFIED)
+- #5 needs a decision: which API
+
+Inbox: 0 unprocessed entries, 0 scan problems, 0 closed-task files
+
+In-flight dispatches:
+- none
+
+Checks:
+- no cap or structure findings
+
+Uncommitted PM changes:
+- none

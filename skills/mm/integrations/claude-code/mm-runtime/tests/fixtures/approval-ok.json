@@ -1,0 +1,24 @@
+{
+  "schema": "mm.approval/1",
+  "dry_run": false,
+  "record": {
+    "id": "a1",
+    "task": "t",
+    "task_dir": "/work/repo/.private/pm/active/t",
+    "row": "#2",
+    "route": "bg-it",
+    "model": "sonnet",
+    "worker": "bg",
+    "launch": "/babysitter:yolo {prompt}",
+    "prompt_path": "/work/repo/prompts/p.md",
+    "prompt_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "prompt_bytes": 1234,
+    "operator": "operator",
+    "channel": "cc-dialog",
+    "session": "00000000-0000-4000-8000-000000000001",
+    "approved_at": "2026-10-03T12:00:00+00:00",
+    "expires_at": "2026-10-03T12:15:00+00:00",
+    "consumed_at": null,
+    "consumed_by": null
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "schema": "mm.status/1",
+  "ok": false,
+  "generated_at": "2026-10-03T12:00:00+00:00",
+  "mm_version": "2.0.0",
+  "session": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "binding_state": "ok",
+    "bound": true,
+    "role": "pm",
+    "role_source": "binding",
+    "bound_at": "2026-10-03T11:00:00+00:00"
+  },
+  "task_source": "session",
+  "task": {
+    "name": "t",
+    "dir": "/work/repo/.private/pm/active/t",
+    "repo_root": "/",
+    "repo_root_source": "git",
+    "dir_exists": true,
+    "legacy": false,
+    "revision": 7
+  },
+  "mode": "attended",
+  "open_row": {
+    "id": "#2",
+    "item": "Build the parser",
+    "state": "IMPLEMENTING",
+    "status_label": "In progress"
+  },
+  "rows": [
+    {
+      "id": "#1",
+      "item": "Pick the file format",
+      "state": "DONE",
+      "status_label": "Done",
+      "blocked": false,
+      "user_facing": false,
+      "test_level": "unit",
+      "pr": null,
+      "test_page": null,
+      "is_wrapup": false
+    },
+    {
+      "id": "#2",
+      "item": "Build the parser",
+      "state": "IMPLEMENTING",
+      "status_label": "In progress",
+      "blocked": false,
+      "user_facing": false,
+      "test_level": "unit",
+      "pr": null,
+      "test_page": null,
+      "is_wrapup": false
+    },
+    {
+      "id": "#3",
+      "item": "Choose the storage engine",
+      "state": "NEEDS_DECISION",
+      "status_label": "Needs decision",
+      "blocked": true,
+      "user_facing": false,
+      "test_level": "unit",
+      "pr": null,
+      "test_page": null,
+      "is_wrapup": false
+    },
+    {
+      "id": "#4",
+      "item": "Wrap up: insights review + move to done/",
+      "state": "BACKLOG",
+      "status_label": "Not started",
+      "blocked": false,
+      "user_facing": false,
+      "test_level": "unit",
+      "pr": null,
+      "test_page": null,
+      "is_wrapup": true
+    }
+  ],
+  "waiting_on_operator": [
+    {
+      "row": "#3",
+      "kind": "decision",
+      "text": "#3 needs a decision: Choose the storage engine"
+    }
+  ],
+  "inbox": {
+    "entries": 2,
+    "problems": 0,
+    "closed_task_files": 0
+  },
+  "dispatches_in_flight": [
+    {
+      "id": "d4",
+      "at": "2026-10-03T11:30:00+00:00",
+      "route": "subagent",
+      "model": "sonnet",
+      "row": "#2",
+      "mode": "attended",
+      "worker": "subagent",
+      "approval_id": "a3",
+      "last_verdict": "ALIVE"
+    }
+  ],
+  "loop": {
+    "mode": "off",
+    "cadence": "60m",
+    "routes": [
+      "bg-it:sonnet"
+    ],
+    "noop_count": 0,
+    "noop_cap": 3,
+    "last_tick": {
+      "at": "2026-10-03T10:00:00+00:00",
+      "result": "noop"
+    },
+    "stopped_reason": "stopped by the operator",
+    "owner_session": null
+  },
+  "check": {
+    "status": "ok",
+    "code": 0,
+    "lines": [
+      "check: ledger.json and the generated files agree"
+    ]
+  },
+  "uncommitted": [
+    " M .private/pm/active/t/HANDOFF.md"
+  ],
+  "errors": [
+    {
+      "code": "FENCE-ROOT-TOO-BROAD",
+      "message": "the binding of session 00000000-0000-4000-8000-000000000001 records / as its repository root, a filesystem root or a folder holding your home folder: run mm.py unbind --session 00000000-0000-4000-8000-000000000001; bind refuses that root, so move the task into a repository or a project folder below your home folder before binding again"
+    }
+  ]
+}

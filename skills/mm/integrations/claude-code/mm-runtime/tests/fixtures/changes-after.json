@@ -1,0 +1,20 @@
+{
+  "schema": "mm.changes/1",
+  "repo_root": "/work/repo",
+  "head": "1111111111111111111111111111111111111111",
+  "files": {
+    "src/dirty.py": [
+      131,
+      1759492860000000000
+    ],
+    "src/new.py": [
+      10,
+      1759492860000000000
+    ]
+  },
+  "submodules": {},
+  "changed": [
+    "src/dirty.py",
+    "src/new.py"
+  ]
+}

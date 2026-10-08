@@ -1,0 +1,12 @@
+{
+  "schema": "mm.fence/1",
+  "decision": "allow",
+  "actor": "worker",
+  "targets": [
+    {
+      "path": "/work/repo/src/a.py",
+      "class": null
+    }
+  ],
+  "messages": []
+}

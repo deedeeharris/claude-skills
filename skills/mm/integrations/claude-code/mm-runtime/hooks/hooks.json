@@ -1,0 +1,4 @@
+{
+  "description": "mm-runtime hooks module",
+  "modules": ["./register.ts"]
+}
