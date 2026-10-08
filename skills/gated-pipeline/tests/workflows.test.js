@@ -229,7 +229,7 @@ test('when review_fallback is not none or opus-high, every stage returns BLOCKED
 });
 
 test('when codex is unavailable and review_fallback is opus-high, design reviews with Opus high and labels it', async () => {
-  const opusPass = { verdict: 'PASS', confirmed_findings: [], verdict_reasons: ['ok'], other_findings: [] };
+  const opusPass = { findings: [] };
   const { result, calls } = await run('design', { ...designArgs, review_fallback: 'opus-high' },
     [{ blocked: false }, unavailable, opusPass, { blocked: false }, unavailable, opusPass, freeze]);
   assert.equal(result.status, 'PASS');
@@ -258,10 +258,10 @@ test('when codex is capped, opus-high does not fall back and design returns BLOC
 });
 
 const blockedUnavailable = { ...unavailable, blocked: true, note: 'git worktree add was refused' };
-const opusFinding = { severity: 'major', location: 'x', title: 'gap', detail: 'd' };
+const opusFinding = { severity: 'MAJOR', confidence: 0.9, iso_property: 'incomplete', location: 'x', title: 'gap', detail: 'd' };
 
 test('when design round 1 is an Opus fallback and round 2 a codex PASS, the result still discloses the Opus round', async () => {
-  const opusFail = { verdict: 'FAIL', confirmed_findings: [opusFinding], verdict_reasons: ['gap'], other_findings: [] };
+  const opusFail = { findings: [opusFinding] };
   const { result, calls } = await run('design', { ...designArgs, review_fallback: 'opus-high' },
     [{ blocked: false }, unavailable, opusFail, { blocked: false }, docReview, { blocked: false }, docReview, freeze]);
   assert.equal(result.status, 'PASS');
@@ -272,11 +272,11 @@ test('when design round 1 is an Opus fallback and round 2 a codex PASS, the resu
     { step: 'prd review 2', reviewer: 'codex' },
     { step: 'spec review 1', reviewer: 'codex' },
   ]);
-  assert.ok(calls[3].prompt.includes(`[${FALLBACK_REVIEWER} major]`), 'revision findings name their actual reviewer');
+  assert.ok(calls[3].prompt.includes(`[${FALLBACK_REVIEWER} MAJOR]`), 'revision findings name their actual reviewer');
 });
 
 test('when build round 1 is an Opus fallback and round 2 a codex PASS, the result still discloses the Opus round', async () => {
-  const opusFail = { verdict: 'FAIL', confirmed_findings: [opusFinding], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [] };
+  const opusFail = { findings: [{ ...opusFinding, iso_property: null }], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }] };
   const { result, calls } = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
     [work, { ...unavailable, head_sha: '', changed: [] }, opusFail, work, codeReview, secPass, suitePass]);
   assert.equal(result.status, 'PASS');
@@ -287,7 +287,7 @@ test('when build round 1 is an Opus fallback and round 2 a codex PASS, the resul
     { step: 'review 2', reviewer: 'codex' },
     { step: 'security 2', reviewer: 'codex' },
   ]);
-  assert.ok(calls.find(c => c.options.label === 'fix 1').prompt.includes(`[${FALLBACK_REVIEWER} major]`), 'fix items name their actual reviewer');
+  assert.ok(calls.find(c => c.options.label === 'fix 1').prompt.includes(`[${FALLBACK_REVIEWER} MAJOR]`), 'fix items name their actual reviewer');
 });
 
 test('when verify reviews come only from codex, fallback_used is false and both reviews are listed', async () => {
@@ -357,4 +357,68 @@ test('when codex is unavailable and review_fallback is opus-high, verify final r
   assert.equal(result.fallback_used, true);
   const opus = calls.filter(c => c.options.model === 'opus');
   assert.deepEqual(opus.map(c => c.options.effort), ['high', 'high']);
+});
+
+// Opus fallback parity with codex-review (run-review.js computeTriggers/computeVerdict): the model reports
+// findings, the workflow decides the verdict with codex's rule, so MINOR/NIT never block and the loop converges.
+const minorOnly = { findings: [
+  { severity: 'MINOR', confidence: 0.95, iso_property: 'ambiguous', location: 'x', title: 'wording', detail: 'd' },
+  { severity: 'NIT', confidence: 0.9, iso_property: null, location: 'y', title: 'typo', detail: 'd' },
+] };
+
+test('fallback parity: an Opus design review with only MINOR/NIT findings passes and still reports them', async () => {
+  const { result, calls } = await run('design', { ...designArgs, review_fallback: 'opus-high' },
+    [{ blocked: false }, unavailable, minorOnly, { blocked: false }, unavailable, minorOnly, freeze]);
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.prd.reviewer, FALLBACK_REVIEWER);
+  const opus = calls.filter(c => c.options.model === 'opus');
+  assert.ok(opus[0].prompt.includes('/skill/rubrics/prd.md'), 'prd fallback reads the codex-review prd rubric');
+  assert.ok(opus[1].prompt.includes('/skill/rubrics/spec.md'), 'spec fallback reads the codex-review spec rubric');
+  assert.ok(!opus[0].prompt.includes('PASS only when'), 'the model no longer decides the verdict');
+});
+
+test('fallback parity: a design MAJOR blocks only with an ISO property or as the third MAJOR', async () => {
+  const major = (iso, title) => ({ severity: 'MAJOR', confidence: 0.9, iso_property: iso, location: 'x', title, detail: 'd' });
+  const lone = await run('design', { ...designArgs, review_fallback: 'opus-high' },
+    [{ blocked: false }, unavailable, { findings: [major(null, 'one')] }, { blocked: false }, unavailable, { findings: [] }, freeze]);
+  assert.equal(lone.result.status, 'PASS', 'one non-ISO MAJOR does not trigger');
+  const three = await run('design', { ...designArgs, review_fallback: 'opus-high', max_rounds: 1 },
+    [{ blocked: false }, unavailable, { findings: [major(null, 'a'), major(null, 'b'), major(null, 'c')] }]);
+  assert.equal(three.result.status, 'FAIL');
+  assert.equal(three.result.prd.review.confirmed_findings.length, 3);
+  const iso = await run('design', { ...designArgs, review_fallback: 'opus-high', max_rounds: 1 },
+    [{ blocked: false }, unavailable, { findings: [major('unverifiable', 'no pass/fail')] }]);
+  assert.equal(iso.result.status, 'FAIL');
+  assert.deepEqual(iso.result.prd.review.confirmed_findings.map(f => f.title), ['no pass/fail']);
+});
+
+test('fallback parity: build blocks on a verified MAJOR, asks a human for a 0.5-0.8 MAJOR, passes MINOR', async () => {
+  const head = { head_sha: sha, changed: [{ status: 'M', path: 'app.js' }] };
+  const opusReview = findings => ({ findings, ...head });
+  const minor = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
+    [work, { ...unavailable, head_sha: '', changed: [] }, opusReview(minorOnly.findings), secPass, suitePass]);
+  assert.equal(minor.result.status, 'PASS');
+  assert.equal(minor.result.review.other_findings.length, 2, 'non-blocking findings stay visible');
+  const band = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
+    [work, { ...unavailable, head_sha: '', changed: [] }, opusReview([{ severity: 'MAJOR', confidence: 0.6, iso_property: null, title: 'maybe' }])]);
+  assert.equal(band.result.status, 'BLOCKED');
+  assert.equal(band.result.review.verdict, 'NEEDS_HUMAN');
+});
+
+test('fallback parity: verify final review passes with MINOR only and fails on BLOCKING', async () => {
+  const pass = await run('verify', { ...verifyArgs, review_fallback: 'opus-high' },
+    [preflight, proofs, { ...unavailable, head_sha: sha }, { findings: minorOnly.findings, head_sha: sha }, { ...compliance, codex_available: true }, gate]);
+  assert.equal(pass.result.status, 'PASS');
+  const fail = await run('verify', { ...verifyArgs, review_fallback: 'opus-high' },
+    [preflight, proofs, { ...unavailable, head_sha: sha }, { findings: [{ severity: 'BLOCKING', confidence: 0.9, iso_property: null, title: 'crash' }], head_sha: sha }, { ...compliance, codex_available: true }]);
+  assert.equal(fail.result.status, 'FAIL');
+  assert.equal(fail.result.final_review.verdict, 'FAIL');
+});
+
+test('fallback parity: a design MAJOR with an ISO property triggers at any confidence and goes back to the author', async () => {
+  const lowConfIso = { severity: 'MAJOR', confidence: 0.75, iso_property: 'missing_acceptance_criteria', location: 'x', title: 'no criterion', detail: 'd' };
+  const { result, calls } = await run('design', { ...designArgs, review_fallback: 'opus-high' },
+    [{ blocked: false }, unavailable, { findings: [lowConfIso] }, { blocked: false }, unavailable, { findings: [] }, { blocked: false }, unavailable, { findings: [] }, freeze]);
+  assert.equal(result.status, 'PASS', 'FAIL -> revise -> PASS, never NEEDS_HUMAN');
+  assert.ok(calls.find(c => c.options.label === 'prd revise 1').prompt.includes('no criterion'));
 });
