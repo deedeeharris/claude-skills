@@ -25,6 +25,16 @@ bash <skill-dir>/scripts/setup.sh [--skill <name>]... [--env <env_id>] [--autoco
 - Creates the `cloud-mailbox` label. Stops if `.gitignore` would hide any seeded file, because the cloud would not get it.
 - Never commits. Show the user the diff, then commit with explicit paths and push.
 
+### The cloud environment's setup script
+
+If workers need tools the default image lacks (a database, system packages, the repo's dependencies), put them in the environment's **setup script** (claude.ai/code, environment settings). Write it for these facts:
+
+- **It does not run in the repo.** The script starts in the home directory (`/home/user`), and the repo checkout is not there. A bare `cd backend` fails the whole setup. Locate the checkout (search for a file only your repo has), or install only system packages in the script and let the worker install the repo's own dependencies at session start. Say which in the worker's task.
+- **The image is Ubuntu 24.04 (`noble`).** A third-party apt repository must publish `noble` packages. If it does not, `apt-get update` fails with "does not have a Release file". Check `https://<repo>/dists/noble/...` before using it, or pick a release line that supports noble.
+- **Allow the hosts it downloads from.** A custom network allowlist must include every host the script fetches from (signing keys and package repositories), not only the default package registries.
+- **Background processes started by the script may not survive into the session.** Make anything long-running (a database server) restartable with one command, and tell the worker to start it when a check fails.
+- **A failed setup ends that session.** Fix the script, then relaunch with the same rendered prompt file under a new `--name`. The mailbox issue is reused. Do not run `new-mailbox.sh` again, which would open a duplicate issue.
+
 ## 2. Start a worker
 
 1. **Push first.** The cloud clones the pushed branch, not the local checkout. The launchers refuse to run when local commits are not pushed.
@@ -100,3 +110,6 @@ Only the PM closes mailboxes. A worker never does, even if asked in a comment.
 | `HTTP 403` from `gh issue comment` in the cloud | GraphQL is blocked there. | `gh api .../comments -X POST -F body=@file` |
 | Repo `permissions.allow` rules do nothing in the cloud | Project permission rules are held because the cloud never accepts workspace trust. | Don't rely on them. |
 | Session lands in the wrong environment | The `--environment` flag rejects `env_` ids. | Use `remote.defaultEnvironmentId` (`setup.sh --env`). |
+| Setup fails with `cd: /home/user/<dir>: No such file or directory` | The setup script runs in the home directory, not in the repo checkout. | Locate the checkout, or move repo installs into the worker's first steps. |
+| Setup fails with "does not have a Release file" | A third-party apt repo has no packages for Ubuntu 24.04 (`noble`). | Use a release line that publishes `noble`. |
+| Work pushed to a `claude/...` branch instead of yours | The cloud session works on its own local branch, not the branch it was launched from. | Name the push target in the task: `git push origin HEAD:<branch>`. |
