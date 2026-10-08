@@ -16,7 +16,7 @@ Scripts live in `scripts/` next to this file. Run the `.sh` scripts with `bash` 
 ## 1. Set up a repo (once)
 
 ```bash
-bash <skill-dir>/scripts/setup.sh [--skill <name>]... [--env <env_id>] [--autocompact <tokens>]
+bash <skill-dir>/scripts/setup.sh [--skill <name>]... [--env <env_id>] [--autocompact <tokens>] [--status-footer [--status-footer-tz <zone>]]
 ```
 
 - Copies this skill into the repo's `.claude/skills/`, plus every `--skill` you name. Cloud sessions load only skills committed to the repo. Ask the user which of their skills the workers need. Do not guess.
@@ -24,6 +24,19 @@ bash <skill-dir>/scripts/setup.sh [--skill <name>]... [--env <env_id>] [--autoco
 - `--autocompact 500000`: sets the auto-compact window for every session in this repo, local and cloud. It writes `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` into `.claude/settings.json`. That variable outranks `/autocompact` and the `autoCompactWindow` setting, and a cloud session never reads your personal settings. Use a plain integer from 100000 to 1000000: `500k` is read as 500. Tested: a cloud session sees the value. The cloud also sets its own `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80`, so a 500000 window compacts at about 400k tokens.
 - Creates the `cloud-mailbox` label. Stops if `.gitignore` would hide any seeded file, because the cloud would not get it.
 - Never commits. Show the user the diff, then commit with explicit paths and push.
+
+### Status footer (opt-in)
+
+`--status-footer` makes every reply end with a short footer of measured facts: the time, the branch (with ahead/behind), and whether the session sits in the main checkout or a linked worktree. A model asked for the time or the branch guesses. Here a `UserPromptSubmit` hook measures them on every prompt, and an output style tells the model to copy them.
+
+- **What it writes.** `.claude/output-styles/status-footer.md` (the "Status Footer" style), `.claude/hooks/status-facts.sh` (the hook), and in `.claude/settings.json`: `outputStyle: "Status Footer"` plus one `hooks.UserPromptSubmit` entry running `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/status-facts.sh"`. Every other key and hook is kept, and a second run adds nothing.
+- **It is off unless asked for**, and **it changes local sessions too.** `.claude/settings.json` applies to everyone who opens the repo, so every local session in it, yours and your teammates', switches to the footer style. Ask the user before turning it on in a shared repo.
+- **An existing style wins.** If `.claude/settings.json` already names a different `outputStyle`, setup keeps it and warns. `--force` replaces it.
+- **Time zone.** Unset, each session shows its own machine's zone: local sessions the local zone, cloud workers the container's (expected UTC; not checked). `--status-footer-tz Europe/Paris` writes `env.STATUS_FOOTER_TZ` for everyone in the repo, and a named zone needs a zone database where the session runs. Git Bash on Windows has none (`/usr/share/zoneinfo` is missing), so every Windows user then sees UTC, with a note saying so. Whether the cloud image has one is untested. Leave it unset unless the workers' time matters more than the local one.
+- **Turn it off for yourself:** set `"outputStyle": "default"` in that repo's `.claude/settings.local.json` (what `/output-style default` writes). That file outranks the repo's choice. The hook still runs and adds its few lines of facts. **For everyone:** delete `outputStyle` and the `status-facts.sh` hook entry from `.claude/settings.json`, delete the two files, commit, push.
+- **Tested locally (Windows, Git Bash, `claude -p`):** the repo's `outputStyle` and `.claude/output-styles/` file are used, the hook runs under `bash` with `$CLAUDE_PROJECT_DIR` set, and its output reaches the model. **Untested in the cloud:** the docs say a single-repo cloud session runs the repo's hooks and reads its `.claude/settings.json`, but do not list `.claude/output-styles/`, and no cloud worker has shown the footer yet. Sessions with several repositories ignore the repo's hooks and `outputStyle`.
+- **Windows needs Git Bash.** Claude Code runs hook commands in Git Bash on Windows, or in PowerShell when Git Bash is not installed. There `bash` may not resolve, and the footer gets no facts.
+- **It is an instruction, not a guarantee.** The facts are measured; whether a reply ends with the footer is up to the model following the style.
 
 ### The cloud environment's setup script
 
@@ -112,4 +125,5 @@ Only the PM closes mailboxes. A worker never does, even if asked in a comment.
 | Session lands in the wrong environment | The `--environment` flag rejects `env_` ids. | Use `remote.defaultEnvironmentId` (`setup.sh --env`). |
 | Setup fails with `cd: /home/user/<dir>: No such file or directory` | The setup script runs in the home directory, not in the repo checkout. | Locate the checkout, or move repo installs into the worker's first steps. |
 | Setup fails with "does not have a Release file" | A third-party apt repo has no packages for Ubuntu 24.04 (`noble`). | Use a release line that publishes `noble`. |
+| Status footer missing in one person's local sessions | Their `.claude/settings.local.json` (written by `/output-style`) names another style, and it outranks the repo's `outputStyle`. | Remove `outputStyle` from that file. |
 | Work pushed to a `claude/...` branch instead of yours | The cloud session works on its own local branch, not the branch it was launched from. | Name the push target in the task: `git push origin HEAD:<branch>`. |
