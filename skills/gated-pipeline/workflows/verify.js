@@ -33,6 +33,10 @@ const bad = [...files, ...deleted].filter(f => !NAME.test(f) || ABS.test(f) || D
 if (bad.length) return { status: 'BLOCKED', reason: 'file names must be repo-relative and safe: ' + bad.join(', ') }
 if (!(A.base_commit && /^[0-9a-f]{7,40}$/.test(A.base_commit))) return { status: 'BLOCKED', reason: 'need a hex base_commit (HEAD before the feature started)' }
 if (!(A.reviewed_sha && /^[0-9a-f]{40}$/.test(A.reviewed_sha))) return { status: 'BLOCKED', reason: 'need reviewed_sha: the 40-hex commit build reviewed (build result reviewed_sha)' }
+// Optional repo scan log: with require_scan_row, the compliance trace must find this change's dated entry at reviewed_sha.
+if (A.require_scan_row !== undefined && typeof A.require_scan_row !== 'boolean') return { status: 'BLOCKED', reason: 'require_scan_row must be true or false' }
+if (A.scan_log && (typeof A.scan_log !== 'string' || !SAFE.test(A.scan_log) || ABS.test(A.scan_log) || DOTDOT.test(A.scan_log))) return { status: 'BLOCKED', reason: 'scan_log must be a repo-relative path of safe characters' }
+if (A.require_scan_row && !A.scan_log) return { status: 'BLOCKED', reason: 'require_scan_row needs scan_log (the repo-relative scan log path)' }
 
 const q = s => `'${s}'`
 // The validator reports Windows paths with backslashes; compare by form, not by spelling.
@@ -256,6 +260,8 @@ const compTask = `Trace every requirement and acceptance check in the spec ${A.s
   `Runtime acceptance needs an exact executed command, exit code, nonempty output file and head_sha=${A.reviewed_sha}; a file/line alone only proves a static claim. ` +
   `Each evidence item is a record object, never a summary string. A runtime record copies the ledger record of that ID's frozen proof_command byte for byte (command, exit_code, log_path, log_sha256); ` +
   `put other commands you relied on (controls, check outputs) in the summary, not in evidence. A static record's file is repo-relative (for example src/a.py), never an absolute path. ` +
+  (A.require_scan_row ? `The repository requires a security scan row: confirm that its scan log ${A.scan_log} contains a dated entry covering this change at ${A.reviewed_sha}, ` +
+    `and cite it as static evidence file:line in your summary or note. If there is no such entry, report a finding of severity high with requirement security-scan-log. ` : '') +
   `Do not execute commands or invent missing evidence. verdict FAIL for any missing/wrong/unproven item, else PASS.`
 const comp = await reviewed('compliance', () => agent(
   `Run an independent codex SPEC-COMPLIANCE trace and report its verdict. Do not judge it yourself.\n${availNote(false)}` +

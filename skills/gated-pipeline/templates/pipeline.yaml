@@ -26,6 +26,11 @@ tests:
   suite_isolated: false     # true = run the suite in a fresh worktree of the reviewed commit (strongest; needs isolated_setup if deps are not committed)
   isolated_setup: ""        # one-line setup run in that worktree first, e.g. "npm ci"
 verify_checks: []           # optional: [{name, how, budget_min, quiet, effort}]
+security:                   # optional; the repo's own rules (this block, its checklist, CLAUDE.md) win over the skill's
+  docs: []                  # ABSOLUTE paths to the repo's threat model / accepted-risk docs (design + build security pass read them)
+  checklist: ""             # ABSOLUTE path to the repo's own OWASP checklist doc (build security pass applies it)
+  scan_log: ""              # repo-relative path of the scan log each feature must append a dated row to
+  require_scan_row: false   # true = verify's compliance trace blocks unless scan_log has a dated row for this change
 state:
   mode: simple              # simple = <state_dir>/<feature>/<stage>/<run_id>/result.json; or a repo-specific harness note
   state_dir: ""             # ABSOLUTE path OUTSIDE the repo, e.g. <home>/.pipeline-state/<repo-name>; run dirs (evidence, review worktrees) live here

@@ -20,6 +20,9 @@ const SAFE = /^[A-Za-z0-9._\/\\: +@-]+$/
 for (const k of ['repo', 'run_dir', 'review_runner', 'execution_schema']) {
   if (!SAFE.test(A[k]) || !/^([A-Za-z]:[\/\\]|\/)/.test(A[k])) return { status: 'BLOCKED', reason: `${k} must be an absolute path of safe characters (no ~, quotes, $ or backticks): ${A[k]}` }
 }
+// Optional repo security docs (threat model, accepted risks): absolute paths, validated like every other path arg.
+if (A.security_docs !== undefined && (!Array.isArray(A.security_docs) || A.security_docs.some(p => typeof p !== 'string' || !SAFE.test(p) || !/^([A-Za-z]:[\/\\]|\/)/.test(p)))) return { status: 'BLOCKED', reason: 'security_docs must be a list of absolute paths of safe characters (no ~, quotes, $ or backticks)' }
+const SEC_DOCS = A.security_docs || []
 
 const q = s => `'${s}'`
 // Config values that reach shell commands must be plain tokens.
@@ -186,6 +189,10 @@ const s = await loop('spec', spec, items => items
     `For each acceptance check give: an id, the behaviour, the exact proof command, and a negative control (the code mutation that must make that proof fail). ` +
     `List the files to change, protected files/non-goals, invariants, the test plan (failing test first), and, if any proof calls a live or paid external API, a hard minute/cost budget. ` +
     `For a service include boot/connectivity, success/failure/edge paths and side-effect readback where relevant. For static/document changes use static evidence; do not invent a service to boot. ` +
+    `Include a Security considerations section covering: data exposure and authorization scope (who may read or change what, and exactly what each new endpoint or output returns); ` +
+    `input validation and length limits for every new input; resource consumption (any expensive or scan-like operation, e.g. a full-collection scan endpoint, needs a server-side bound such as a rate limit or result cap; ` +
+    `client-side debounce/throttle is not a security control); and any accepted risk, which must cite the repo's threat-model premises ` +
+    `${SEC_DOCS.length ? `(read ${SEC_DOCS.join(', ')} first)` : '(from its security docs, if it has any)'} rather than assume them. ` +
     `Write ${manifest} to the schema at ${A.execution_schema}: version=1, feature_id=${A.feature_id}, spec_sha256 is the SHA256 of the final spec bytes, ` +
     `requirements contains EVERY acceptance ID in order with kind runtime or static and proof_command (exact command for runtime, empty for static). ` +
     `allowed_paths lists exact repo-relative files (or deliberately scoped directory prefixes ending /); protected_paths wins over allowed_paths. ` +
