@@ -4,12 +4,15 @@
 #   2. creates the `cloud-mailbox` issue label
 #   3. copies this skill, plus any skills you name, into the repo's .claude/skills/ (cloud sessions load
 #      only skills committed to the repo, never your personal ones)
-#   4. with --env / --autocompact, writes the repo's cloud defaults into .claude/settings.json
-#   5. reports every seeded file .gitignore would hide from git
+#   4. with --status-footer, copies the footer's output style and hook into .claude/output-styles/ and
+#      .claude/hooks/
+#   5. with --env / --autocompact / --status-footer, writes the repo's defaults into .claude/settings.json
+#   6. reports every seeded file .gitignore would hide from git
 # It never commits or pushes. Review `git status`, commit, and push before launching a worker: the
 # cloud clones the pushed branch.
 #
-# usage: setup.sh [--skill NAME]... [--skills-dir DIR] [--env ENV_ID] [--autocompact TOKENS] [--label NAME] [--force]
+# usage: setup.sh [--skill NAME]... [--skills-dir DIR] [--env ENV_ID] [--autocompact TOKENS]
+#                 [--status-footer [--status-footer-tz ZONE]] [--label NAME] [--force]
 #   --skill NAME        a skill folder under --skills-dir to seed (repeatable)
 #   --skills-dir        where your skills live (default ~/.claude/skills)
 #   --env ENV_ID        an Anthropic-hosted environment id (env_...). Find it by running /remote-env in a
@@ -17,15 +20,25 @@
 #   --autocompact N     auto-compact window in tokens, a plain integer from 100000 to 1000000 (e.g. 500000).
 #                       Written as env CLAUDE_CODE_AUTO_COMPACT_WINDOW, which outranks /autocompact and the
 #                       autoCompactWindow setting. Applies locally and in single-repo cloud sessions.
-#   --force             overwrite skill folders that already exist in the repo
+#   --status-footer     every session in the repo, local and cloud, ends its replies with a footer of
+#                       measured facts (time, branch, worktree). Sets outputStyle "Status Footer" and adds
+#                       one UserPromptSubmit hook. Keeps a different outputStyle unless --force.
+#   --status-footer-tz ZONE
+#                       the footer's time zone, e.g. Europe/Paris (env STATUS_FOOTER_TZ, for everyone in
+#                       the repo). Unset means each machine's own zone. A named zone needs a zone database
+#                       where the session runs: Git Bash on Windows has none, so it shows UTC with a note.
+#   --force             overwrite skill folders and footer files that already exist in the repo, and a
+#                       different outputStyle
 set -u
-skills=() skills_dir="$HOME/.claude/skills" env_id="" window="" label="cloud-mailbox" force=0
+skills=() skills_dir="$HOME/.claude/skills" env_id="" window="" label="cloud-mailbox" force=0 footer=0 footer_tz=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --skill) skills+=("$2"); shift 2 ;;
     --skills-dir) skills_dir="$2"; shift 2 ;;
     --env) env_id="$2"; shift 2 ;;
     --autocompact) window="$2"; shift 2 ;;
+    --status-footer) footer=1; shift ;;
+    --status-footer-tz) footer_tz="$2"; shift 2 ;;
     --label) label="$2"; shift 2 ;;
     --force) force=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -44,7 +57,18 @@ if [ -n "$window" ]; then
   [[ "$window" =~ ^[0-9]+$ ]] && [ "$window" -ge 100000 ] && [ "$window" -le 1000000 ] \
     || { echo "--autocompact must be a plain integer from 100000 to 1000000 (e.g. 500000)" >&2; exit 2; }
 fi
+if [ -n "$footer_tz" ]; then
+  [ "$footer" -eq 1 ] || { echo "--status-footer-tz needs --status-footer" >&2; exit 2; }
+  [[ "$footer_tz" =~ ^[A-Za-z0-9/_+-]+$ ]] \
+    || { echo "--status-footer-tz must be a zone name such as Europe/Paris or UTC (letters, digits, / _ + -)" >&2; exit 2; }
+fi
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+footer_src="$here/templates/status-footer"
+if [ "$footer" -eq 1 ]; then
+  for f in status-footer.md status-facts.sh; do
+    [ -f "$footer_src/$f" ] || { echo "missing $footer_src/$f; this copy of the skill is incomplete" >&2; exit 2; }
+  done
+fi
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "run this inside a git repo" >&2; exit 2; }
 cd "$root" || exit 2
 
@@ -85,39 +109,80 @@ seed "$here" cloud-mailbox
 for s in "${skills[@]+"${skills[@]}"}"; do seed "$skills_dir/$s" "$s"; done
 [ "$failed" -eq 0 ] || { echo "some skills were not seeded; fix the above and run again" >&2; exit 1; }
 
-# 4. repo settings for cloud sessions (merged into any existing .claude/settings.json)
-if [ -n "$env_id" ] || [ -n "$window" ]; then
+# 4. status footer files: the output style that asks for the footer, and the hook that measures its facts
+place() { # $1 source file, $2 destination
+  seeded+=("$2")
+  if [ -e "$2" ]; then
+    if [ "$1" -ef "$2" ]; then echo "$2: already in repo (this copy)"; return; fi
+    [ "$force" -eq 1 ] || { echo "$2: already in repo (use --force to overwrite)"; return; }
+  fi
+  if mkdir -p "$(dirname "$2")" && cp "$1" "$2"; then echo "$2: copied"; else echo "$2: copy FAILED" >&2; failed=1; fi
+}
+if [ "$footer" -eq 1 ]; then
+  place "$footer_src/status-footer.md" .claude/output-styles/status-footer.md
+  place "$footer_src/status-facts.sh" .claude/hooks/status-facts.sh
+  [ "$failed" -eq 0 ] || { echo "the status footer was not seeded; fix the above and run again" >&2; exit 1; }
+fi
+
+# 5. repo settings (merged into any existing .claude/settings.json, every other key and hook kept)
+settings=0; [ -n "$env_id$window" ] || [ "$footer" -eq 1 ] && settings=1
+style="" hook_cmd='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/status-facts.sh"'
+[ "$footer" -eq 1 ] && style="Status Footer"
+if [ "$settings" -eq 1 ]; then
+  # The footer hook is found by its exact command, so a second run adds nothing.
   merge='
-    const fs = require("fs"), [p, id, win] = process.argv.slice(1);
+    const fs = require("fs"), [p, id, win, style, cmd, tz, force] = process.argv.slice(1);
     let s = {}; if (fs.existsSync(p)) s = JSON.parse(fs.readFileSync(p, "utf8"));
     if (id) s.remote = Object.assign({}, s.remote, { defaultEnvironmentId: id });
     if (win) s.env = Object.assign({}, s.env, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: win });
+    if (style) {
+      if (s.outputStyle && s.outputStyle !== style && force !== "1")
+        console.error(`WARNING: kept outputStyle "${s.outputStyle}", so the footer will not show (use --force to set "${style}")`);
+      else s.outputStyle = style;
+      s.hooks = s.hooks || {};
+      const ups = s.hooks.UserPromptSubmit = s.hooks.UserPromptSubmit || [];
+      if (!ups.some(e => (e.hooks || []).some(h => h.command === cmd)))
+        ups.push({ hooks: [{ type: "command", command: cmd, timeout: 10 }] });
+      if (tz) s.env = Object.assign({}, s.env, { STATUS_FOOTER_TZ: tz });
+    }
     fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");'
   pymerge='
 import json, os, sys
-p, i, w = sys.argv[1], sys.argv[2], sys.argv[3]
+p, i, w, style, cmd, tz, force = sys.argv[1:8]
 s = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
 if i: s.setdefault("remote", {})["defaultEnvironmentId"] = i
 if w: s.setdefault("env", {})["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = w
+if style:
+    if s.get("outputStyle") and s["outputStyle"] != style and force != "1":
+        sys.stderr.write("WARNING: kept outputStyle \"%s\", so the footer will not show (use --force to set \"%s\")\n" % (s["outputStyle"], style))
+    else: s["outputStyle"] = style
+    ups = s.setdefault("hooks", {}).setdefault("UserPromptSubmit", [])
+    if not any(h.get("command") == cmd for e in ups for h in e.get("hooks", [])):
+        ups.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
+    if tz: s.setdefault("env", {})["STATUS_FOOTER_TZ"] = tz
 open(p, "w", encoding="utf-8").write(json.dumps(s, indent=2) + "\n")'
-  if node -e 1 >/dev/null 2>&1; then node -e "$merge" .claude/settings.json "$env_id" "$window"
-  elif python3 -c 1 >/dev/null 2>&1; then python3 -c "$pymerge" .claude/settings.json "$env_id" "$window"
-  elif python -c 1 >/dev/null 2>&1; then python -c "$pymerge" .claude/settings.json "$env_id" "$window"
+  args=(.claude/settings.json "$env_id" "$window" "$style" "$hook_cmd" "$footer_tz" "$force")
+  if node -e 1 >/dev/null 2>&1; then node -e "$merge" "${args[@]}"
+  elif python3 -c 1 >/dev/null 2>&1; then python3 -c "$pymerge" "${args[@]}"
+  elif python -c 1 >/dev/null 2>&1; then python -c "$pymerge" "${args[@]}"
   else echo "need node or python to edit .claude/settings.json" >&2; exit 2; fi
   [ $? -eq 0 ] || { echo "could not update .claude/settings.json (malformed JSON or not writable); nothing changed" >&2; exit 1; }
   [ -n "$env_id" ] && echo "cloud environment: .claude/settings.json remote.defaultEnvironmentId = $env_id"
   [ -n "$window" ] && echo "auto-compact: .claude/settings.json env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = $window"
+  [ "$footer" -eq 1 ] && echo "status footer: .claude/settings.json outputStyle and hooks.UserPromptSubmit (status-facts.sh)"
+  [ -n "$footer_tz" ] && echo "status footer: .claude/settings.json env.STATUS_FOOTER_TZ = $footer_tz"
 fi
 
-# 5. every seeded file and the settings file must be visible to git, or the cloud never gets them
+# 6. every seeded file and the settings file must be visible to git, or the cloud never gets them
 hidden=$(git ls-files --others --ignored --exclude-standard -- "${seeded[@]}" .claude/settings.json 2>/dev/null)
 if [ -n "$hidden" ]; then
   echo "IGNORED by .gitignore (the cloud would not get these):"
   printf '%s\n' "$hidden" | sed 's/^/  /'
   echo "Fix: in .gitignore, ignore '.claude/*' (not '.claude/'), add '!.claude/skills/' and '!.claude/settings.json',"
+  [ "$footer" -eq 1 ] && echo "and '!.claude/output-styles/' and '!.claude/hooks/',"
   echo "and remove any rule that hides files inside the skills. Then run setup again."
   exit 1
 fi
 echo
 echo "Next: review, then commit and push:"
-echo "  git add ${seeded[*]} $( [ -n "$env_id$window" ] && echo .claude/settings.json ) && git commit -m 'chore: cloud worker setup' && git push"
+echo "  git add ${seeded[*]} $( [ "$settings" -eq 1 ] && echo .claude/settings.json ) && git commit -m 'chore: cloud worker setup' && git push"
