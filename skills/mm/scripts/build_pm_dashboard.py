@@ -4,38 +4,28 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import html
+import io
 import json
 import re
+import shutil
+import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mm_atomic  # noqa: E402
+import mm_git  # noqa: E402
+import mm_inbox  # noqa: E402
+import mm_schema  # noqa: E402
 
-FIELDS = [
-    "Project",
-    "Task",
-    "Status",
-    "Last updated",
-    "Target finish date",
-    "Target week",
-    "Deadline type",
-    "Schedule confidence",
-    "At risk",
-    "Owner",
-    "Waiting on",
-    "Priority",
-    "Category",
-    "Strategic value",
-    "Money value",
-    "Energy cost",
-    "Review cadence",
-    "Next human decision",
-    "Next agent action",
-    "Blockers summary",
-    "Executive note",
-]
+
+FIELDS = mm_schema.FIELDS
 
 KEYS = {
     "Project": "project",
@@ -61,20 +51,9 @@ KEYS = {
     "Executive note": "executive_note",
 }
 
-ALLOWED = {
-    "Status": {"active", "blocked", "waiting", "paused", "done", "needs-triage"},
-    "Deadline type": {"hard", "target", "none"},
-    "Schedule confidence": {"high", "medium", "low", "unknown"},
-    "At risk": {"yes", "no", "unknown"},
-    "Priority": {"1", "2", "3", "4", "5", "unknown", "not set"},
-    "Strategic value": {"1", "2", "3", "4", "5", "unknown", "not set"},
-    "Money value": {"1", "2", "3", "4", "5", "none", "unknown"},
-    "Energy cost": {"low", "medium", "high", "unknown"},
-    "Review cadence": {"daily", "weekly", "monthly", "on-demand", "unknown", "not set"},
-}
+ALLOWED = mm_schema.ALLOWED
 
-MISSING_VALUES = {"", "none", "unknown", "not set"}
-INBOX_ENTRY_RE = re.compile(r"^\d{8}-\d{6}-.*\.md$")
+MISSING_VALUES = mm_schema.MISSING_VALUES
 
 
 @dataclass
@@ -84,6 +63,7 @@ class Task:
     project_root: Path
     inbox_count: int
     malformed_reason: str = ""
+    inbox_problems: int = 0
     warnings: list[str] = field(default_factory=list)
 
     def as_json(self) -> dict[str, Any]:
@@ -124,6 +104,14 @@ def rel_from_pm(path: str) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build .private/pm repo dashboards from MM handoffs.")
     parser.add_argument("--root", default=".", help="Project root. Defaults to current directory.")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Build a throwaway root in a temp dir, run the full pipeline, verify the "
+        "three output files and the MM-DASHBOARD-OK marker, then exit 0/1.",
+    )
+    parser.add_argument("--no-commit", action="store_true",
+                        help="skip the auto-commit of the three dashboard files (mm.py --help lists exit 13)")
     return parser.parse_args()
 
 
@@ -223,33 +211,17 @@ def parse_datetime(value: str) -> datetime | None:
     return None
 
 
-def count_inbox(task_dir: Path) -> int:
-    inbox = task_dir / "inbox"
-    if not inbox.is_dir():
-        return 0
-    count = 0
-    for path in inbox.rglob("*"):
-        if not path.is_file():
-            continue
-        if "processed" in path.relative_to(inbox).parts:
-            continue
-        if INBOX_ENTRY_RE.match(path.name):
-            count += 1
-    return count
-
-
 def is_stale(task: Task, today: date) -> bool:
     status = task.values.get("Status", "").strip().lower()
     if status in {"done", "paused"}:
         return False
 
     cadence = task.values.get("Review cadence", "").strip().lower()
-    if cadence == "on-demand":
-        return False
-    if cadence in MISSING_VALUES:
-        return False
-
     last_updated = parse_datetime(task.values.get("Last updated", ""))
+    if cadence == "on-demand" or cadence in MISSING_VALUES:
+        dormant_since = today - timedelta(days=mm_schema.DORMANT_DAYS)
+        return last_updated is not None and last_updated.date() < dormant_since
+
     if last_updated is None:
         return True
 
@@ -283,13 +255,19 @@ def load_tasks(root: Path) -> list[Task]:
         if values.get("Task", "").strip().lower() in MISSING_VALUES:
             values["Task"] = handoff.parent.name
             warnings.append("Task field is missing or blank; using handoff folder name")
+        entries, problems, late = mm_inbox.counts(handoff.parent)
+        if problems:
+            warnings.append(f"inbox: {problems} scan problems (mm.py inbox-scan lists them)")
+        if late:
+            warnings.append(f"inbox: {late} files of recently closed tasks (mm.py inbox-scan lists them)")
         tasks.append(
             Task(
                 values=values,
                 handoff_path=handoff,
                 project_root=root,
-                inbox_count=count_inbox(handoff.parent),
+                inbox_count=entries,
                 malformed_reason=malformed_reason,
+                inbox_problems=problems,
                 warnings=warnings,
             )
         )
@@ -366,6 +344,7 @@ def compute(root: Path, tasks: list[Task]) -> dict[str, Any]:
         ],
         "_warning": "Generated file. Do not edit manually. Edit the relevant HANDOFF.md Section 0A and rebuild.",
         "_this_week": [task.task_id for task in this_week],
+        "_inbox_problems": sum(t.inbox_problems for t in tasks),
     }
 
 
@@ -411,6 +390,7 @@ def render_markdown(data: dict[str, Any]) -> str:
         f"- Overdue count: {counts['overdue']}",
         f"- Stale count: {counts['stale']}",
         f"- Total unprocessed inbox count: {counts['total_unprocessed_inbox']}",
+        f"- Inbox scan problems: {data['_inbox_problems']}",
         "",
         "## This week",
         "",
@@ -621,8 +601,9 @@ def render_html(data: dict[str, Any]) -> str:
             "</tr>"
         )
 
+    shown = dict(counts, inbox_problems=data["_inbox_problems"])
     cards = "".join(
-        f'<button class="metric metric-{attr(slug(label))}" type="button" data-metric="{attr(key)}"><span>{label}</span><strong>{counts[key]}</strong></button>'
+        f'<button class="metric metric-{attr(slug(label))}" type="button" data-metric="{attr(key)}"><span>{label}</span><strong>{shown[key]}</strong></button>'
         for label, key in [
             ("Active", "active_handoffs"),
             ("Blocked", "blocked"),
@@ -630,6 +611,7 @@ def render_html(data: dict[str, Any]) -> str:
             ("Overdue", "overdue"),
             ("Stale", "stale"),
             ("Inbox", "total_unprocessed_inbox"),
+            ("Inbox problems", "inbox_problems"),
             ("Malformed", "malformed"),
         ]
     )
@@ -901,18 +883,31 @@ def write_outputs(root: Path, data: dict[str, Any]) -> None:
     pm_root = root / ".private" / "pm"
     pm_root.mkdir(parents=True, exist_ok=True)
 
-    (pm_root / "DASHBOARD.md").write_text(render_markdown(data), encoding="utf-8")
-    json_data = {key: value for key, value in data.items() if key != "_this_week"}
-    (pm_root / "dashboard.json").write_text(json.dumps(json_data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (pm_root / "DASHBOARD.html").write_text(render_html(data), encoding="utf-8")
+    json_data = {key: value for key, value in data.items() if key not in ("_this_week", "_inbox_problems")}
+    items = [
+        (pm_root / "DASHBOARD.md", render_markdown(data)),
+        (pm_root / "dashboard.json", json.dumps(json_data, indent=2, sort_keys=True) + "\n"),
+        (pm_root / "DASHBOARD.html", render_html(data)),
+    ]
+    mm_atomic.atomic_write_many(items, encoding="utf-8", newline="\n")
 
 
-def main() -> int:
-    args = parse_args()
-    root = Path(args.root).resolve()
+DASHBOARD_FILES = ("DASHBOARD.md", "dashboard.json", "DASHBOARD.html")
+
+
+def build_and_write(root: Path, no_commit: bool = False) -> int:
+    """Run the full dashboard pipeline for root and print the standard report.
+
+    Prints the metric counts and the inbox scan problems, then the three output paths, then writes
+    the outputs and auto-commits exactly the three dashboard files, with
+    mm.py's safe auto-commit and its refusals. If write_outputs raises, the
+    error goes to stderr and this returns 1; a refused commit goes to stderr
+    and returns 13, the files staying written. The MM-DASHBOARD-OK
+    proof-of-run marker is printed as the LAST line, and only when neither
+    happened.
+    """
     tasks = load_tasks(root)
     data = compute(root, tasks)
-    write_outputs(root, data)
     counts = data["counts"]
     print(
         "PM dashboard rebuilt: "
@@ -921,12 +916,70 @@ def main() -> int:
         f"{counts['overdue']} overdue, "
         f"{counts['stale']} stale, "
         f"{counts['waiting']} waiting, "
-        f"{counts['malformed']} malformed"
+        f"{counts['malformed']} malformed, "
+        f"{counts['total_unprocessed_inbox']} total unprocessed inbox, "
+        f"{data['_inbox_problems']} inbox scan problems, "
+        f"{counts['missing_target_date']} missing target date"
     )
     print(".private/pm/DASHBOARD.md")
     print(".private/pm/dashboard.json")
     print(".private/pm/DASHBOARD.html")
+    try:
+        write_outputs(root, data)
+    except Exception as exc:
+        print(f"ERROR: dashboard write failed: {exc}", file=sys.stderr)
+        return 1
+    pm_root = root / ".private" / "pm"
+    result = mm_git.auto_commit(pm_root, "mm(dashboard): rebuild the repo dashboard",
+                                paths=[pm_root / name for name in DASHBOARD_FILES], no_commit=no_commit)
+    if result.code:
+        print(f"mm: {result.note}", file=sys.stderr)
+        return result.code
+    stamp = datetime.now().astimezone().replace(microsecond=0).isoformat()
+    print(f"MM-DASHBOARD-OK {stamp} files=3")
     return 0
+
+
+_SELF_TEST_HANDOFF = "# HANDOFF — self-test\n\n## Section 0A Dashboard Index\n"
+
+
+def run_self_test() -> int:
+    tmp = Path(tempfile.mkdtemp(prefix="mm-dashboard-selftest-"))
+    try:
+        task_dir = tmp / ".private" / "pm" / "active" / "demo-task"
+        task_dir.mkdir(parents=True)
+        (task_dir / "HANDOFF.md").write_text(_SELF_TEST_HANDOFF, encoding="utf-8", newline="\n")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = build_and_write(tmp, no_commit=True)
+        output = buf.getvalue()
+        sys.stdout.write(output)
+
+        pm_root = tmp / ".private" / "pm"
+        files_ok = (
+            (pm_root / "DASHBOARD.md").is_file()
+            and (pm_root / "dashboard.json").is_file()
+            and (pm_root / "DASHBOARD.html").is_file()
+        )
+        marker_ok = any(line.startswith("MM-DASHBOARD-OK ") for line in output.splitlines())
+        ok = rc == 0 and files_ok and marker_ok
+        if not ok:
+            print(
+                f"SELF-TEST FAILED: rc={rc} files_ok={files_ok} marker_ok={marker_ok}",
+                file=sys.stderr,
+            )
+        return 0 if ok else 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main() -> int:
+    args = parse_args()
+    if args.self_test:
+        return run_self_test()
+    root = Path(args.root).resolve()
+    return build_and_write(root, no_commit=args.no_commit)
 
 
 if __name__ == "__main__":

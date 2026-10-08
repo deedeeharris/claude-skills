@@ -209,71 +209,37 @@
 <body>
   <header>
     <h1>{{TASK_NAME}} — PM Roadmap</h1>
-    <div class="subtitle">High-level visual map · maintained alongside HANDOFF.md</div>
+    <div class="subtitle">Generated from ledger.json by mm.py compile; never edited by hand</div>
     <div class="meta-bar">
       <span><strong>Last updated:</strong> {{LAST_UPDATED}}</span>
-      <span><strong>Branch:</strong> {{BRANCH}}</span>
+      <span><strong>Project:</strong> {{PROJECT}}</span>
       <span><strong>Status:</strong> {{HEADLINE_STATUS}}</span>
     </div>
   </header>
 
   <main>
 
-    <!-- KPI row -->
     <div class="kpi-row">
-      <div class="kpi"><div class="kpi-label">Items shipped</div><div class="kpi-value">{{KPI_SHIPPED}}</div><div class="kpi-detail">{{KPI_SHIPPED_DETAIL}}</div></div>
+      <div class="kpi"><div class="kpi-label">Rows done</div><div class="kpi-value">{{KPI_SHIPPED}}</div><div class="kpi-detail">{{KPI_SHIPPED_DETAIL}}</div></div>
       <div class="kpi"><div class="kpi-label">Active now</div><div class="kpi-value">{{KPI_ACTIVE}}</div><div class="kpi-detail">{{KPI_ACTIVE_DETAIL}}</div></div>
-      <div class="kpi"><div class="kpi-label">Awaiting external</div><div class="kpi-value">{{KPI_AWAITING}}</div><div class="kpi-detail">{{KPI_AWAITING_DETAIL}}</div></div>
-      <div class="kpi"><div class="kpi-label">Open questions</div><div class="kpi-value">{{KPI_QUESTIONS}}</div><div class="kpi-detail">{{KPI_QUESTIONS_DETAIL}}</div></div>
+      <div class="kpi"><div class="kpi-label">Waiting on the operator</div><div class="kpi-value">{{KPI_AWAITING}}</div><div class="kpi-detail">{{KPI_AWAITING_DETAIL}}</div></div>
+      <div class="kpi"><div class="kpi-label">Decisions</div><div class="kpi-value">{{KPI_QUESTIONS}}</div><div class="kpi-detail">{{KPI_QUESTIONS_DETAIL}}</div></div>
     </div>
 
-    <!-- Two-column highlights -->
     <div class="highlights-row">
       <div class="highlight highlight-current">
-        <div class="label">📍 Current task</div>
+        <div class="label">📍 Current row</div>
         <div class="text">{{CURRENT_TASK}}</div>
         <div class="why">{{CURRENT_TASK_WHY}}</div>
       </div>
       <div class="highlight highlight-next">
-        <div class="label">⭐ Next task</div>
+        <div class="label">⭐ Next row</div>
         <div class="text">{{NEXT_TASK}}</div>
         <div class="why">{{NEXT_TASK_WHY}}</div>
       </div>
     </div>
 
-    <!-- Horizontal timeline -->
-    <h2>Where we are now — and what's left in order</h2>
-    <div class="timeline">
-      <div class="phase phase-done">
-        <div class="phase-dot"></div>
-        <div class="phase-title">Phase 1</div>
-        <div class="phase-sub">{{PHASE_1_SUB}}</div>
-      </div>
-      <div class="phase phase-active">
-        <div class="here-marker">YOU ARE HERE</div>
-        <div class="phase-dot"></div>
-        <div class="phase-title">Phase 2</div>
-        <div class="phase-sub">{{PHASE_2_SUB}}</div>
-      </div>
-      <div class="phase phase-next">
-        <div class="phase-dot"></div>
-        <div class="phase-title">Phase 3</div>
-        <div class="phase-sub">{{PHASE_3_SUB}}</div>
-      </div>
-      <div class="phase phase-pending">
-        <div class="phase-dot"></div>
-        <div class="phase-title">Phase 4</div>
-        <div class="phase-sub">{{PHASE_4_SUB}}</div>
-      </div>
-      <div class="phase phase-future">
-        <div class="phase-dot"></div>
-        <div class="phase-title">Done</div>
-        <div class="phase-sub">{{PHASE_DONE_SUB}}</div>
-      </div>
-    </div>
-
-    <!-- Mermaid horizontal flowchart -->
-    <h2>📊 Progress map — what's done, what's left (LR diagram)</h2>
+    <h2>📊 Progress map</h2>
     <div class="card">
       <div class="mermaid-wrap">
         <pre class="mermaid">
@@ -283,77 +249,38 @@ flowchart LR
   classDef research fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
   classDef awaiting fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
   classDef blocked fill:#f1f5f9,stroke:#64748b,color:#334155,stroke-width:2px,stroke-dasharray:5 5
-
-  Start([Kickoff]):::done
-
-  subgraph S1 [✓ Done]
-    direction TB
-    D1[{{FLOW_DONE_ITEM}}]:::done
-  end
-
-  subgraph S2 [🔥 Hot — ship next]
-    H1[{{FLOW_HOT_ITEM}}]:::hot
-  end
-
-  subgraph S3 [🔬 Research]
-    direction TB
-    R1[{{FLOW_RESEARCH_ITEM}}]:::research
-  end
-
-  subgraph S4 [⏸ Awaiting external]
-    direction TB
-    A1[{{FLOW_AWAITING_ITEM}}]:::awaiting
-  end
-
-  subgraph S5 [🚧 Blocked]
-    B1[{{FLOW_BLOCKED_ITEM}}]:::blocked
-  end
-
-  End([Close]):::done
-
-  Start --> S1 --> S2 --> S3
-  S2 --> S4
-  S3 --> S5
-  S4 --> S5
-  S5 --> End
+{{FLOW}}
         </pre>
       </div>
       <div class="legend">
         <span class="legend-chip"><span class="legend-dot" style="background:#dcfce7;border:2px solid #16a34a;"></span> Done</span>
-        <span class="legend-chip"><span class="legend-dot" style="background:#fee2e2;border:2px solid #dc2626;"></span> Hot — ship now</span>
-        <span class="legend-chip"><span class="legend-dot" style="background:#dbeafe;border:2px solid #2563eb;"></span> In research</span>
-        <span class="legend-chip"><span class="legend-dot" style="background:#fef3c7;border:2px solid #d97706;"></span> Awaiting external</span>
-        <span class="legend-chip"><span class="legend-dot" style="background:#f1f5f9;border:2px dashed #64748b;"></span> Blocked</span>
-      </div>
-      <div class="note">
-        Mermaid via CDN. Open this HTML in a browser to view. Edit the Mermaid block when items move between states.
+        <span class="legend-chip"><span class="legend-dot" style="background:#fee2e2;border:2px solid #dc2626;"></span> In progress</span>
+        <span class="legend-chip"><span class="legend-dot" style="background:#dbeafe;border:2px solid #2563eb;"></span> Not started</span>
+        <span class="legend-chip"><span class="legend-dot" style="background:#fef3c7;border:2px solid #d97706;"></span> Waiting on the operator</span>
+        <span class="legend-chip"><span class="legend-dot" style="background:#f1f5f9;border:2px dashed #64748b;"></span> Abandoned</span>
       </div>
     </div>
 
-    <!-- Open questions -->
-    <h2>❓ Open questions</h2>
+    <h2>Rows</h2>
     <div class="card questions-table">
       <table>
         <thead>
-          <tr>
-            <th style="width: 8%;">#</th>
-            <th style="width: 45%;">Question</th>
-            <th style="width: 12%;">Owner</th>
-            <th style="width: 15%;">Open since</th>
-            <th style="width: 20%;">Status</th>
-          </tr>
+          <tr><th style="width: 8%;">ID</th><th style="width: 52%;">Item</th><th style="width: 20%;">Status</th><th style="width: 20%;">Test level</th></tr>
         </thead>
         <tbody>
-          <tr>
-            <td><strong>Q1</strong></td>
-            <td>
-              <div class="question-text">{{QUESTION_TEXT}}</div>
-              <div class="question-meta">{{QUESTION_META}}</div>
-            </td>
-            <td>{{QUESTION_OWNER}}</td>
-            <td>{{QUESTION_DATE}}</td>
-            <td><span class="badge badge-pending">⏳ pending</span></td>
-          </tr>
+{{ROWS}}
+        </tbody>
+      </table>
+    </div>
+
+    <h2>❓ Decisions</h2>
+    <div class="card questions-table">
+      <table>
+        <thead>
+          <tr><th style="width: 8%;">ID</th><th style="width: 57%;">Decision</th><th style="width: 15%;">Date</th><th style="width: 20%;">Status</th></tr>
+        </thead>
+        <tbody>
+{{DECISIONS}}
         </tbody>
       </table>
     </div>

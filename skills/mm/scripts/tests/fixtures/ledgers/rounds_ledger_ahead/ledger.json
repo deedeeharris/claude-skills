@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "revision": 7,
+  "task": "rounds-ledger-ahead",
+  "project": "smoke-project",
+  "pm_root": ".private/pm/active",
+  "created": "2026-01-05T09:00:00+00:00",
+  "updated": "2026-03-10T12:00:00+00:00",
+  "updated_by": "mm.py set-row",
+  "dashboard_index": {
+    "Project": "smoke-project",
+    "Task": "rounds-ledger-ahead",
+    "Status": "active",
+    "Last updated": "2026-03-10 12:00 by mm.py",
+    "Target finish date": "2026-12-01",
+    "Target week": "2026-W48",
+    "Deadline type": "target",
+    "Schedule confidence": "medium",
+    "At risk": "no",
+    "Owner": "Test Operator",
+    "Waiting on": "none",
+    "Priority": "2",
+    "Category": "widget",
+    "Strategic value": "3",
+    "Money value": "none",
+    "Energy cost": "medium",
+    "Review cadence": "weekly",
+    "Next human decision": "none",
+    "Next agent action": "review the widget",
+    "Blockers summary": "none",
+    "Executive note": "fixture task"
+  },
+  "rows": [
+    {
+      "id": "#1",
+      "item": "Draft the widget spec",
+      "state": "DONE",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Done",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": ""
+    },
+    {
+      "id": "#2",
+      "item": "Build the widget",
+      "state": "REVIEW",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "In review",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": ""
+    },
+    {
+      "id": "#3",
+      "item": "Review the widget",
+      "state": "BACKLOG",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Not started",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": ""
+    },
+    {
+      "id": "#5",
+      "item": "Document the widget",
+      "state": "BACKLOG",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Not started",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": ""
+    },
+    {
+      "id": "#4",
+      "item": "Wrap up: insights review + move to done/",
+      "state": "BACKLOG",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Not started",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": ""
+    }
+  ],
+  "decisions": [
+    {
+      "qid": "Q1",
+      "header_sep": ": ",
+      "question": "Keep the widget small",
+      "body_lines": [
+        "- **Status:** FINAL",
+        "- **Source:** chat",
+        "- **Date:** 2026-01-06",
+        "- **Who:** Test Operator",
+        "- **Decision:** Keep the widget small",
+        "- **Why:** it is the simplest"
+      ],
+      "sep_after": false,
+      "status": "FINAL",
+      "source": "chat",
+      "date": "2026-01-06",
+      "who": "Test Operator",
+      "decision": "Keep the widget small",
+      "why": "it is the simplest"
+    },
+    {
+      "qid": "Q2",
+      "header_sep": ": ",
+      "question": "Review with two agents",
+      "body_lines": [
+        "- **Status:** FINAL",
+        "- **Source:** chat",
+        "- **Date:** 2026-03-09",
+        "- **Who:** Test Operator",
+        "- **Decision:** Review with two agents",
+        "- **Why:** it is the simplest"
+      ],
+      "sep_after": false,
+      "status": "FINAL",
+      "source": "chat",
+      "date": "2026-03-09",
+      "who": "Test Operator",
+      "decision": "Review with two agents",
+      "why": "it is the simplest"
+    }
+  ],
+  "passthrough": {
+    "title_line": "# HANDOFF — rounds-ledger-ahead",
+    "section_0b_md": "**Where I am now:** building the widget\n\n**Next concrete action:** finish the widget",
+    "section_3_md": "- none",
+    "section_4_md": "- nothing archived yet",
+    "trailing_md": ""
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "verdict": "fail",
+      "at": "2026-03-05"
+    },
+    {
+      "round": 2,
+      "verdict": "pass"
+    }
+  ]
+}

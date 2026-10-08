@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "revision": 7,
+  "task": "needs-fix",
+  "project": "smoke-project",
+  "pm_root": ".private/pm/active",
+  "created": "2026-01-05T09:00:00+00:00",
+  "updated": "2026-02-03T10:00:00+00:00",
+  "updated_by": "mm.py set-row",
+  "dashboard_index": {
+    "Project": "smoke-project",
+    "Task": "needs-fix",
+    "Status": "active",
+    "Last updated": "2026-02-03 10:00 by mm.py",
+    "Target finish date": "2026-12-01",
+    "Target week": "2026-W48",
+    "Deadline type": "target",
+    "Schedule confidence": "medium",
+    "At risk": "no",
+    "Owner": "Test Operator",
+    "Waiting on": "none",
+    "Priority": "2",
+    "Category": "widget",
+    "Strategic value": "3",
+    "Money value": "none",
+    "Energy cost": "medium",
+    "Review cadence": "weekly",
+    "Next human decision": "none",
+    "Next agent action": "build the widget",
+    "Blockers summary": "none",
+    "Executive note": "fixture task"
+  },
+  "rows": [
+    {
+      "id": "#1",
+      "item": "Parse the widget input",
+      "state": "DONE",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Done",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": "",
+      "is_wrapup": false,
+      "history": [
+        {
+          "at": "2026-01-05T09:00:00+00:00",
+          "from": "BACKLOG",
+          "to": "DONE",
+          "by": "fixture",
+          "note": "",
+          "evidence": "",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "#2",
+      "item": "Handle the prefilter",
+      "state": "NEEDS_FIX",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Needs_Fix",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": "",
+      "is_wrapup": false,
+      "history": [
+        {
+          "at": "2026-01-05T09:00:00+00:00",
+          "from": "BACKLOG",
+          "to": "NEEDS_FIX",
+          "by": "fixture",
+          "note": "",
+          "evidence": "",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "#3",
+      "item": "Retry the prefilter",
+      "state": "NEEDS_FIX",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Needs_Fix",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": "",
+      "is_wrapup": false,
+      "history": [
+        {
+          "at": "2026-01-05T09:00:00+00:00",
+          "from": "BACKLOG",
+          "to": "NEEDS_FIX",
+          "by": "fixture",
+          "note": "",
+          "evidence": "",
+          "reason": ""
+        }
+      ]
+    },
+    {
+      "id": "#4",
+      "item": "Wrap up: insights review + move to done/",
+      "state": "BACKLOG",
+      "blocked": false,
+      "blocked_reason": "",
+      "status_label": "Not started",
+      "status_glyph_present": true,
+      "owner": "PM",
+      "target_date": "not scheduled",
+      "notes_md": "",
+      "is_wrapup": true,
+      "history": []
+    }
+  ],
+  "decisions": [
+    {
+      "qid": "Q1",
+      "header_sep": ": ",
+      "question": "Use a regex prefilter",
+      "body_lines": [
+        "- **Status:** FINAL",
+        "- **Source:** chat",
+        "- **Date:** 2026-01-06",
+        "- **Who:** Test Operator",
+        "- **Decision:** Use a regex prefilter",
+        "- **Why:** it is the simplest"
+      ],
+      "sep_after": false,
+      "status": "FINAL",
+      "source": "chat",
+      "date": "2026-01-06",
+      "who": "Test Operator",
+      "decision": "Use a regex prefilter",
+      "why": "it is the simplest"
+    }
+  ],
+  "passthrough": {
+    "title_line": "# HANDOFF — needs-fix",
+    "section_0b_md": "**Where I am now:** building the widget\n\n**Next concrete action:** finish the widget",
+    "section_3_md": "- none",
+    "section_4_md": "- nothing archived yet",
+    "trailing_md": ""
+  },
+  "rounds": {
+    "max_rounds": 3,
+    "rubric_sha256": "",
+    "residual": []
+  }
+}

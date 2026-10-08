@@ -1,0 +1,35 @@
+{
+  "schema": "mm.status/1",
+  "ok": false,
+  "generated_at": "2026-10-03T12:00:00+00:00",
+  "mm_version": "2.0.0",
+  "session": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "binding_state": "unreadable",
+    "bound": true,
+    "role": "pm",
+    "role_source": "fail-closed",
+    "bound_at": null
+  },
+  "task_source": "session",
+  "task": null,
+  "mode": null,
+  "open_row": null,
+  "rows": [],
+  "waiting_on_operator": [],
+  "inbox": null,
+  "dispatches_in_flight": [],
+  "loop": null,
+  "check": {
+    "status": "not_run",
+    "code": null,
+    "lines": []
+  },
+  "uncommitted": null,
+  "errors": [
+    {
+      "code": "BINDING-UNREADABLE",
+      "message": "the session binding for 00000000-0000-4000-8000-000000000001 cannot be read (it is not valid JSON): run mm.py unbind --session 00000000-0000-4000-8000-000000000001, then mm.py bind --task-dir <task> --session 00000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

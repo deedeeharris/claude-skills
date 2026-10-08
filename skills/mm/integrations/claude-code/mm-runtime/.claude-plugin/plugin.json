@@ -1,0 +1,8 @@
+{
+  "name": "mm-runtime",
+  "version": "1.0.0",
+  "description": "Optional Claude Code runtime adapter for the mm skill: status line, PM write fence, dispatch approval dialog",
+  "author": {
+    "name": "mm skill"
+  }
+}

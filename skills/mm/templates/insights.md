@@ -1,3 +1,5 @@
+Last promotion review: never
+
 # Insights — <TASK>
 
 Living capture of three kinds of knowledge that emerge during this task. The PM writes here as work progresses (see Section 4.8). At the wrap-up Status row, the PM presents an inline summary in chat and the user picks which entries to promote to durable Claude memory (Sections 4.9-4.10).

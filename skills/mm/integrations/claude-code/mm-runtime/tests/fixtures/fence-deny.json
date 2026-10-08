@@ -1,0 +1,14 @@
+{
+  "schema": "mm.fence/1",
+  "decision": "deny",
+  "actor": "pm",
+  "targets": [
+    {
+      "path": "/work/repo/src/a.py",
+      "class": "PROD"
+    }
+  ],
+  "messages": [
+    "mm guard: PM mode cannot directly modify product code: /work/repo/src/a.py is in /work/repo, the repository of the bound task /work/repo/.private/pm/active/t. Delegate it (subagent, workflow, Codex or background session, recorded with mm.py dispatch), or leave PM mode: mm.py unbind --session 00000000-0000-4000-8000-000000000001"
+  ]
+}

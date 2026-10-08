@@ -1,0 +1,43 @@
+{
+  "schema": "mm.status/1",
+  "ok": false,
+  "generated_at": "2026-10-03T12:00:00+00:00",
+  "mm_version": "2.0.0",
+  "session": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "binding_state": "ok",
+    "bound": true,
+    "role": "pm",
+    "role_source": "binding",
+    "bound_at": "2026-10-03T11:00:00+00:00"
+  },
+  "task_source": "session",
+  "task": {
+    "name": "t",
+    "dir": "/work/repo/.private/pm/active/t",
+    "repo_root": "/work/repo",
+    "repo_root_source": "git",
+    "dir_exists": false,
+    "legacy": false,
+    "revision": null
+  },
+  "mode": null,
+  "open_row": null,
+  "rows": [],
+  "waiting_on_operator": [],
+  "inbox": null,
+  "dispatches_in_flight": [],
+  "loop": null,
+  "check": {
+    "status": "not_run",
+    "code": null,
+    "lines": []
+  },
+  "uncommitted": null,
+  "errors": [
+    {
+      "code": "TASK-DIR-MISSING",
+      "message": "the bound task folder does not exist: the task folder /work/repo/.private/pm/active/t was moved or closed: run mm.py unbind --session 00000000-0000-4000-8000-000000000001, then bind the task where it now lives"
+    }
+  ]
+}
