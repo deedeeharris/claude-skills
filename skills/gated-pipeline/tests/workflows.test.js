@@ -96,6 +96,21 @@ test('empty extra checks still run the mandatory completion gate', async () => {
   assert.equal(result.manifest_sha256, digest);
 });
 
+test('when codex ran the compliance trace, completion restores its evidence before the validator', async () => {
+  const { calls } = await run('verify', verifyArgs, [preflight, proofs, finalReview, compliance, gate]);
+  const prompt = calls[4].prompt;
+  assert.ok(prompt.includes("node '/skill/scripts/merge-compliance.js' --verify-result '/state/verify/verify-result.json' --compliance '/state/verify/compliance/compliance.json'"));
+  assert.ok(prompt.indexOf('merge-compliance.js') < prompt.indexOf("node '/skill/scripts/check-completion.js'"));
+});
+
+test('when the opus fallback ran the compliance trace, completion has no codex file to merge', async () => {
+  const { calls } = await run('verify', { ...verifyArgs, review_fallback: 'opus-high' },
+    [preflight, proofs, finalReview, { codex_available: false, ...pinned }, compliance, gate]);
+  assert.equal(calls.length, 6);
+  assert.ok(!calls[5].prompt.includes('merge-compliance.js'));
+  assert.ok(calls[5].prompt.includes("node '/skill/scripts/check-completion.js'"));
+});
+
 test('unproven acceptance prevents verify PASS despite clean reviews', async () => {
   const { result } = await run('verify', verifyArgs, [preflight, proofs, finalReview, compliance, { ...gate, passed: false, reason: 'missing runtime output' }]);
   assert.equal(result.status, 'INCOMPLETE');

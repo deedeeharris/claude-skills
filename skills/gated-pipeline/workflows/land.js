@@ -27,6 +27,9 @@ if (!/^[0-9a-f]{40}$/.test(A.reviewed_sha)) return { status: 'BLOCKED', reason: 
 // git reports forward-slash paths, so state prefixes are normalized to that form before comparing.
 const normalizeState = paths => paths.map(p => p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '')).sort()
 const q = s => `'${s}'`
+// The validator reports Windows paths with backslashes; compare by form, not by spelling.
+const pathForm = p => p.replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase())
+const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
 
 const RULES = [
   `Repo: ${A.repo}. NEVER merge the PR, never enable auto-merge, never push or force-push ${A.trunk_branch}, never push ${A.work_branch} with --force.`,
@@ -46,7 +49,7 @@ const completion = await agent(
     type: 'object', properties: { passed: { type: 'boolean' }, blocked: { type: 'boolean' }, reason: { type: 'string' }, proof_path: { type: 'string' }, reviewed_sha: { type: 'string' }, manifest_sha256: { type: 'string' }, state_paths: { type: 'array', items: { type: 'string' } } },
     required: ['passed', 'proof_path', 'reviewed_sha', 'manifest_sha256', 'state_paths'],
   } })
-if (!completion || completion.blocked || !completion.passed || completion.proof_path !== A.proof_path || completion.reviewed_sha !== A.reviewed_sha || completion.manifest_sha256 !== A.manifest_sha256) return { status: 'BLOCKED', stage: 'completion', completion }
+if (!completion || completion.blocked || !completion.passed || !samePath(completion.proof_path, A.proof_path) || completion.reviewed_sha !== A.reviewed_sha || completion.manifest_sha256 !== A.manifest_sha256) return { status: 'BLOCKED', stage: 'completion', completion }
 if (!Array.isArray(completion.state_paths) || completion.state_paths.some(p => typeof p !== 'string' || !SAFE_PATH.test(p))) return { status: 'BLOCKED', stage: 'completion', reason: 'validator did not return frozen state paths', completion }
 const statePaths = normalizeState(completion.state_paths)
 if (A.state_paths !== undefined && (!Array.isArray(A.state_paths) || A.state_paths.some(p => typeof p !== 'string' || !SAFE_PATH.test(p)) || JSON.stringify(normalizeState(A.state_paths)) !== JSON.stringify(statePaths))) return { status: 'BLOCKED', stage: 'completion', reason: 'state_paths differs from the frozen plan', completion }
