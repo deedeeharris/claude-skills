@@ -28,12 +28,25 @@ run() { local d="$1"; shift; out=$(echo '{"prompt":"hi"}' | env CLAUDE_PROJECT_D
 has() { grep -qE "$1" <<<"$out"; }
 stamp='[A-Z][a-z]{2} [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}'
 
-t0=$(date +%s%N); run "$work/clone"; ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+t0=$(date +%s%N); run "$work/clone"; t1=$(date +%s%N)
 [ $rc -eq 0 ] && has '^Session facts, measured now - copy these into the Status Footer' && has "^Time: $stamp [^ ]+$" \
   && has '^Branch: main - 1 ahead, 0 behind origin/main$' && has '^Worktree: .+/clone \(main checkout\)$' && r=ok || r=bad
 check "$r" "a branch one commit ahead of its upstream: header, time, ahead/behind, main checkout"
-[ $ms -lt 2000 ] && r=ok || r=bad
-check "$r" "the hook finishes in under 2 s (took $ms ms)"
+# BSD date (macOS) has no %N and prints a literal N: skip the timing there.
+if [[ "$t0$t1" =~ ^[0-9]+$ ]]; then
+  ms=$(( (t1 - t0) / 1000000 ))
+  [ $ms -lt 2000 ] && r=ok || r=bad
+  check "$r" "the hook finishes in under 2 s (took $ms ms)"
+else
+  echo "skip the hook timing: this date has no nanoseconds"
+fi
+
+# A tag with the branch's name makes `symbolic-ref --short` answer "heads/main".
+git -C "$work/clone" tag main
+run "$work/clone"
+[ $rc -eq 0 ] && has '^Branch: main - 1 ahead, 0 behind origin/main$' && r=ok || r=bad
+check "$r" "a tag named like the branch: plain branch name, upstream still found"
+git -C "$work/clone" tag -d main >/dev/null
 
 run "$work/wt"
 [ $rc -eq 0 ] && has '^Branch: feat$' && has '^Worktree: .+/wt \(linked worktree\)$' && r=ok || r=bad

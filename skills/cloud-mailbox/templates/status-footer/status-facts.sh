@@ -45,8 +45,10 @@ fi
 { read -r top; read -r gitdir; read -r common; } <<<"$paths"
 
 # Branch, or the commit a detached HEAD points at. Ahead/behind only when an upstream is set.
-if branch=$(g symbolic-ref -q --short HEAD); then
-  IFS='|' read -r up track <<<"$(g for-each-ref --format='%(upstream:short)|%(upstream:track,nobracket)' "refs/heads/$branch")"
+# The full ref, not --short: a tag with the same name would make --short answer "heads/<name>".
+if ref=$(g symbolic-ref -q HEAD); then
+  branch=${ref#refs/heads/}
+  IFS='|' read -r up track <<<"$(g for-each-ref --format='%(upstream:short)|%(upstream:track,nobracket)' "$ref")"
   if [ -n "$up" ]; then
     # track reads "ahead 1, behind 2", "ahead 1", "behind 2", "gone", or nothing when level.
     ahead=0 behind=0
