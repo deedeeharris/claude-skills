@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "profile_id": null,
+  "language": "match_user",
+  "preview_formulated_messages": false,
+  "title_filter": {
+    "text": "PM",
+    "case_sensitive": false,
+    "mode": "separate_word"
+  },
+  "include_sessions": [],
+  "exclude_sessions": [],
+  "timezone": null,
+  "scan_times": [],
+  "notification_destination": "activation_conversation",
+  "reminder_policy": "changed_questions_only",
+  "reminder_interval_hours": null,
+  "reply_check_timeout_seconds": 120,
+  "reply_check_interval_seconds": 30,
+  "max_parallel_agents": 3,
+  "scan_timeout_seconds": 600,
+  "quiet_when_empty": true,
+  "cross_session_comparison": false,
+  "automatic_reply_rules": [],
+  "schedule_enabled": false,
+  "runtime_validation": {
+    "full_session_enumeration": "unverified",
+    "remote_control_read": "unverified",
+    "remote_control_send": "unverified",
+    "fresh_environment_auth": "unverified",
+    "scheduled_luna_delegation": "unverified",
+    "notification_delivery": "unverified"
+  },
+  "worker_model_policy": {
+    "family": "Luna",
+    "selection": "latest_officially_verified_host_supported",
+    "official_current_month_year_search": true,
+    "cache_max_age_hours": 24,
+    "refresh_on_new_conversation": true,
+    "refresh_on_month_change": true,
+    "exact_model_id": null
+  }
+}
