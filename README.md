@@ -11,6 +11,19 @@ cd ~/claude-skills && chmod +x install.sh && ./install.sh
 
 Symlinks everything into the right locations. `git pull` to update — no re-install needed.
 
+### Claude cloud relay in Codex
+
+The installer above links this skill into Claude Code along with the others. For Luna workers, use a Codex host that exposes Luna subagents and install the same folder in its user-level skill directory:
+
+```bash
+mkdir -p ~/.agents/skills
+ln -s "$PWD/skills/claude-cloud-relay" ~/.agents/skills/claude-cloud-relay
+```
+
+Run this from the repository root. If that destination already exists, review the existing installation before replacing it. Start a new conversation and ask to use the skill. Claude Code itself does not expose OpenAI Luna workers; other hosts must disclose their model fallback.
+
+See [the relay setup guide](skills/claude-cloud-relay/README.md) for authentication, private configuration, and capability checks. The shareable skill contains no account details, saved credentials, session history, or personal preferences. Installing it does not activate a schedule or preserve login across fresh cloud environments.
+
 ## Structure
 
 | Folder | Symlinked to | What goes here |
@@ -30,6 +43,7 @@ Symlinks everything into the right locations. `git pull` to update — no re-ins
 | `babysitter-multi-session` | `/babysitter-multi-session` | Generate a `run-sessions.sh` script to chain multiple babysitter yolo sessions sequentially |
 | `bh` | `/bh` | Bug Hunter — scan, TDD-fix, conventions gate, code review, DoD gate, commit |
 | `bh-forever` | `/bh-forever` | Continuous bug hunting loop until convergence score ≥ 90 |
+| `claude-cloud-relay` | `/claude-cloud-relay` | Relay voice or typed instructions to existing Claude Code cloud sessions. Luna workers retrieve responses and verify message delivery; the main assistant gives short briefings. Selects the latest officially verified Luna model supported by the host. Includes PM scans, private checkpoints, and optional user-defined reply rules. Account-neutral; each user supplies their own login and preferences. Scheduled scans and PC Remote Control access require validation. |
 | `codex-cli` | `/codex-cli` | Codex CLI integration |
 | `codex-review` | `/codex-review` | Independent, out-of-family Codex review of an implementation diff, a PRD or a spec, with a PASS / FAIL / NEEDS_HUMAN verdict where blocking findings are independently validated by a second Codex call. Requires the OpenAI Codex CLI; used by `gated-pipeline` |
 | `gated-pipeline` | `/gated-pipeline` | Takes a feature from a raw task to a reviewed PR via in-session Claude Code Workflows: PRD → codex review → spec → codex review → test-first implementation → codex review + security pass → fix loop → full suite last → PR to the integration branch, with the human doing the merge. Works in any repo via a per-repo `.claude/pipeline.yaml` (template included). Requires the OpenAI Codex CLI and the `codex-review` skill (its `scripts/run-review.js` runner), which is not part of this repo. |

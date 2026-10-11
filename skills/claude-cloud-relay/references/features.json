@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "skill_name": "claude-cloud-relay",
+  "features": [
+    {
+      "id": "list_sessions",
+      "category": "Sessions",
+      "title": "List my cloud sessions",
+      "description": "Show titles, IDs, recent activity, and links. Verify pagination rather than assume the 20-item picker is complete.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "select_session",
+      "category": "Sessions",
+      "title": "Select a session by spoken name",
+      "description": "Resolve names and partial names. Ask when more than one session matches.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "remember_session",
+      "category": "Sessions",
+      "title": "Keep a selected session",
+      "description": "Use the same session for follow-ups such as \"ask it why\" until I switch sessions.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "pm_filter",
+      "category": "Sessions",
+      "title": "Limit proactive scans to PM sessions",
+      "description": "Match PM as a separate word, ignoring capitalization. Manual requests can still target other sessions.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "session_overrides",
+      "category": "Sessions",
+      "title": "Include or exclude individual sessions",
+      "description": "Allow exceptions to the PM filter and remember them.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "luna_read",
+      "category": "Reading with Luna",
+      "title": "Use Luna agents to read responses",
+      "description": "Retrieve session history without sending a new prompt. Read in an isolated temporary checkout.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "new_only",
+      "category": "Reading with Luna",
+      "title": "Read only what changed",
+      "description": "Track the last response read and distinguish new output from older conversation history.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "verbatim_read",
+      "category": "Reading with Luna",
+      "title": "Read an exact response on request",
+      "description": "Return the original wording when I say \"read it exactly\".",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "status",
+      "category": "Reading with Luna",
+      "title": "Report whether work is still running",
+      "description": "Distinguish ongoing work, completion, failure, and waiting for input. Mark unclear states as uncertain.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "parallel_read",
+      "category": "Reading with Luna",
+      "title": "Read several sessions in parallel",
+      "description": "Use multiple Luna agents for independent sessions within available concurrency limits.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "luna_send",
+      "category": "Sending with Luna",
+      "title": "Use Luna agents to send messages",
+      "description": "Send through claude -p \"message\" --cloud <session-id> and verify the CLI delivery result.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "literal_send",
+      "category": "Sending with Luna",
+      "title": "Keep dictated messages exact",
+      "description": "When I say \"say\" or \"send this exactly\", preserve the message without adding instructions.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "formulate_send",
+      "category": "Sending with Luna",
+      "title": "Turn my intent into a clear instruction",
+      "description": "When I ask you to formulate and send, write a concise instruction using the current context.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "preview_drafts",
+      "category": "Sending with Luna",
+      "title": "Preview formulated messages before sending",
+      "description": "Show or read the wording and wait for my approval. Literal, explicitly requested sends can proceed immediately.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": "Preview support is optional. Default preview is off."
+    },
+    {
+      "id": "multi_send",
+      "category": "Sending with Luna",
+      "title": "Send an instruction to multiple sessions",
+      "description": "Only when I explicitly name the sessions or clearly specify the target group.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "read_after_send",
+      "category": "Sending with Luna",
+      "title": "Check for the response after sending",
+      "description": "Check within a bounded period. Report \"still working\" if no response is ready; avoid an endless polling loop.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "root_reasoning",
+      "category": "My reasoning and voice experience",
+      "title": "Let the main assistant interpret the results",
+      "description": "Luna retrieves and sends. The main assistant evaluates findings, tradeoffs, and next steps.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "short_voice",
+      "category": "My reasoning and voice experience",
+      "title": "Give short spoken briefings",
+      "description": "Lead with what needs my attention. Offer details when I ask.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "recommend_reply",
+      "category": "My reasoning and voice experience",
+      "title": "Recommend a reply",
+      "description": "Explain what I should tell a session and why, without sending it automatically.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "voice_followups",
+      "category": "My reasoning and voice experience",
+      "title": "Support natural voice follow-ups",
+      "description": "Understand \"tell it to proceed\", \"read the latest\", and \"use your recommendation\" using the selected session.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "cross_session",
+      "category": "My reasoning and voice experience",
+      "title": "Compare work across sessions",
+      "description": "Spot duplicated work, conflicting plans, and dependencies using retrieved evidence.",
+      "planning_label": "Optional",
+      "enabled": false,
+      "notes": ""
+    },
+    {
+      "id": "approved_autoreply",
+      "category": "My reasoning and voice experience",
+      "title": "Automatically answer within rules I define",
+      "description": "Potential later phase: send replies without a fresh instruction only for explicitly approved rules. Define rules in notes.",
+      "planning_label": "Later phase",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "scheduled_scans",
+      "category": "Proactive PM inbox",
+      "title": "Scan three times a day",
+      "description": "Run scheduled checks of matching PM sessions. Must first verify scheduled access to the authenticated CLI and Luna agents.",
+      "planning_label": "Needs validation",
+      "enabled": true,
+      "notes": "Validate secure persistence of normal Claude account login across fresh cloud runtimes. Base64 is not encryption, and model-only setup tokens are not a proven relay credential."
+    },
+    {
+      "id": "waiting_detection",
+      "category": "Proactive PM inbox",
+      "title": "Find sessions waiting for me",
+      "description": "Look for a current unanswered question, a request for approval, or a blocker requiring my decision. Idle alone is not enough.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": "Discover Remote Control sessions on authorized PCs where available; validate transcript and messaging access independently before claiming support."
+    },
+    {
+      "id": "consolidated_digest",
+      "category": "Proactive PM inbox",
+      "title": "Give one combined briefing",
+      "description": "Include each waiting session, its question, a link, and a recommended next action.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "quiet_if_empty",
+      "category": "Proactive PM inbox",
+      "title": "Stay quiet when nothing needs attention",
+      "description": "Skip routine notifications when there are no new actionable items.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "deduplicate",
+      "category": "Proactive PM inbox",
+      "title": "Avoid repeat alerts",
+      "description": "Remember the question already reported. Alert again only when it changes or my chosen reminder interval expires.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "priority",
+      "category": "Proactive PM inbox",
+      "title": "Prioritize urgent decisions",
+      "description": "Put explicit blockers and time-sensitive decisions first. Label inferred urgency as uncertain.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "scan_now",
+      "category": "Proactive PM inbox",
+      "title": "Run a scan whenever I ask",
+      "description": "Support \"what is waiting for me?\" independently of scheduled checks.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "snooze",
+      "category": "Proactive PM inbox",
+      "title": "Snooze a session or question",
+      "description": "Pause reminders until a chosen time without altering the Claude session.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "persistent_state",
+      "category": "Reliability and preferences",
+      "title": "Remember IDs and read/send checkpoints",
+      "description": "Persist selected sessions, last confirmed sends, read checkpoints, filters, and notification history.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "no_duplicate_send",
+      "category": "Reliability and preferences",
+      "title": "Prevent duplicate messages",
+      "description": "After uncertain delivery, inspect evidence before retrying. Do not assume a failed local command means nothing was sent.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "source_links",
+      "category": "Reliability and preferences",
+      "title": "Include evidence and session links",
+      "description": "Tie summaries to the retrieved response and show when it was checked.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "access_errors",
+      "category": "Reliability and preferences",
+      "title": "Report access and authentication failures",
+      "description": "Explain login expiry, archived sessions, unavailable features, and incomplete scans instead of claiming success.",
+      "planning_label": "Core",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "cost_limits",
+      "category": "Reliability and preferences",
+      "title": "Bound scan time and agent usage",
+      "description": "Limit concurrency, transcript size, polling, and run duration. Report any sessions left unchecked.",
+      "planning_label": "Optional",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "test_schedule",
+      "category": "Reliability and preferences",
+      "title": "Test a scheduled run before activating scans",
+      "description": "Verify credentials, environment availability, Luna delegation, state persistence, and delivery to the intended conversation.",
+      "planning_label": "Needs validation",
+      "enabled": true,
+      "notes": ""
+    },
+    {
+      "id": "json_roundtrip",
+      "category": "Reliability and preferences",
+      "title": "Use this JSON as the implementation spec",
+      "description": "Keep every choice and note, including unanswered features, so we can build the skill from my decisions.",
+      "planning_label": "Core",
+      "enabled": null,
+      "notes": ""
+    }
+  ],
+  "policy_resolutions": {
+    "preview_drafts": "Supported, default off; explicit preview requests wait for approval.",
+    "cross_session": "Disabled.",
+    "approved_autoreply": "Supported only with explicit user-defined rules; the portable rules list is empty.",
+    "json_roundtrip": "Unresolved user choice; format support is documented but no automatic export of private preferences is enabled.",
+    "worker_model": "Prefer the newest officially verified Luna-family model supported by the host. Search OpenAI official sources with the actual current month and year; do not pin a generation."
+  }
+}
