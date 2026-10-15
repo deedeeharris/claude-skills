@@ -1759,13 +1759,3 @@ class HookTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 ```
-
-
-## נספח ב: מה לא נכלל בכוונה
-
-- `agent/<per-chat digest script>`: a periodic summary of one chat, specific to this deployment; not needed to build the agent.
-- `tts/he_tts.py`: local Hebrew TTS fallback (BlueTTS); optional, needs a 2.5 GB install.
-- `tts/setup_tts.sh`: installs the local TTS fallback; not needed when using Gemini TTS.
-- `env-setup.sh`: environment script of this specific deployment; the guide defines a minimal one inline.
-- `setup-bundle.sh`: older restore helper, superseded by gowa-start and the restore steps.
-- פרטי ההתחברות לוואטסאפ, מפתחות API, מזהה הקול המשוכפל, קבצי אודיו, היסטוריית שיחות, ושמות ומספרים של אנשי קשר.
