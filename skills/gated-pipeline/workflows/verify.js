@@ -262,7 +262,7 @@ const compTask = `Trace every requirement and acceptance check in the spec ${A.s
   `put other commands you relied on (controls, check outputs) in the summary, not in evidence. A static record's file is repo-relative (for example src/a.py), never an absolute path. ` +
   (A.require_scan_row ? `The repository requires a security scan row: confirm that its scan log ${A.scan_log} contains a dated entry covering this change at ${A.reviewed_sha}, ` +
     `and cite it as static evidence file:line in your summary or note. If there is no such entry, report a finding of severity high with requirement security-scan-log. ` : '') +
-  `Do not execute commands or invent missing evidence. verdict FAIL for any missing/wrong/unproven item, else PASS.`
+  `Inspect files only with read-only commands (cat, sed, grep, ls, git diff, git show, git log); never run tests, builds or anything that writes, and do not invent missing evidence. verdict FAIL for any missing/wrong/unproven item, else PASS.`
 const comp = await reviewed('compliance', () => agent(
   `Run an independent codex SPEC-COMPLIANCE trace and report its verdict. Do not judge it yourself.\n${availNote(false)}` +
   compIsolate +
