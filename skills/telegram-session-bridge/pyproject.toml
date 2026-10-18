@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegram-session-bridge"
+version = "0.1.0"
+description = "Session-bound Telegram transport for coding agent hosts"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["markdown-it-py>=3.0,<5"]
+
+[project.optional-dependencies]
+dev = ["build>=1.2,<2", "ruff>=0.12,<1", "setuptools>=77"]
+
+[project.scripts]
+tg-bridge = "tgbridge.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "scripts"}
+
+[tool.setuptools.packages.find]
+where = ["scripts"]
+include = ["tgbridge*"]
