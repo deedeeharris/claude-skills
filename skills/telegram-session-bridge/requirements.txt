@@ -1,1 +1,2 @@
 markdown-it-py>=3.0,<5
+pywin32>=311; sys_platform == "win32"

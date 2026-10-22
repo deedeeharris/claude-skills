@@ -31,6 +31,9 @@ PORTABLE_FILES = (
     "scripts/tgbridge/harness.py",
     "scripts/tgbridge/service.py",
     "scripts/tgbridge/cli.py",
+    "scripts/tgbridge/privatefs.py",
+    "scripts/tgbridge/windows_security.py",
+    "scripts/tgbridge/windows_host.py",
 )
 DEVELOPMENT_FILES = (
     ".gitignore",
@@ -51,6 +54,7 @@ DEVELOPMENT_FILES = (
     "tests/test_service.py",
     "tests/test_store.py",
     "tests/test_telegram.py",
+    "tests/test_windows.py",
 )
 TOKEN_SHAPE = re.compile(rb"[1-9][0-9]{0,19}:[A-Za-z0-9_-]{20,}")
 

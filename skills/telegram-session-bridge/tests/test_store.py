@@ -403,6 +403,20 @@ class StoreTests(unittest.TestCase):
                 b"\x00\xfforiginal",
             )
 
+    def test_output_with_parent_traversal_raises_store_error_without_admission(self):
+        self.running()
+        source = self.root / "private-message.bin"
+        source.write_bytes(b"original")
+        unsafe = self.root / "subdirectory" / ".." / source.name
+        for value in (unsafe, str(unsafe)):
+            with self.subTest(path_type=type(value).__name__):
+                with self.assertRaises(StoreError) as caught:
+                    self.store.enqueue_output("b", 101, "final", {"path": value})
+                self.assertNotIn(source.name, str(caught.exception))
+                self.assertEqual(self.store.outputs("b"), [])
+                self.assertEqual(self.store.request("b", 101)["state"], "running")
+                self.assertEqual(source.read_bytes(), b"original")
+
     def test_private_storage_rejects_public_paths_and_symlinks(self):
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
         public = self.root / "public"

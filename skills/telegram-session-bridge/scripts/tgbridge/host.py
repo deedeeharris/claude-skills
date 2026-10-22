@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 import os
 import signal
-import stat
 import subprocess
 import tempfile
 from pathlib import Path
+
+from .privatefs import (
+    check_private,
+    lock_fd,
+    open_nofollow,
+    private_directory,
+    runtime_root,
+    safe_path,
+)
 
 __all__ = ["CollectorLock", "Host", "HostError", "process_identity"]
 
@@ -59,6 +66,10 @@ class Host:
             "scope": "binding_session_tasks",
             "ownership": "claim_required",
         }
+        if os.name == "nt":
+            from .windows_host import send
+
+            return send(self.command, payload, self.timeout)
         # Disk-backed output avoids unbounded child stdout/stderr in parent RAM.
         with tempfile.TemporaryFile() as output:
             try:
@@ -92,43 +103,22 @@ class CollectorLock:
     def __init__(self, bot_id, *, runtime_dir=None):
         if type(bot_id) is not int or bot_id <= 0:
             raise HostError("Invalid bot identity")
-        self.root = (
-            Path(runtime_dir)
-            if runtime_dir is not None
-            else Path("/tmp") / f"tgbridge-{os.getuid()}"
-        )
+        self.root = Path(runtime_dir) if runtime_dir is not None else runtime_root()
         self.bot_id = bot_id
         self.fd = None
 
     def __enter__(self):
         try:
-            self.root.mkdir(mode=0o700, parents=False, exist_ok=True)
-            for part in (self.root, *self.root.parents):
-                if part.is_symlink():
-                    raise HostError("Unsafe lock directory")
-            info = self.root.stat()
-            if (
-                not stat.S_ISDIR(info.st_mode)
-                or info.st_uid != os.getuid()
-                or info.st_mode & 0o077
-            ):
-                raise HostError("Unsafe lock directory")
-            fd = os.open(
-                self.root / f"{self.bot_id}.lock",
-                os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
-                0o600,
+            self.root = safe_path(self.root)
+            private_directory(self.root, parents=False)
+            fd = open_nofollow(
+                self.root / f"{self.bot_id}.lock", os.O_CREAT | os.O_RDWR
             )
             self.fd = fd
-            info = os.fstat(fd)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != os.getuid()
-                or info.st_mode & 0o077
-            ):
-                raise HostError("Unsafe collector lock")
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            check_private(self.root / f"{self.bot_id}.lock", fd=fd)
+            lock_fd(fd)
             return self
-        except (OSError, HostError):
+        except (OSError, ValueError):
             self.__exit__(None, None, None)
             raise HostError("Bot collector is locked or lock path is unsafe") from None
 
@@ -140,7 +130,11 @@ class CollectorLock:
 
 
 def process_identity(pid):
-    """Linux PID/start-time identity, or None when dead/unavailable."""
+    """PID/start-time identity on Linux/Windows, or None when unavailable."""
+    if os.name == "nt":
+        from .windows_host import process_identity as windows_identity
+
+        return windows_identity(pid)
     try:
         data = Path(f"/proc/{pid}/stat").read_text()
         fields = data[data.rfind(")") + 2 :].split()

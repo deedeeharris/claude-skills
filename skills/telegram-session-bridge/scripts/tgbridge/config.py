@@ -5,10 +5,17 @@ from __future__ import annotations
 import json
 import os
 import re
-import stat
 import tempfile
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+
+from .privatefs import (
+    check_private,
+    open_nofollow,
+    private_directory,
+    safe_path,
+    sync_directory,
+)
 
 __all__ = ["Config", "ConfigError", "validate_token"]
 
@@ -26,26 +33,13 @@ def validate_token(token: str) -> str:
 
 
 def _safe_path(path: str | Path) -> Path:
-    raw = Path(path)
-    if ".." in raw.parts:
-        raise ConfigError("Unsafe configuration path")
-    result = raw.absolute()
-    for component in (result, *result.parents):
-        if component.is_symlink():
-            raise ConfigError("Symlinks are not permitted in private paths")
-    return result
+    return safe_path(path)
 
 
 def _private_parent(path: Path, *, create: bool) -> None:
     if create:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    info = path.parent.stat()
-    if (
-        not stat.S_ISDIR(info.st_mode)
-        or info.st_mode & 0o077
-        or info.st_uid != os.getuid()
-    ):
-        raise ConfigError("Configuration directory must be privately owned (0700)")
+        private_directory(path.parent)
+    check_private(path.parent, directory=True)
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -128,17 +122,10 @@ class Config:
         try:
             path = _safe_path(path)
             _private_parent(path, create=False)
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = open_nofollow(path, os.O_RDONLY)
             with os.fdopen(fd, "r", encoding="utf-8") as handle:
                 info = os.fstat(handle.fileno())
-                if (
-                    not stat.S_ISREG(info.st_mode)
-                    or info.st_mode & 0o077
-                    or info.st_uid != os.getuid()
-                ):
-                    raise ConfigError(
-                        "Configuration must be a privately owned regular file (0600)"
-                    )
+                check_private(path, fd=handle.fileno())
                 if info.st_size > 65_536:
                     raise ConfigError("Configuration is too large")
                 raw = json.load(handle, object_pairs_hook=_unique_object)
@@ -174,13 +161,7 @@ class Config:
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
             temporary = None
-            directory_fd = os.open(
-                path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            sync_directory(path.parent)
             self._path = path
         except (OSError, ValueError, TypeError):
             raise ConfigError("Cannot save private configuration") from None

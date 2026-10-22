@@ -6,7 +6,7 @@ Start with [beginner setup](references/setup.md), then [operations](references/o
 
 ## Install and pair
 
-Use Python 3.11 or later on POSIX with fcntl, Unix permissions and SQLite. Linux is required for optional /proc owner-process checks. Windows is unsupported. Real operation requires Telegram HTTPS access and private durable storage. A copied skill does not need the original repository or its virtual environment.
+Use Python 3.11 or later on POSIX or native Windows with SQLite and Telegram HTTPS access. Windows installs its conditional pywin32 dependency and uses Windows ACLs, byte-range locks, process creation times and job objects; no WSL or Docker is required. Optional owner-process checks work on Linux and Windows. A copied skill does not need the original repository or its virtual environment.
 
 From this skill directory, create a separate private virtual environment:
 
@@ -17,6 +17,8 @@ python3 -m venv /absolute/private/tgbridge-venv
 ```
 
 Replace /absolute/private with an existing writable private parent. Add this directory to the host's documented skill location or load SKILL.md through its supported mechanism. There is no universal host installation path.
+
+On Windows PowerShell, use `python -m venv C:\private\tgbridge-venv`, then invoke `C:\private\tgbridge-venv\Scripts\python.exe -m pip install -r requirements.txt` and `C:\private\tgbridge-venv\Scripts\python.exe scripts\tg_bridge.py --help`. The example directory is a placeholder; choose a private location in your user profile. See [Windows storage and setup](references/setup.md#windows-storage-and-setup).
 
 Create your own bot through the verified official BotFather, open its private chat, and follow the setup guide's expiring pairing flow. Prefer a host-provided TELEGRAM_BOT_TOKEN secret. Never put tokens in command arguments, logs or source. Use a different bot and private state directory for each simultaneous session. Credentials and binding state are not included.
 

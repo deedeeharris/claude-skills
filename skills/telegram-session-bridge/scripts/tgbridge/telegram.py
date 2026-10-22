@@ -17,6 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .config import validate_token
+from .privatefs import open_nofollow, safe_path
 
 __all__ = [
     "MAX_DOWNLOAD_BYTES",
@@ -77,13 +78,10 @@ class _NoRedirects(HTTPRedirectHandler):
 
 
 def _local_path(path: str | Path) -> Path:
-    raw = Path(path)
-    if ".." in raw.parts:
-        raise TelegramError("path")
-    result = raw.absolute()
-    if any(p.is_symlink() for p in (result, *result.parents)):
-        raise TelegramError("path")
-    return result
+    try:
+        return safe_path(path)
+    except (OSError, ValueError, TypeError):
+        raise TelegramError("path") from None
 
 
 class Telegram:
@@ -136,7 +134,7 @@ class Telegram:
             limit = MAX_PHOTO_BYTES if name in photo_fields else MAX_UPLOAD_BYTES
             try:
                 path = _local_path(path)
-                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                fd = open_nofollow(path, os.O_RDONLY)
                 with os.fdopen(fd, "rb") as handle:
                     info = os.fstat(handle.fileno())
                     if not stat.S_ISREG(info.st_mode):
