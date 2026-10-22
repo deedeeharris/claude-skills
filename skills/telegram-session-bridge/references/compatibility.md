@@ -10,7 +10,7 @@ This package supplies a transport, cooperative claim/publication protocol and ge
 | Receiving while busy | Separate collector/consumer/sender protocol | Host jobs survive agent work and blocking waits |
 | Progress/final fidelity | Ordered forwarding of supplied canonical files | Capture the actual visible final post-hook/style output and progress |
 | Interrupt/stop | Priority/generation boundaries and unsupported notices | Native steering/cancellation scoped and revalidated at action time |
-| Session end | Synthetic signals, unbind and optional Linux PID checks | Authoritative host supervisor/end signal and browser-close behavior |
+| Session end | Synthetic signals, unbind and optional Linux/Windows PID identity checks | Authoritative host supervisor/end signal and browser-close behavior |
 | Idle waiting | Script network/SQLite loops invoke no model | Supported same-turn completion or host task notification, with measured renewal overhead |
 | Recovery | Queue/outbox restart, ambiguous delivery and retry boundaries | Real outage/reconnect within Telegram and host-storage limits |
 
@@ -24,7 +24,7 @@ Task-completion mode is a separate operator assertion for a verified host notifi
 
 Run tg-bridge --config CONFIG harness and inspect doctor before starting a collector. Choose an explicit --mode. Modes are operator assertions. automatic_continuation reports the generic native host-command path; blocked does not rule out an already-open cooperative wait or separately verified task notification. Collector-only saves work and suppresses hooks without agent execution; collection alone is not a session connection.
 
-Runtime requirements: Python 3.11+, POSIX fcntl/Unix permissions, SQLite and Telegram HTTPS access. Optional owner-PID checks also require Linux /proc. Windows is unsupported. Private durable storage must persist for recovery. Local locks do not cover other machines or OS users. Telegram retains pending updates for at most 24 hours. Local retained state has no automatic expiry, and destroyed host storage cannot be recovered by this package.
+Runtime requirements: Python 3.11+, SQLite and Telegram HTTPS access. POSIX uses fcntl/Unix permissions; native Windows uses the conditional pywin32 dependency, ACLs, byte-range locks and job objects. Owner-PID checks use Linux /proc or Windows process creation times. Windows transport tests cover ACL rejection, junction/stream rejection, cross-process lock exclusion, owner exit, hook descendant cleanup and synthetic collector/file publication; they do not certify any coding host's continuation. Directory-entry durability after sudden power loss is weaker on Windows because directory fsync is unavailable. See [Windows setup](setup.md#windows-storage-and-setup). Private storage must persist for recovery. Local locks do not cover other machines or OS users. Telegram retains pending updates for at most 24 hours. Local retained state has no automatic expiry, and destroyed host storage cannot be recovered by this package.
 
 ## Live release checklist
 

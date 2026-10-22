@@ -19,6 +19,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .messages import authorized_message, parse_message
+from .privatefs import (
+    check_private,
+    open_nofollow,
+    private_directory,
+    readonly_snapshot,
+    safe_path,
+    sync_directory,
+)
 
 __all__ = ["Store", "StoreError"]
 
@@ -44,23 +52,17 @@ def _identifier(value):
 def _path(value):
     if not isinstance(value, (str, Path)):
         raise StoreError("Invalid private path")
-    path = Path(value)
-    if ".." in path.parts:
-        raise StoreError("Unsafe private path")
-    path = path.absolute()
-    if any(part.is_symlink() for part in (path, *path.parents)):
-        raise StoreError("Symlinks are not permitted")
-    return path
+    try:
+        return safe_path(value)
+    except (OSError, TypeError, ValueError):
+        raise StoreError("Unsafe private path") from None
 
 
 def _private(path, *, directory=False):
-    info = path.stat()
-    if (
-        not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))
-        or info.st_mode & 0o077
-        or info.st_uid != os.getuid()
-    ):
-        raise StoreError("Storage must be privately owned")
+    try:
+        check_private(path, directory=directory)
+    except (OSError, TypeError, ValueError):
+        raise StoreError("Storage must be privately owned") from None
 
 
 class Store:
@@ -68,11 +70,9 @@ class Store:
         self._conn = None
         try:
             self.path = _path(path)
-            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            private_directory(self.path.parent)
             _private(self.path.parent, directory=True)
-            fd = os.open(
-                self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
-            )
+            fd = open_nofollow(self.path, os.O_CREAT | os.O_RDWR)
             os.close(fd)
             _private(self.path)
             # Rollback journals live beside the database in its private directory.
@@ -399,13 +399,13 @@ class Store:
             )
 
     def _snapshot(self, source):
-        source = _path(source)
-        directory = _path(self.path.parent / "outbox")
-        directory.mkdir(mode=0o700, exist_ok=True)
-        _private(directory, directory=True)
         destination = None
         try:
-            fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            source = _path(source)
+            directory = _path(self.path.parent / "outbox")
+            private_directory(directory, parents=False)
+            _private(directory, directory=True)
+            fd = open_nofollow(source, os.O_RDONLY)
             with os.fdopen(fd, "rb") as original:
                 if not stat.S_ISREG(os.fstat(original.fileno()).st_mode):
                     raise StoreError("Attachment must be a regular file")
@@ -415,12 +415,8 @@ class Store:
                     shutil.copyfileobj(original, snapshot)
                     snapshot.flush()
                     os.fsync(snapshot.fileno())
-                    os.fchmod(snapshot.fileno(), 0o400)
-            dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
+                    readonly_snapshot(snapshot.fileno())
+            sync_directory(directory)
             return destination
         except (OSError, ValueError, TypeError):
             if destination is not None:

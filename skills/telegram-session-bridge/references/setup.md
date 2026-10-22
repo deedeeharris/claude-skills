@@ -8,7 +8,7 @@ Use one distinct bot and one private config directory per simultaneous session. 
 
 ## 2. Install Python dependencies
 
-Use Python 3.11+ on POSIX. Linux is required for optional owner-PID checks. Windows is not supported. In the extracted telegram-session-bridge directory:
+Use Python 3.11+ on POSIX or native Windows. Optional owner-PID checks work on Linux and Windows. In the extracted telegram-session-bridge directory on POSIX:
 
 ```sh
 python3 -m venv /absolute/private/tgbridge-venv
@@ -17,6 +17,16 @@ python3 -m venv /absolute/private/tgbridge-venv
 ```
 
 Choose your own writable private paths; the absolute paths here are placeholders. No root repository venv is included. Commands in these guides starting with tg-bridge use a source/wheel installation, as described in the skill's [README](../README.md). In a copied skill, replace that executable with the absolute venv interpreter followed by the absolute path to scripts/tg_bridge.py. Always invoke Python explicitly for direct launch.
+
+### Windows storage and setup
+
+From PowerShell, create an isolated environment with `python -m venv C:\private\tgbridge-venv`, install with `C:\private\tgbridge-venv\Scripts\python.exe -m pip install -r requirements.txt`, then run `C:\private\tgbridge-venv\Scripts\python.exe scripts\tg_bridge.py --help`. Replace the placeholder paths with private paths in your own profile. Requirements install pywin32 only on Windows. WSL, Docker, a global package installation and administrator access are unnecessary.
+
+Choose an initially absent per-bot directory, for example `$env:LOCALAPPDATA\telegram-session-bridge\bot-one\config.json`. The bridge creates directories with a protected ACL granting the current user full access and inheritable protection for child files. Existing storage must be owned by the current user, with no allow entries for other principals except Windows SYSTEM, Administrators and OWNER RIGHTS. OWNER RIGHTS applies only after validating the current owner. Broad Everyone or Users access is rejected; the bridge never silently rewrites an existing directory's ACL. Symlinks, junctions, other reparse points and alternate data streams are rejected. Use a local filesystem supporting Windows ACLs and byte-range locks.
+
+Configuration, queue records, attachment downloads and snapshots use this private storage. Snapshot ACLs permit reads and prevent ordinary writes; Windows sends a byte-for-byte copy from private staging because its read-only ACL prevents creating hard links. File contents are flushed before atomic replacement, and SQLite uses FULL synchronization. Windows has no supported directory-fsync equivalent here, so a sudden power loss has weaker directory-entry durability than the POSIX path.
+
+Collector locks live at the OS-provided Local AppData path, stable across TEMP changes. Optional owner PID checks compare process creation time as well as PID. Trusted host commands run suspended until attached to a private job object; timeout and job closure terminate descendants. This process cleanup does not establish a host adapter, automatic continuation, final-output capture or authoritative session-end support. Cooperative mode still requires the existing host's owned job and open-turn wait.
 
 ## 3. Create your bot
 
