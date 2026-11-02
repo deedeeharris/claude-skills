@@ -89,6 +89,14 @@ class LaunchAndRoutingTests(unittest.TestCase):
         self.assertIn("/babysitter:yolo", read(SKILL_MD))
         self.assertTrue(BARE_LAUNCH.search("run " + "/" + "yolo x.md"), "the pattern must catch the bare spelling")
 
+    def test_gated_pipeline_is_the_default_build_route_with_babysitter_as_fallback(self):
+        skill = read(SKILL_MD)
+        section = skill[skill.index("### 4.6 Dispatch"):skill.index("### 4.6.2")]
+        self.assertIn("default build route is `gated-pipeline`", section)
+        self.assertIn("fallback", section)
+        table = read(REFS / "dispatch.md")
+        self.assertIn("| Build (default) | `gated-pipeline`", table)
+
     def test_host_table_names_every_route_with_fallback(self):
         text = read(REFS / "dispatch.md")
         self.assertIn("Codex as PM", text)

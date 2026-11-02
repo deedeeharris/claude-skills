@@ -47,9 +47,9 @@ Q11: Can the background job run more frequently than once per hour?
 
 Example phrasing, attended mode:
 
-> For #4 (add the retry to the export job) I recommend a background build: route `bg-it`, launched with `/babysitter:yolo`, model sonnet, because it is a multi-step change with tests that can run without questions. The prompt is below and saved at `prompts/04-export-retry.md`. Alternatives: an in-session subagent (`workflow-it`) if you want to watch each step, or a Codex build if you want Claude to review it afterwards. Dispatch as recommended?
+> For #4 (add the retry to the export job) I recommend the gated pipeline: route `gated-pipeline`, model opus, run here in my session (design, build, verify, land), because it is a multi-step change to product code and the pipeline gives frozen acceptance items, test-first code and Codex reviews. The task text is below and saved at `prompts/04-export-retry.md`. Alternative: a background build (`bg-it` with `/babysitter:yolo`) if you want my session free while it runs. Dispatch as recommended?
 
-The PM records it only after the yes: `mm.py dispatch --route bg-it --model sonnet --prompt-file prompts/04-export-retry.md --approved-by <operator> --row #4`.
+The PM records it only after the yes: `mm.py dispatch --route gated-pipeline --worker workflow --model opus --prompt-file prompts/04-export-retry.md --approved-by <operator> --row #4`, then runs the Workflows and closes the dispatch with the last stage's result.
 
 ---
 

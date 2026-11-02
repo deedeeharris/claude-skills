@@ -21,6 +21,10 @@ import mm_schema
 NOOP_CAP = 5
 DEFAULT_LAUNCH = "/babysitter:yolo {prompt}"
 BACKGROUND_ROUTES = ("bg-it", "claude-bg")
+# Run by the PM in its own session as Workflows whose agents write the code: no
+# launch to record and nothing for launch-check to prove; the stage results are
+# the evidence.
+IN_SESSION_ROUTES = ("gated-pipeline",)
 ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 REPORT_CAP = 4000
 

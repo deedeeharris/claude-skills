@@ -249,8 +249,12 @@ def cmd_dispatch(args) -> int:
     print(f"prompt copy: {task_dir / record['prompt']}")
     if record["launch"]:
         print(f"launch: {record['launch']}")
-    print(f"then: mm.py launch-check --task-dir {task_dir} --dispatch-id {record['id']} --launch-log <the launch "
-          "command's captured output> at +20 s after the launch, and again at +6 min")
+    if args.route in mm_loop.IN_SESSION_ROUTES:
+        print(f"then: run the gated-pipeline Workflows in this session; when the last stage returns, mm.py dispatch "
+              f"--task-dir {task_dir} --close {record['id']} --outcome \"<stage result and reviewed_sha>\"")
+    else:
+        print(f"then: mm.py launch-check --task-dir {task_dir} --dispatch-id {record['id']} --launch-log <the launch "
+              "command's captured output> at +20 s after the launch, and again at +6 min")
     paths = [mm_loop.records_path(task_dir), task_dir / record["prompt"]]
     if args.approval_id is not None:
         paths.insert(0, mm_runtime.approvals_path(task_dir))
@@ -369,6 +373,10 @@ def cmd_launch_check(args) -> int:
                           "the launch command's output was captured to, or leave --launch-log out")
 
     def change(record):
+        if record.get("route") in mm_loop.IN_SESSION_ROUTES:
+            raise CliError(2, f"dispatch {record['id']} is an in-session {record['route']} run: there is no launch to "
+                              "check; its Workflow stage results are the evidence, and mm.py dispatch --close records "
+                              "the outcome")
         launched = mm_liveness._parse_time(args.launched_at or record.get("at", ""))
         if launched is None:
             raise CliError(2, f"--launched-at {args.launched_at!r} is not an ISO time")

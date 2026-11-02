@@ -136,6 +136,22 @@ class DispatchTests(LoopCase):
         self.assertEqual([r["id"] for r in self.records()], ["d1", "d2"])
         self.assertNotEqual(self.records()[1]["prompt"], record["prompt"])
 
+    def test_when_route_is_gated_pipeline_dispatch_records_no_launch_and_points_to_the_workflows(self):
+        rc, output = self.dispatch("gated-pipeline", "opus", "--approved-by", "Test Operator", "--row", "#1")
+        self.assertEqual(rc, 0, output)
+        self.assertEqual(self.records()[0]["launch"], "")
+        self.assertIn("gated-pipeline", output)
+        self.assertIn("in this session", output)
+        self.assertNotIn("launch-check", output)
+
+    def test_when_record_is_gated_pipeline_launch_check_refuses_instead_of_dead(self):
+        self.dispatch("gated-pipeline", "opus", "--approved-by", "Test Operator")
+        rc, output = self.mm("launch-check", "--task-dir", self.task, "--dispatch-id", "d1")
+        self.assertEqual(rc, 2, output)
+        self.assertIn("in-session", output)
+        self.assertNotIn("DEAD", output)
+        self.assertEqual(self.records()[0]["liveness"], [])
+
     def test_dispatch_close_marks_the_record_finished(self):
         self.dispatch("bg-it", "sonnet", "--approved-by", "Test Operator")
         self.ok("dispatch", "--task-dir", self.task, "--close", "d1", "--outcome", "inbox entry received")
