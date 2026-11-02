@@ -9,7 +9,7 @@ description: Time-boxed solo mode for an mm task. Trigger on "unattended 60h", "
 
 Defaults baked into this skill: dev merge + dev deploy alone behind the full gate; decide if safe, else park; milestone messages + 12h digest; an mm task is required.
 
-Requires: skills `mm` (with `mm.py loop`), `gated-pipeline` from this repo. Optional: a notifier (for example the `tg` skill for Telegram) and a `deploy-checks` skill. Without a notifier, every message below is appended to `<T>/evidence/unattended/messages.md` and printed in chat. Without `deploy-checks`, run the checks listed in Section 3 step 4 by hand.
+Requires: skills `mm` (with `mm.py loop`) and `gated-pipeline` from this repo. Optional: a notifier (for example the `tg` skill for Telegram) and a `deploy-checks` skill. Without a notifier, every message below is appended to `<T>/evidence/unattended/messages.md` and printed in chat. Without `deploy-checks`, run the checks listed in Section 3 step 4 by hand.
 
 ## Commands
 
