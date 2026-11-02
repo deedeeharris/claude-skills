@@ -7,9 +7,9 @@ description: Time-boxed solo mode for an mm task. Trigger on "unattended 60h", "
 
 `unattended <N>h` gives the PM the operator's time, not the operator's authority. For N hours it works the mm task alone. Every rule of `mm` (invariants, approval table, hard-stop list, loop contract in `mm/references/unattended.md`) and of the repo's CLAUDE.md still applies. This skill only adds: a deadline, a decide-or-park rule, a gated dev-merge grant, a notification plan, and a return report.
 
-Defaults baked into this skill: dev merge + dev deploy alone behind the full gate; decide if safe, else park; Telegram milestones + 12h digest; an mm task is required.
+Defaults baked into this skill: dev merge + dev deploy alone behind the full gate; decide if safe, else park; milestone messages + 12h digest; an mm task is required.
 
-Requires: skills `mm` (with `mm.py loop`), `gated-pipeline` and `tg` from this repo. A `deploy-checks` skill is optional; without one, run the checks listed in Section 3 step 4 by hand.
+Requires: skills `mm` (with `mm.py loop`), `gated-pipeline` from this repo. Optional: a notifier (for example the `tg` skill for Telegram) and a `deploy-checks` skill. Without a notifier, every message below is appended to `<T>/evidence/unattended/messages.md` and printed in chat. Without `deploy-checks`, run the checks listed in Section 3 step 4 by hand.
 
 ## Commands
 
@@ -30,12 +30,12 @@ The invocation is the operator's yes to the window itself. Nothing below asks ag
 2. **Times.** Take the start from the clock (the operator's local time zone). End = start + N hours. Write both as absolute ISO times with an offset. N is greater than 0 and at most 168. A session crontab lives only as long as the session, so the session must stay open; say so in the start message.
 3. **Ask now, not later (optional, once).** Collect the open operator questions the next rows will hit: spec open questions, NEEDS_DECISION rows, pending merges. If any exist, ask them in ONE question-protocol call (at most 4, recommendation first). Record each answer with `mm.py add-decision`. The operator may skip it. Anything unanswered is handled by Section 2 during the window. If the loop is not on yet, this same call also asks for the approved `<route>:<model>` list (mm loop on is operator-only).
 4. **Loop.** Reuse an existing `loop on` and its routes. Otherwise use the routes from step 3. Then run:
-   `mm.py loop on --task-dir <T> --approved-by <operator> [--route ...] --cadence <c> --noop-cap <k> --notifier tg --host-rule "unattended skill <start>: window until <end> (N h); dev merge+deploy behind the gate; decide-if-safe-else-park; tg milestones + 12h digest => granted by <operator>"`
+   `mm.py loop on --task-dir <T> --approved-by <operator> [--route ...] --cadence <c> --noop-cap <k> --notifier <notifier or none> --host-rule "unattended skill <start>: window until <end> (N h); dev merge+deploy behind the gate; decide-if-safe-else-park; milestones + 12h digest => granted by <operator>"`
    - Cadence: keep the task's recorded cadence, else 60m.
    - Noop cap k = ceil(8h / cadence), minimum 5. Waiting on a live build is a no-op tick; a 4-6h build must not switch the loop off.
    - Then adopt or create the cron per the loop contract (CronList first, one owner) and record `--cron-id` and `--owner-session`.
 5. **Window file.** Write `<T>/evidence/unattended/window.json`: `{start, end, hours, cadence, noop_cap, operator, last_digest_at: start, milestones: [], parked: [], autonomous_decisions: []}`. The ledger stays the source of task state; this file holds only window bookkeeping.
-6. **Start message.** Send one Telegram message (skill `tg`, header `[<project>] [PM]`):
+6. **Start message.** Send one message through the notifier (header `[<project>] [PM]`):
    - window start and end in the operator's local time;
    - the rows it plans to work, in order;
    - what it will never do alone (Section 4);
@@ -112,5 +112,5 @@ On the deadline, `unattended off`, or the loop stopping by itself (noop cap, fai
    - autonomous decisions to review: Q-ids with one line each;
    - return queue: the parked items in priority order, each with the recommendation;
    - anything that went wrong.
-3. Send the report as a Telegram message (short form plus the file) and print it in chat.
+3. Send the report through the notifier (short form plus the file, when the notifier supports files) and print it in chat.
 4. In-flight builds that finish after the end: record their results in the ledger. Merge nothing. Open a PR only if the operator is back.
