@@ -1,0 +1,284 @@
+# EXPERIMENTAL (project-infra-setup): validated statically, not yet run against a live GCP project. Prove the gates first.
+name: Terraform Apply
+
+# THE deploy pipeline. Terraform is the ONLY writer of the Cloud Run services (image and traffic included), so there is
+# no second deploy path to race with, and nothing here ever calls `gcloud run services update`.
+#   push to main -> build the image once (dev registry, by digest) -> plan dev and prod (read-only, saved plans)
+#   -> a HUMAN approves tf-dev, then tf-prod -> apply the SAVED plan -> verify the SERVING revision runs the built digest.
+# Environments tf-dev and tf-prod must have required reviewers (Settings > Environments); tf-dev may run without them
+# (record that choice), tf-prod must keep them. apply-prod needs apply-dev, so prod runs only after dev applied and verified; the same digest goes to both.
+# A terraform-only push (no Dockerfile change) rebuilds too, so every merge ships exactly the commit on main.
+# No Dockerfile yet (Day 0): the build is skipped and each environment keeps the image it runs now.
+#
+# STALE PLANS: a saved plan is bound to the state it was made from. If anything changed state after the plan (another
+# apply, a manual change), `terraform apply tfplan` REFUSES with "Saved plan is stale". The job fails; re-run the
+# workflow for a fresh plan. The workflow-level concurrency group also queues a newer push behind a run that still waits
+# for approval, so a newer deploy and an older approved plan cannot interleave.
+#
+# Variables come from the GitHub Environment of each job (not repo-wide): GCP_PROJECT_ID, WIF_PROVIDER and the SA email.
+# Repo-wide: GCP_REGION, TF_VERSION. See references/repo-bootstrap.md section 6.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false # never cancel a running apply
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev # main-only; holds GCP_PROJECT_ID, WIF_PROVIDER, IMAGE_PUSHER_SA (registry write on the dev repo only)
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+    outputs:
+      image: ${{ steps.out.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: has
+        shell: bash
+        run: |
+          if [ -f Dockerfile ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Dockerfile yet (no app scaffold): nothing is built, each environment keeps the image it runs now."
+          fi
+
+      # The build context is the whole workspace. A credentials file in it would be COPYed into the image by
+      # `COPY . .`. This job therefore never creates one: token only (create_credentials_file: false).
+      # Belt and braces: the repo must also ignore it in .dockerignore (template: templates/docker/.dockerignore).
+      - name: Require gha-creds-*.json in .dockerignore
+        if: steps.has.outputs.found == 'true'
+        shell: bash
+        run: |
+          if ! grep -Eq '^(\*\*/)?gha-creds-\*\.json[[:space:]]*$' .dockerignore 2>/dev/null; then
+            echo "::error::.dockerignore is missing or lacks the line: gha-creds-*.json"
+            exit 1
+          fi
+
+      - id: auth
+        if: steps.has.outputs.found == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.IMAGE_PUSHER_SA }}
+          create_credentials_file: false
+          token_format: access_token
+
+      - if: steps.has.outputs.found == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: steps.has.outputs.found == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - id: push
+        if: steps.has.outputs.found == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/api-dev/api:${{ github.sha }}
+
+      # Empty output = no image built; the plan jobs then keep each environment's live image.
+      - id: out
+        shell: bash
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          if [ -n "$DIGEST" ]; then
+            echo "image=${REGION}-docker.pkg.dev/${PROJECT}/api-dev/api@${DIGEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=" >> "$GITHUB_OUTPUT"
+          fi
+
+  plan:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: plan-${{ matrix.env }} # no reviewers, no branch policy; holds the READ-ONLY planner's variables
+    strategy:
+      fail-fast: true
+      matrix:
+        env: [dev, prod]
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: api-${{ matrix.env }}
+      BUILT_IMAGE: ${{ needs.build.outputs.image }}
+    defaults:
+      run:
+        shell: bash # explicit bash = `-eo pipefail`; without it `plan | tee` hides a failed plan
+        working-directory: terraform/envs/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.TF_PLANNER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+          terraform_wrapper: false  # keep real exit codes (plan -detailed-exitcode 2 = drift) and raw stdout
+
+      - name: Require the environment's state to exist
+        run: bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" state-check
+
+      - run: terraform init -input=false -lockfile=readonly # providers exactly as committed in .terraform.lock.hcl
+
+      - name: plan (saved)
+        run: |
+          image="$BUILT_IMAGE"
+          if [ -z "$image" ]; then image=$(bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" live-image "$SERVICE" "$REGION" "$PROJECT"); fi
+          echo "image: $image"
+          echo "$image" > image.txt
+          terraform plan -input=false -lock=false -no-color -var "image=$image" -out=tfplan 2>&1 | tee plan.txt
+          test -s tfplan || { echo "::error::tfplan was not written"; exit 1; }
+
+      - name: Show the plan to the approver
+        run: |
+          {
+            echo "### Review before approving: ${{ matrix.env }} (commit ${{ github.sha }})"
+            echo "image: \`$(cat image.txt)\`"
+            echo '```'
+            tail -c 60000 plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The plan file can contain sensitive values: short retention, never public.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tfplan-${{ matrix.env }}
+          path: |
+            terraform/envs/${{ matrix.env }}/tfplan
+            terraform/envs/${{ matrix.env }}/image.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  apply-dev:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Two jobs, not a matrix: matrix order is not guaranteed, and prod must never run before dev succeeded.
+    # HUMAN GATE: the job pauses here until a required reviewer approves tf-<env>. Its variables (and the applier
+    # identity) belong to this Environment only; the applier of dev cannot be assumed from tf-prod and vice versa.
+    environment: tf-dev
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: api-dev
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform/envs/dev
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.TF_APPLIER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+          terraform_wrapper: false  # keep real exit codes (plan -detailed-exitcode 2 = drift) and raw stdout
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: tfplan-dev
+          path: terraform/envs/dev
+
+      - run: terraform init -input=false -lockfile=readonly # providers exactly as committed in .terraform.lock.hcl
+
+      - name: Refuse to apply without the saved plan
+        run: test -s tfplan -a -s image.txt || { echo "::error::tfplan or image.txt artifact is missing"; exit 1; }
+
+      # Applies exactly what the reviewer saw. If state changed since the plan was made, terraform refuses (stale plan).
+      - name: apply saved plan
+        run: |
+          terraform apply -input=false tfplan || {
+            echo "::error::apply failed. If the message says the saved plan is stale, state changed after planning: re-run this workflow for a fresh plan and approval."
+            exit 1
+          }
+
+      # A green run is not a deploy: judge this job's own result, and do not treat a new revision as proof. Resolve the
+      # revision that SERVES traffic and compare its image digest with the one that was planned (the digest built in this
+      # run, or the one already live for a no-build run). Digests, never timestamps.
+      - name: Verify the traffic-serving revision runs the planned digest
+        run: bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" verify "$SERVICE" "$REGION" "$PROJECT" "$(cat image.txt)"
+
+  apply-prod:
+    needs: [plan, apply-dev] # prod starts only after dev applied AND its digest check passed
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # HUMAN GATE: the job pauses here until a required reviewer approves tf-<env>. Its variables (and the applier
+    # identity) belong to this Environment only; the applier of dev cannot be assumed from tf-prod and vice versa.
+    environment: tf-prod
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: api-prod
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform/envs/prod
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.TF_APPLIER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+          terraform_wrapper: false  # keep real exit codes (plan -detailed-exitcode 2 = drift) and raw stdout
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: tfplan-prod
+          path: terraform/envs/prod
+
+      - run: terraform init -input=false -lockfile=readonly # providers exactly as committed in .terraform.lock.hcl
+
+      - name: Refuse to apply without the saved plan
+        run: test -s tfplan -a -s image.txt || { echo "::error::tfplan or image.txt artifact is missing"; exit 1; }
+
+      # Applies exactly what the reviewer saw. If state changed since the plan was made, terraform refuses (stale plan).
+      - name: apply saved plan
+        run: |
+          terraform apply -input=false tfplan || {
+            echo "::error::apply failed. If the message says the saved plan is stale, state changed after planning: re-run this workflow for a fresh plan and approval."
+            exit 1
+          }
+
+      # A green run is not a deploy: judge this job's own result, and do not treat a new revision as proof. Resolve the
+      # revision that SERVES traffic and compare its image digest with the one that was planned (the digest built in this
+      # run, or the one already live for a no-build run). Digests, never timestamps.
+      - name: Verify the traffic-serving revision runs the planned digest
+        run: bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" verify "$SERVICE" "$REGION" "$PROJECT" "$(cat image.txt)"

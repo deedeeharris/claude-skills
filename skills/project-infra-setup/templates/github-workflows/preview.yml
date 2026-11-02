@@ -1,0 +1,177 @@
+# EXPERIMENTAL (project-infra-setup): validated statically, not yet run against a live GCP project. Prove the gates first.
+name: PR Preview
+
+# Per-PR preview = a zero-traffic, tagged revision of the SEPARATE api-preview service (no Terraform per PR).
+# Terraform creates the api-preview shell once (modules/preview-service); this workflow is the only writer of its
+# revisions and tags, and preview-deployer is the only identity allowed to write it. The dev and prod services are
+# never touched here. Needs the `preview` GitHub Environment (no reviewers; holds GCP_PROJECT_ID, WIF_PROVIDER,
+# PREVIEW_DEPLOYER_SA). URL looks like https://pr-<n>---api-preview-<hash>.a.run.app and is IAM-private: open it with
+# an identity token or `gcloud run services proxy`. The preview runtime has no secrets and no env vars.
+# Fork PRs get no OIDC token, so they get no preview by design.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  SERVICE: api-preview
+
+jobs:
+  deploy:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: preview
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+    # One writer at a time on the preview service (same group in all three jobs below). GitHub keeps one running +
+    # one pending job per group; a newer pending job replaces an older pending one, so a skipped deploy is repaired by
+    # the next push to that PR and a skipped cleanup by the daily sweep.
+    concurrency:
+      group: cloud-run-api-preview
+      cancel-in-progress: false
+      # actionlint <= 1.7.12 flags `queue` as unknown; GitHub supports it (changelog 2026-05-07, "concurrency groups now allow larger queues").
+      queue: max # default `single` keeps ONE pending run: a third PR's event would cancel a waiting deploy for good
+    steps:
+      - uses: actions/checkout@v7
+
+      # Build first with a token only: create_credentials_file: false means no gha-creds-*.json exists in the
+      # build context, so `COPY . .` cannot bake credentials into a pushed image.
+      - name: Require gha-creds-*.json in .dockerignore
+        shell: bash
+        run: |
+          if ! grep -Eq '^(\*\*/)?gha-creds-\*\.json[[:space:]]*$' .dockerignore 2>/dev/null; then
+            echo "::error::.dockerignore is missing or lacks the line: gha-creds-*.json"
+            exit 1
+          fi
+
+      - id: auth_build
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.PREVIEW_DEPLOYER_SA }}
+          create_credentials_file: false
+          token_format: access_token
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth_build.outputs.access_token }}
+
+      - id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/api-preview/api:pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+
+      # The build is done: only now is a credentials file allowed into the workspace (gcloud needs it).
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.PREVIEW_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Deploy tagged revision with no traffic
+        id: rev
+        shell: bash
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gcloud run services update "$SERVICE" --region "$REGION" --project "$PROJECT" \
+            --image "${REGION}-docker.pkg.dev/${PROJECT}/api-preview/api@${DIGEST}" \
+            --no-traffic --tag "pr-${PR}"
+          url=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" \
+            --format=json | jq -r --arg t "pr-${PR}" '.status.traffic[] | select(.tag==$t) | .url')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment the preview URL
+        uses: actions/github-script@v9
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `Preview (IAM-private, use an identity token): ${{ steps.rev.outputs.url }}`
+            });
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: preview
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+    concurrency:
+      group: cloud-run-api-preview
+      cancel-in-progress: false
+      queue: max # default `single` keeps ONE pending run: a third PR's event would cancel a waiting deploy for good
+    steps:
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.PREVIEW_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # Only a tag that is confirmed absent is ignored. Any other failure (permission, expired credentials, API error)
+      # fails the job, so a leftover tag stays visible and the run can be retried.
+      - name: Remove the PR tag
+        shell: bash
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          present=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format=json \
+            | jq -r --arg t "pr-${PR}" '[.status.traffic[]? | select(.tag == $t)] | length')
+          if [ "$present" -gt 0 ]; then
+            gcloud run services update-traffic "$SERVICE" --region "$REGION" --project "$PROJECT" --remove-tags "pr-${PR}"
+          else
+            echo "tag pr-${PR} is not on $SERVICE: nothing to remove"
+          fi
+
+  # Close events can be missed. Daily sweep removes pr-* tags whose PR is no longer open.
+  sweep:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: preview
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+    concurrency:
+      group: cloud-run-api-preview
+      cancel-in-progress: false
+      queue: max # default `single` keeps ONE pending run: a third PR's event would cancel a waiting deploy for good
+    steps:
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.PREVIEW_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Remove orphan pr-* tags
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # --paginate: with more than 100 open PRs a single page would classify open PRs' tags as orphans.
+          open=$(gh api --paginate "repos/${{ github.repository }}/pulls?state=open&per_page=100" --jq '.[].number')
+          tags=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format=json \
+            | jq -r '.status.traffic[]? | select(.tag != null) | select(.tag | startswith("pr-")) | .tag')
+          for t in $tags; do
+            n=${t#pr-}
+            if ! echo "$open" | grep -qx "$n"; then
+              echo "removing orphan tag $t"
+              gcloud run services update-traffic "$SERVICE" --region "$REGION" --project "$PROJECT" --remove-tags "$t"
+            fi
+          done

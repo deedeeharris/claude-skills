@@ -1,0 +1,14 @@
+# Same line endings on every OS, whatever core.autocrlf says.
+*.sh   text eol=lf
+*.tf   text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.py   text eol=lf
+# PowerShell: CRLF for Windows editors. Windows PowerShell 5.1 and PowerShell 7 (Linux) run CRLF and LF alike.
+*.ps1  text eol=crlf
+*.psd1 text eol=crlf
+*.tfvars text eol=lf
+*.example text eol=lf
+CODEOWNERS text eol=lf
+.dockerignore text eol=lf

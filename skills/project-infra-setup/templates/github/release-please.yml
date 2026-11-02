@@ -1,0 +1,31 @@
+name: Release Please
+
+# Opens/updates one release PR from Conventional Commits on main. Merging it tags vX.Y.Z and writes CHANGELOG.md.
+# Deploy to prod is NOT done here: terraform-apply.yml ships main to dev then prod behind the `tf-dev` and `tf-prod` Environment approvals.
+# Token: PRs/tags made with GITHUB_TOKEN do not trigger other workflows, so required CI never runs on the
+# release PR. Set secret RELEASE_PLEASE_TOKEN (fine-grained PAT or GitHub App token: contents + pull-requests write).
+# Without it the fallback below works, but close and reopen the release PR to start CI.
+# Repo setting needed: Actions > "Allow GitHub Actions to create and approve pull requests" (bootstrap-repo.ps1 sets it).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

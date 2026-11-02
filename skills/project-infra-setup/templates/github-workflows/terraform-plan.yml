@@ -1,0 +1,86 @@
+# EXPERIMENTAL (project-infra-setup): validated statically, not yet run against a live GCP project. Prove the gates first.
+name: Terraform Plan
+
+# Runs on every same-repository PR that touches terraform/. Read-only: the planner SA of each environment, no state
+# lock, no write to state. Each job runs in the GitHub Environment plan-<env> (no reviewers, no branch policy), which
+# is where that environment's project, WIF provider and planner SA variables live.
+# The plan uses the image the environment runs now, so it shows only the infrastructure change, never an image change.
+# Fork PRs get no OIDC token and are skipped.
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - 'scripts/tf-ci.sh'
+      - '.github/workflows/terraform-*.yml'
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: tf-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: plan-${{ matrix.env }}
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, prod]
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: api-${{ matrix.env }}
+    defaults:
+      run:
+        shell: bash # explicit bash = `-eo pipefail`; without it `plan | tee` hides a failed plan
+        working-directory: terraform/envs/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.TF_PLANNER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+          terraform_wrapper: false  # keep real exit codes (plan -detailed-exitcode 2 = drift) and raw stdout
+
+      - name: fmt
+        run: terraform fmt -check -recursive ../..
+
+      - name: Require the environment's state to exist
+        run: bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" state-check
+
+      - name: init
+        run: terraform init -input=false -lockfile=readonly # providers exactly as committed in .terraform.lock.hcl
+
+      - name: validate
+        run: terraform validate
+
+      - name: plan
+        id: plan
+        run: |
+          image=$(bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" live-image "$SERVICE" "$REGION" "$PROJECT")
+          echo "image: $image"
+          terraform plan -input=false -lock=false -no-color -var "image=$image" -out=tfplan 2>&1 | tee plan.txt
+          test -s tfplan || { echo "::error::tfplan was not written"; exit 1; }
+
+      - name: Publish plan to the job summary
+        if: always()
+        run: |
+          {
+            echo "### terraform plan: ${{ matrix.env }}"
+            echo '```'
+            tail -c 60000 plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

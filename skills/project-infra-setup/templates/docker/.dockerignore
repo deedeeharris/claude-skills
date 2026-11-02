@@ -1,0 +1,15 @@
+# Copy to the repo root. terraform-apply.yml and preview.yml FAIL if the gha-creds line below is missing.
+# google-github-actions/auth writes gha-creds-*.json into the workspace; `COPY . .` would bake it into the image.
+gha-creds-*.json
+**/gha-creds-*.json
+.git
+.github
+.env*
+**/.env*
+*.tfstate*
+**/*.tfstate*
+.terraform
+**/.terraform
+tfplan
+terraform
+node_modules
