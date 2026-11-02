@@ -25,12 +25,15 @@ Load this when choosing a route for agent work, launching a background session, 
 | Shape | Use it for |
 |---|---|
 | In-session subagent | small, independent reads, research or reviews whose result the PM needs now |
-| Background session | multi-step builds; anything that edits product code |
+| Gated pipeline (default build) | multi-step builds; anything that edits product code |
+| Background session | the fallback build shape, when the gated pipeline cannot be used |
 | Autonomous build launch | a background build that must run to completion without questions |
 | Cross-family review | an audit of finished work by a model family other than the builder's |
 | Optional judge | a yes/no verdict on an artifact against its spec |
 
-The PM never builds in its own session. Work that needs product-code edits always goes to an agent.
+The PM never builds in its own session. Work that needs product-code edits always goes to an agent. The one exception is the `gated-pipeline` route: the PM runs its Workflows in its own session, because the code is written by the agents those Workflows start (delegated workers carry an agent_id, which the PM fence lets write), while the PM itself still edits no product code. A pipeline stage blocks the PM session while it runs; ticks in that time are no-op ticks.
+
+Fall back to a background session only when the `gated-pipeline` skill is not installed, the repo has no `.claude/pipeline.yaml` and the operator declines one, or the job does not fit the pipeline (no code change, a spike, an investigation). Name the reason in the dispatch recommendation.
 
 ## Host routing: Claude Code as PM
 
@@ -39,6 +42,7 @@ Each preferred route is a skill or plugin that may not be installed; the fallbac
 | Shape | Preferred route | Fallback |
 |---|---|---|
 | In-session subagent | `workflow-it` | the Agent tool, with a self-contained brief |
+| Build (default) | `gated-pipeline`, run in the PM session: `mm.py dispatch --route gated-pipeline --worker workflow ...`, then the design, build, verify and land Workflows per that skill; close the dispatch with the last stage's result and `reviewed_sha` | a background session with the autonomous build launch (next rows) |
 | Background session | `bg-it` | `claude --bg --name "<session name>" "<launch> <abs prompt path>"`, run from the repo root with stdin from `/dev/null`; in Git Bash set `MSYS_NO_PATHCONV=1` |
 | Autonomous build launch | `/babysitter:yolo <abs prompt path>`, when the babysitter plugin is installed | a plain prompt that carries the early-stop paragraph from `templates/prompt.md` |
 | Cross-family review | `codex-review` (`node <skills>/codex-review/scripts/run-review.js --kind implementation --uncommitted --repo <repo> --out-dir <dir outside the repo>`; `--kind prd` or `spec` for documents) | `codex-cli`, else `codex exec --sandbox workspace-write -C <repo> "<prompt>"` |
@@ -65,6 +69,7 @@ agy is a dispatch target and a judge, never a PM host. It reads the skill throug
 Probe cheaply before offering a preferred route, and use the fallback when it is missing:
 - Claude Code skills: list the user skills folder (a folder `<name>` is the command `/<name>`);
 - plugins: `claude plugin list` (the babysitter plugin gives `/babysitter:yolo` and `/babysitter:call`);
+- the gated pipeline: the `gated-pipeline` and `codex-review` skill folders, and the repo's `.claude/pipeline.yaml`;
 - CLIs: `codex --version`, `agy --version`, or `mm_preflight.preflight(...)` with the overlay's paths.
 Never launch through a route the probe did not find.
 
@@ -78,6 +83,8 @@ Never launch through a route the probe did not find.
 5. When the work ends, `mm.py dispatch --close <id> --outcome "<one line>"`.
 
 ## Background launch on Claude Code
+
+This section is the fallback build route. A `gated-pipeline` dispatch launches nothing: no template is recorded and `launch-check` refuses it with exit 2.
 
 - Launch template: `/babysitter:yolo <abs prompt path>` by default; the overlay's `launch_override` replaces it. `{prompt}` in it becomes the prompt copy's absolute path, and a template without `{prompt}` is a prefix that the path follows; the dispatch record stores the result as `launch`, the exact text to launch, the path it put there as `prompt_path`, and the folder the launch runs from (the repo holding the task folder) as `launch_cwd`.
 - Session name: `<repo folder> | Agent | <task>`.
