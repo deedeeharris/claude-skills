@@ -1,0 +1,5 @@
+# Replace @OWNER with the operator login (or a team). Last matching pattern wins.
+# Infra and pipeline changes always go through the owner.
+*                       @OWNER
+/terraform/             @OWNER
+/.github/               @OWNER

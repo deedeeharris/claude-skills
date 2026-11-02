@@ -1,0 +1,84 @@
+# EXPERIMENTAL (project-infra-setup): validated statically, not yet run against a live GCP project. Prove the gates first.
+name: Terraform Drift
+
+# Scheduled read-only plan per env (planner SA, Environment plan-<env>). Exit code 2 = real drift. Opens or updates
+# ONE issue per env. Never auto-applies: a hand fix during an incident must not be silently reverted.
+# The plan runs with the image the service runs now, so a hand-changed IMAGE is not reported; every other setting is.
+on:
+  schedule:
+    - cron: '23 5 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: plan-${{ matrix.env }}
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, prod]
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: api-${{ matrix.env }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform/envs/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.TF_PLANNER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+          terraform_wrapper: false  # keep real exit codes (plan -detailed-exitcode 2 = drift) and raw stdout
+
+      - name: Require the environment's state to exist
+        run: bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" state-check
+
+      - run: terraform init -input=false -lockfile=readonly # providers exactly as committed in .terraform.lock.hcl
+
+      - name: plan -detailed-exitcode
+        id: plan
+        run: |
+          image=$(bash "$GITHUB_WORKSPACE/scripts/tf-ci.sh" live-image "$SERVICE" "$REGION" "$PROJECT")
+          set +e
+          terraform plan -input=false -lock=false -no-color -detailed-exitcode -var "image=$image" > plan.txt 2>&1
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          tail -c 60000 plan.txt
+          exit 0
+
+      - name: Any exit code other than 0 (clean) or 2 (drift) is a failure
+        if: steps.plan.outputs.code != '0' && steps.plan.outputs.code != '2'
+        run: |
+          echo "terraform plan failed (exit code ${{ steps.plan.outputs.code }}; only 0 and 2 are valid, e.g. 137 = killed)"
+          exit 1
+
+      - name: Open or update the drift issue
+        if: steps.plan.outputs.code == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Terraform drift: ${{ matrix.env }}"
+          body=$(printf 'Drift detected by run %s/%s/actions/runs/%s\n\n```\n%s\n```\n' \
+            "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}" "$(tail -c 50000 plan.txt)")
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

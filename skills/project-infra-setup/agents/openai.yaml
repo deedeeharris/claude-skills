@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Infra Setup"
+  short_description: "GCP and GitHub infra bootstrap and audit (Terraform, WIF, Cloud Run)"
+  default_prompt: "Use $project-infra-setup to bootstrap production infra for this repository."
