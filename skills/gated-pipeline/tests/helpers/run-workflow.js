@@ -4,10 +4,12 @@
 // the real workflow script runs unchanged and only the hosted agent boundary is scripted.
 // A reply is either a value or a function (prompt, options, calls) => reply, which may be
 // async, so a test can execute what a prompt prescribes and reply with what it observed.
+// From WP1 on every reply is also validated against options.schema with schema-lite.
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
+const { compile } = require('../../scripts/lib/schema-lite');
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const WORKFLOWS = path.join(__dirname, '..', '..', 'workflows');
@@ -18,18 +20,63 @@ function sourceAt(rev, name) {
   return execFileSync('git', ['show', `${rev}:skills/gated-pipeline/workflows/${name}.js`], { cwd: REPO_ROOT, encoding: 'utf8' });
 }
 
+// Every reply is validated against the schema its call declares, as the hosted Workflow tool
+// validates a structured reply: a schema outside the schema-lite subset (a setup error) or a
+// reply that does not conform fails the test. Two escapes, both explicit:
+// - opts.nonConforming: labels whose replies must NOT conform (asserted), for tests of the
+//   workflow's own defence against a malformed relay; the reply is passed through unchanged.
+// - STOP: a reply that ends the run at that call (result: STOPPED) after recording it, for
+//   tests that only read a prompt. It is never handed to the workflow.
+const STOP = Symbol('run-workflow STOP');
+const STOPPED = Object.freeze({ stopped: true });
+const validators = new WeakMap();
+
+function validatorFor(options) {
+  const schema = options.schema;
+  const cacheable = schema !== null && typeof schema === 'object';
+  if (cacheable && validators.has(schema)) return validators.get(schema);
+  let validate;
+  try { validate = compile(schema); } catch (e) {
+    assert.fail(`agent call "${options.label}": its schema is not a schema-lite schema: ${e.message}`);
+  }
+  if (cacheable) validators.set(schema, validate);
+  return validate;
+}
+
+function checkReply(options, value, expectInvalid) {
+  const errors = validatorFor(options)(value);
+  if (expectInvalid) assert.ok(errors.length, `agent call "${options.label}": declared nonConforming, but its reply conforms to its schema`);
+  else assert.deepEqual(errors, [], `agent call "${options.label}": scripted reply does not conform to its schema`);
+}
+
+class Stop extends Error {}
+
 async function run(name, args, replies, opts = {}) {
   const source = (opts.source != null ? opts.source : fs.readFileSync(path.join(WORKFLOWS, name + '.js'), 'utf8'))
     .replace('export const meta =', 'const meta =');
+  const nonConforming = new Set(opts.nonConforming || []);
   const calls = [];
   const queue = [...replies];
   const execute = new AsyncFunction('args', 'agent', 'phase', 'log', source);
-  const result = await execute(args, async (prompt, options) => {
-    calls.push({ prompt, options });
-    assert.ok(queue.length, 'unexpected agent invocation: ' + options.label);
-    const reply = queue.shift();
-    return typeof reply === 'function' ? reply(prompt, options, calls) : reply;
-  }, () => {}, () => {});
+  let stopped = false;
+  let result;
+  try {
+    result = await execute(args, async (prompt, options) => {
+      calls.push({ prompt, options });
+      assert.ok(!stopped, 'agent invoked after STOP: ' + options.label);
+      assert.ok(queue.length, 'unexpected agent invocation: ' + options.label);
+      const reply = queue.shift();
+      const value = await (typeof reply === 'function' ? reply(prompt, options, calls) : reply);
+      if (value === STOP) { stopped = true; throw new Stop(); }
+      if (options.schema !== undefined) checkReply(options, value, nonConforming.has(options.label));
+      else assert.ok(!nonConforming.has(options.label), `agent call "${options.label}": declared nonConforming but has no schema`);
+      return value;
+    }, () => {}, () => {});
+  } catch (e) {
+    // A workflow could catch the Stop itself; `stopped` is what counts, and any other error propagates.
+    if (!(e instanceof Stop)) throw e;
+  }
+  if (stopped) return { result: STOPPED, calls };
   return { result, calls };
 }
 
@@ -48,4 +95,4 @@ function pollLimit(prompt) {
   return Number(m[1]);
 }
 
-module.exports = { run, sourceAt, gpBlocks, pollLimit, REPO_ROOT };
+module.exports = { run, sourceAt, gpBlocks, pollLimit, REPO_ROOT, STOP, STOPPED };

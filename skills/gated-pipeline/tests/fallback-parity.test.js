@@ -187,7 +187,9 @@ const CLEAN = { verdict: 'PASS', verdict_reasons: ['no triggering findings'], fi
   validation_outcome: 'skipped', run_dir: '/state/x/prd-1', result_sha256: digest, confirmed_findings: [], other_findings: [], codex_available: true };
 const UNAVAILABLE = { verdict: 'ERROR', verdict_reasons: [], findings: [], model_verdict: null, outcome: null, unable_to_review: null, validation_outcome: null,
   run_dir: null, result_sha256: null, confirmed_findings: [], other_findings: [], codex_available: false, note: 'codex: command not found' };
-const STOP = { blocked: true, blocked_reason: 'the parity test stops after the first revise/fix prompt' };
+// The reply to the first revise/fix call: it stops the stage and conforms to both design's DOC and
+// build's WORK schema (run-workflow.js validates every reply against the call's schema).
+const STOP = { blocked: true, blocked_reason: 'the parity test stops after the first revise/fix prompt', summary: 'stopped', path: '', files_changed: [], commit: '' };
 const freeze = { blocked: false, spec_sha256: 'd'.repeat(64), manifest_sha256: digest };
 const work = { blocked: false, summary: 'done', files_changed: ['app.js'], commit: sha, base_commit: base };
 const changed = { head_sha: sha, changed: [{ status: 'M', path: 'app.js' }] };
@@ -284,7 +286,7 @@ const unavailableV1 = { verdict: 'ERROR', confirmed_findings: [], verdict_reason
 test('before (c186e5f): a lone non-ISO design MAJOR 0.9 from the Opus fallback passed with no PRD revise round', async () => {
   const major = { severity: 'MAJOR', confidence: 0.9, iso_property: null, location: 'x', title: 'one', detail: 'd' };
   const { result, calls } = await run('design', { ...designArgs, max_rounds: 3 },
-    [{ blocked: false }, unavailableV1, { findings: [major] }, { blocked: false }, unavailableV1, { findings: [] }, freeze], { source: sourceAt(BASE_REV, 'design') });
+    [{ blocked: false, path: '/state/design/prd.md', summary: 'ok' }, unavailableV1, { findings: [major] }, { blocked: false, path: '/state/design/spec.md', summary: 'ok' }, unavailableV1, { findings: [] }, freeze], { source: sourceAt(BASE_REV, 'design') });
   assert.equal(result.status, 'PASS');
   assert.ok(!calls.some(c => c.options.label === 'prd revise 1'));
 });
@@ -301,20 +303,23 @@ test('before (c186e5f): a 0.6 build MAJOR from the Opus fallback was BLOCKED as 
 const codexFinding = (kind, status) => ({ id: 'F1', severity: 'MAJOR', confidence: 0.9, iso_property: kind === 'implementation' ? null : 'incomplete',
   validation_status: status, claim: 'gap', evidence: 'quoted', location: { file: 'app.js', line: 1, section: null } });
 const without = (o, k) => { const c = { ...o }; delete c[k]; return c; };
+// Rows marked out-of-schema break the relay schema itself; the hosted tool would refuse them, and
+// run-workflow.js asserts they do not conform (nonConforming), so they test the workflow's own defence.
 const BAD = kind => [
   ['an old-style reply (buckets and verdict, no findings)', { verdict: 'FAIL', verdict_reasons: [`F1 MAJOR conf 0.9 (${kind})`], codex_available: true,
-    confirmed_findings: [{ severity: 'MAJOR', title: 'gap', location: 'x', detail: 'd' }], other_findings: [] }],
+    confirmed_findings: [{ severity: 'MAJOR', title: 'gap', location: 'x', detail: 'd' }], other_findings: [] }, 'out-of-schema'],
   ['a verdict inconsistent with its findings (PASS over a confirmed trigger)', { ...CLEAN, findings: [codexFinding(kind, 'confirmed')], model_verdict: 'FAIL' }],
   ['a verdict inconsistent with its findings (FAIL over none)', { ...CLEAN, verdict: 'FAIL', model_verdict: 'FAIL' }],
-  ['a reply without findings', without(CLEAN, 'findings')],
-  ['a reply without model_verdict', without(CLEAN, 'model_verdict')],
+  ['a reply without findings', without(CLEAN, 'findings'), 'out-of-schema'],
+  ['a reply without model_verdict', without(CLEAN, 'model_verdict'), 'out-of-schema'],
   ['unable_to_review relayed as PASS', { ...CLEAN, unable_to_review: 'the artifact could not be read' }],
   ['a timeout outcome relayed as PASS', { ...CLEAN, outcome: 'timeout' }],
 ];
 for (const [name, kind] of [['design', 'prd'], ['design', 'spec'], ['build', 'implementation'], ['verify', 'implementation']]) {
-  for (const [what, reply] of BAD(kind)) {
+  const label = name === 'design' ? `codex ${kind} review 1` : name === 'build' ? 'codex review 1' : 'codex final review';
+  for (const [what, reply, outOfSchema] of BAD(kind)) {
     test(`relay consistency (${name} ${kind}): ${what} is BLOCKED`, async () => {
-      const out = await stage(name, kind, 'codex', reply);
+      const out = await stage(name, kind, 'codex', reply, outOfSchema ? { nonConforming: [label] } : {});
       assert.equal(out.transition, 'BLOCKED');
       assert.equal(out.opus, 0, 'no Opus call');
     });
@@ -369,7 +374,7 @@ test('run-workflow.js gives the same calls and result as workflows.test.js run()
   const original = new Function('fs', 'path', 'assert', 'AsyncFunction', '__dirname',
     `return (${text.slice(start, text.indexOf('\n}\n', start) + 2)})`)(fs, path, assert, AsyncFunction, __dirname);
   const args = { ...designArgs, review_fallback: undefined };
-  const replies = () => [{ blocked: false }, CLEAN, { blocked: false }, CLEAN, freeze];
+  const replies = () => [{ blocked: false, path: '/state/design/prd.md', summary: 'ok' }, CLEAN, { blocked: false, path: '/state/design/spec.md', summary: 'ok' }, CLEAN, freeze];
   const a = await original('design', args, replies());
   const b = await run('design', args, replies());
   assert.equal(a.result.status, 'PASS');

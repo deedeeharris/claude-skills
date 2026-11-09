@@ -17,7 +17,7 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
 const { test, describe, after } = require('node:test');
-const { run, gpBlocks, pollLimit } = require('./helpers/run-workflow');
+const { run, gpBlocks, pollLimit, STOP } = require('./helpers/run-workflow');
 
 const SKILLS = path.resolve(__dirname, '..', '..');
 const RUNNER = path.join(SKILLS, 'codex-review', 'scripts', 'run-review.js');
@@ -225,7 +225,7 @@ test('deadline premise: the worst runner path stays inside the relay wait at the
   // At the default timeout this bound fits inside the wait the review relays prescribe.
   const { calls } = await run('build', { feature_id: 'f', repo: '/repo', work_branch: 'w', run_dir: '/state/build', review_runner: '/skill/scripts/run-review.js',
     suite_cmd: 'true', security_schema: '/skill/security.schema.json', spec_path: '/state/spec.md' },
-  [{ blocked: false, summary: 's', files_changed: ['a.js'], commit: 'a'.repeat(40), base_commit: 'c'.repeat(40) }, { blocked: true }]);
+  [{ blocked: false, summary: 's', files_changed: ['a.js'], commit: 'a'.repeat(40), base_commit: 'c'.repeat(40) }, STOP]);
   const p = calls[1].prompt;
   const TIMEOUT_S = Number(p.match(/--timeout-seconds (\d+)/)[1]);
   const minutes = Number(p.match(/up to ~(\d+) minutes/)[1]);
@@ -243,11 +243,11 @@ test('the raw codex exec relays: the hard process timeout fits inside their stat
     run_dir: '/x', result_sha256: digest, codex_available: true, head_sha: sha };
   const b = await run('build', { feature_id: 'f', repo: '/repo', work_branch: 'w', run_dir: '/state/build', review_runner: '/skill/scripts/run-review.js',
     suite_cmd: 'true', security_schema: '/skill/security.schema.json', spec_path: '/state/spec.md' },
-  [{ blocked: false, summary: 's', files_changed: ['app.js'], commit: sha, base_commit: base }, { ...clean, changed: [{ status: 'M', path: 'app.js' }] }, { blocked: true }]);
+  [{ blocked: false, summary: 's', files_changed: ['app.js'], commit: sha, base_commit: base }, { ...clean, changed: [{ status: 'M', path: 'app.js' }] }, STOP]);
   const v = await run('verify', { feature_id: 'f', repo: '/repo', work_branch: 'w', run_dir: '/state/verify', review_runner: '/skill/scripts/run-review.js',
     spec_path: '/state/spec.md', compliance_schema: '/skill/compliance.schema.json', base_commit: base, reviewed_sha: sha, completion_runner: '/skill/scripts/check-completion.js',
     manifest_path: '/state/plan.json', manifest_sha256: digest, build_result_path: '/state/build.json' },
-  [{ passed: true, manifest_sha256: digest, spec_sha256: digest, reviewed_sha: sha }, { blocked: false, ledger_path: '/state/verify/acceptance-ledger.json', ...pinned }, clean, { blocked: true }]);
+  [{ passed: true, manifest_sha256: digest, spec_sha256: digest, reviewed_sha: sha }, { blocked: false, ledger_path: '/state/verify/acceptance-ledger.json', ...pinned }, clean, STOP]);
   const prompts = [b.calls.find(x => x.options.label === 'codex security 1'), v.calls.find(x => x.options.label === 'codex spec compliance')];
   for (const c of prompts) {
     const [, kill, limit] = c.prompt.match(/timeout --kill-after=(\d+) (\d+) codex exec/).map(Number);
