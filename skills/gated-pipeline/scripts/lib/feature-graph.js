@@ -1,7 +1,7 @@
 'use strict';
 
 // Graph and cross-field rules of the v2 canonical feature file: docs/v2-design.md section 3, tables
-// 4 (G01-G39), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
+// 4 (G01-G40), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
 // { code, rule, path, id, message }; path is a JSON Pointer into the checked file (for P01 the collection in
 // the checked file where the missing id belongs). The functions assume a schema-valid file (validate-feature.js
 // runs them only after schema-lite passed) and never execute or evaluate any string of the file.
@@ -33,9 +33,15 @@
 // - G34's owned candidates only add a diagnostic of their own when G36 also fails: an owned path inside an
 //   allowed path overlaps every state path it overlaps through that allowed path;
 // - R01 normalizes one trailing LF or CRLF on both sides (source_request.text holds no CR, G31; a request
-//   file saved with CRLF line ends still mismatches on any inner CRLF).
+//   file saved with CRLF line ends still mismatches on any inner CRLF);
+// - G40 uses the worst cases of scripts/lib/call-limits.js, the same the build and verify preflights use: the suite
+//   always, each applicable check, one proof when an active runtime acceptance with live false exists, and the
+//   negative-control bound when an active isolated_mutation exists (reported only when one proof fits, since a
+//   proof that cannot fit already makes every control unfit). Paths: /suite/timeout_min, the check's budget_min
+//   (when > 0) or timeout_min, /limits/proof_timeout_s, and /limits for the negative control (both limits bound it).
 
 const crypto = require('node:crypto');
+const { ONE_CALL_S, RUN_GRACE_S, suiteWorstS, checkWorstS, proofWorstS, negativeWorstS } = require('./call-limits.js');
 
 const SHADOW = /-(fix|v2|final|new|addendum|patch|rev[0-9]+)(?![A-Za-z0-9])/i;
 const CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029]/u;
@@ -101,7 +107,7 @@ const folded = p => segs(p.toLowerCase());
 const overlap = (a, b) => { const x = folded(a), y = folded(b); return isPrefix(x, y) || isPrefix(y, x); }; // case folded
 const inside = (a, b) => isPrefix(segs(b), segs(a)); // a equal to or inside b, exact case
 
-// ---- G01-G39 -------------------------------------------------------------------------------------------
+// ---- G01-G40 -------------------------------------------------------------------------------------------
 
 function checkRepoPath(f, repoPath) {
   const out = [];
@@ -304,6 +310,25 @@ function graphRules(f, { repoPath }) {
     else if (typeof f.suite[k] === 'string' && blank(f.suite[k])) out.push(diag('E_PROOF', 'G20', `/suite/${k}`, null, `suite ${k} is empty or only whitespace`));
   }
   f.suite.known_failures.forEach((k, i) => { if (blank(k.reason)) out.push(diag('E_REASON_MISSING', 'G29', `/suite/known_failures/${i}/reason`, null, `known failure ${JSON.stringify(k.test_id)} has no reason`)); });
+  // G40 a frozen run whose worst case cannot finish inside one foreground Bash call (scripts/lib/call-limits.js)
+  const overCall = (at, id, what, seconds) => {
+    if (seconds > ONE_CALL_S) out.push(diag('E_LIMIT', 'G40', at, id, `${what} can take up to ${seconds} s, more than one foreground Bash call allows (${ONE_CALL_S} s, each run counted as its limit + ${RUN_GRACE_S} s)`));
+  };
+  const setup = typeof f.suite.setup_command === 'string';
+  overCall('/suite/timeout_min', null, `the suite (${setup ? 'setup and suite, each ' : ''}timeout_min ${f.suite.timeout_min})`, suiteWorstS(f.suite));
+  f.checks.forEach((c, i) => {
+    if (c.applicable !== true || (!(c.budget_min > 0) && !has(c, 'timeout_min'))) return; // G28 reports a missing timeout_min
+    const byBudget = c.budget_min > 0;
+    overCall(`/checks/${i}/${byBudget ? 'budget_min' : 'timeout_min'}`, c.id, `check ${c.id} (${byBudget ? `budget_min ${c.budget_min}` : `timeout_min ${c.timeout_min}`})`, checkWorstS(c));
+  });
+  const activeAcc = items.filter(x => x.cat === 'ACC' && x.active && x.parent.status === 'active');
+  const proofs = activeAcc.some(x => x.obj.verification.kind === 'runtime' && x.obj.verification.live !== true);
+  const controls = activeAcc.some(x => x.obj.negative_control.method === 'isolated_mutation');
+  if (proofs && proofWorstS(f.limits) > ONE_CALL_S) overCall('/limits/proof_timeout_s', null, `one acceptance proof (proof_timeout_s ${f.limits.proof_timeout_s})`, proofWorstS(f.limits));
+  else if (controls) {
+    overCall('/limits', null, `a negative control (${setup ? 'setup, ' : ''}baseline and mutated run, each proof_timeout_s ${f.limits.proof_timeout_s}, within negative_controls_total_min ${f.limits.negative_controls_total_min})`,
+      negativeWorstS(f.limits, setup));
+  }
   // G31 control characters, G39 migration marker
   walkStrings(f, '', (s, p) => {
     if (CONTROL.test(s)) out.push(diag('E_CONTROL_CHAR', 'G31', p, null, 'string holds a forbidden control or line-separator character'));

@@ -199,6 +199,7 @@ string from the file (proof commands are data).
    | G37 | test path overlapping an owned path (tests live outside the code a mutation may touch) | `E_OWNERSHIP` |
    | G38 | `--repo-path` basename/feature_id mismatch, or `features_dir` unsafe or under `.git/` | `E_SCOPE` |
    | G39 | the literal `MIGRATION-TODO` anywhere (section 8) | `E_MIGRATION_TODO` |
+   | G40 | a frozen run whose worst case cannot finish inside one foreground Bash call (section 6.4: 570 s, each run counted as its limit + 15 s; `scripts/lib/call-limits.js`): the suite (setup and suite when `setup_command` is set, each `suite.timeout_min`), an applicable check (`budget_min` when > 0, else `timeout_min`), one runtime proof (`proof_timeout_s`, when an active runtime acceptance with `live: false` exists), a negative control (setup when set, baseline and mutated run, each `proof_timeout_s`, capped by `negative_controls_total_min`, when an active `isolated_mutation` exists and one proof fits) | `E_LIMIT` |
 5. `--source-request <file>` (the design stage always passes it, with `--source-mode`, default
    `text`):
 
@@ -547,14 +548,24 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   the Bash timeout 600000 ms, the tool's maximum. Before a step starts, the stage BLOCKS when
   its worst case cannot finish inside that call (570 s, each run counted as its limit + 15 s):
   build at preflight for the suite (setup and suite, each `suite.timeout_min`); verify at the
-  plan preflight for a check (`budget_min` when > 0, else `timeout_min`), the proofs block
-  (every runtime proof x `proof_timeout_s`) and each negative control (setup when set,
-  baseline and mutated run, each `proof_timeout_s`, capped by `negative_controls_total_min`).
+  plan preflight for a check (`budget_min` when > 0, else `timeout_min`), one runtime proof
+  (`proof_timeout_s`) and each negative control (setup when set, baseline and mutated run,
+  each `proof_timeout_s`, capped by `negative_controls_total_min`). Each of these is one
+  `run-frozen.js` invocation, which cannot be split; the validator's rule G40 (section 3)
+  rejects a canonical file where any of them cannot fit, so design never freezes such a plan,
+  and the stage checks stay as a second line. The bound lives in `scripts/lib/call-limits.js`;
+  the workflows carry the same two constants (a test compares them).
 - Checks: each check agent waits for a quiet machine when `quiet`, then runs
   `run-frozen.js --target check:<ID>`; evidence paths use the check `id`; the agent reports
-  `record_path`, `record_sha256` and the pinned-state fields. One agent then runs
-  `--target proof:<id>` for every id in `runtime_acceptance_ids` and `--target live:<id>` for
-  every live acceptance.
+  `record_path`, `record_sha256` and the pinned-state fields. The acceptance proofs then run
+  in sequential batches, each its own agent call and gp-exec block: `--target proof:<id>` for
+  the ids of `runtime_acceptance_ids` in manifest order, as many to a batch as fit one call
+  (`floor(570 / (proof_timeout_s + 15))`), and `--target live:<id>` for every live acceptance
+  (it executes nothing) after the last proof, in the last batch. Every batch appends to the
+  same acceptance ledger and prints its hash; the last batch's hash is the ledger's, every
+  proof and live record must be printed by some batch, and a batch that fails or is refused
+  stops verify as a single block would. With no proof and no live acceptance one block writes
+  the empty ledger.
 - Final review and compliance trace: `review_files[]` as in build, steps `final` and
   `compliance` (codex `compliance.json` or the wrapped fallback reply).
 - Negative-control phase: runs LAST, after checks, acceptance proofs, final review and the

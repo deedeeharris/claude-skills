@@ -368,6 +368,8 @@ const EXEC_NOTE = 'Run the gp-exec block below verbatim with the Bash tool, in t
   'Do not run anything else, and do not fix, retry or work around a failure.\n'
 // One foreground Bash call ends at 600 s at most; each frozen run inside it may take its limit plus run-frozen.js's 10 s kill
 // grace. A step that cannot finish inside one call BLOCKS before it starts (a killed call would lose its record).
+// The same bound as scripts/lib/call-limits.js (validator rule G40, which keeps such limits from being frozen); a
+// workflow cannot require a module, so tests/feature-validate.test.js keeps these copies equal to it.
 const ONE_CALL_S = 570
 const RUN_GRACE_S = 15
 const overCall = (label, seconds) => seconds > ONE_CALL_S ? `${label} can take up to ${seconds} s and cannot finish inside one foreground Bash call (600 s); shorten its frozen limit` : ''

@@ -332,6 +332,8 @@ const EXEC_NOTE = 'Run the gp-exec block below verbatim with the Bash tool, in t
   'Do not run anything else, and do not fix, retry or work around a failure.\n'
 // One foreground Bash call ends at 600 s at most; each frozen run inside it may take its limit plus run-frozen.js's 10 s kill
 // grace. A step that cannot finish inside one call BLOCKS before it starts (a killed call would lose its record).
+// The same bound as scripts/lib/call-limits.js (validator rule G40, which keeps such limits from being frozen); a
+// workflow cannot require a module, so tests/feature-validate.test.js keeps these copies equal to it.
 const ONE_CALL_S = 570
 const RUN_GRACE_S = 15
 const overCall = (label, seconds) => seconds > ONE_CALL_S ? `${label} can take up to ${seconds} s and cannot finish inside one foreground Bash call (600 s); shorten its frozen limit` : ''
@@ -438,7 +440,8 @@ if (C2) {
   const negRuns = p.suite_setup ? 3 : 2 // setup (when set), the baseline and the mutated run, each bounded by proof_timeout_s
   const tooLong = [
     ...p.checks.map(c => overCall(`check ${c.id} (${c.budget_min > 0 ? `budget_min ${c.budget_min}` : `timeout_min ${c.timeout_min}`})`, run1((c.budget_min > 0 ? c.budget_min : c.timeout_min) * 60))),
-    overCall(`acceptance proofs (${p.runtime_acceptance_ids.length} x proof_timeout_s ${L.proof_timeout_s}, in one block)`, p.runtime_acceptance_ids.length * run1(L.proof_timeout_s)),
+    // The proofs run in batches that each fit one call (below), so only one proof has to fit.
+    p.runtime_acceptance_ids.length ? overCall(`an acceptance proof (proof_timeout_s ${L.proof_timeout_s}, one run-frozen.js run)`, run1(L.proof_timeout_s)) : '',
     ...p.negative_controls.map(n => overCall(`negative control ${n.id} (${negRuns} runs x proof_timeout_s ${L.proof_timeout_s}, within negative_controls_total_min ${L.negative_controls_total_min})`,
       Math.min(negRuns * run1(L.proof_timeout_s), L.negative_controls_total_min * 60 + negRuns * RUN_GRACE_S))),
   ].filter(Boolean)
@@ -467,22 +470,34 @@ if (C2) {
   if (failedChecks.length) return disclose({ status: 'INCOMPLETE', stage: 'checks', reason: 'frozen check(s) failed: ' + failedChecks.map(c => `${c.check_id} exit ${c.exit_code}${c.timed_out ? ' (timed out)' : ''}`).join(', '), checks })
 
   phase('Acceptance proofs')
+  // The proofs run in sequential batches, each its own agent call and gp-exec block, packed in manifest order so that
+  // a batch's worst case (its proof count x one proof's limit + grace) fits one foreground Bash call. Every batch
+  // appends to the same ledger through run-frozen.js and prints its hash; the last batch's hash is the ledger's. The
+  // live links execute nothing and follow the last proof, in manifest order, in the last batch.
   const ledger = `${A.run_dir}/acceptance-ledger.json`
-  const proofLines = [
-    ...p.runtime_acceptance_ids.map(id => runFrozen(`proof:${id}`, frozenRuns, ` --ledger ${q(ledger)}`)),
-    ...p.live_acceptances.map(x => runFrozen(`live:${x.id}`, frozenRuns, ` --ledger ${q(ledger)}`)),
-  ]
-  const proofs = await agent(
-    `Record the acceptance evidence of feature ${A.feature_id} with run-frozen.js: every runtime proof runs exactly its frozen command on the pinned reviewed commit and is appended to the acceptance ledger ${ledger}; ` +
-    `a live acceptance executes nothing and only links the record of the check that ran it. Do not make live or paid calls here. ${EXEC_NOTE}` +
-    frozenBlock([...(proofLines.length ? proofLines : [writeJsonBlock(ledger, { version: 2, entries: [] })]), `sha256sum ${q(ledger)}`]) + `\n- ${RULES}`,
-    { label: 'acceptance proofs', phase: 'Acceptance proofs', effort: 'low', schema: EXEC })
-  if (!proofs || proofs.blocked || proofs.exit_code !== 0) return refusedStatus(proofs, 'acceptance proofs', 'run-frozen.js refused a proof or live link', { proofs, checks })
+  const perBatch = Math.max(1, Math.floor(ONE_CALL_S / run1(L.proof_timeout_s)))
+  const batches = []
+  for (let i = 0; i < p.runtime_acceptance_ids.length; i += perBatch) batches.push(p.runtime_acceptance_ids.slice(i, i + perBatch).map(id => runFrozen(`proof:${id}`, frozenRuns, ` --ledger ${q(ledger)}`)))
+  const liveLines = p.live_acceptances.map(x => runFrozen(`live:${x.id}`, frozenRuns, ` --ledger ${q(ledger)}`))
+  if (!batches.length) batches.push([])
+  batches[batches.length - 1].push(...liveLines)
+  const proofRuns = []
+  let proofs = null
+  for (const [i, lines] of batches.entries()) {
+    const part = batches.length > 1 ? ` (batch ${i + 1} of ${batches.length}; every batch appends to the same ledger)` : ''
+    proofs = await agent(
+      `Record the acceptance evidence of feature ${A.feature_id} with run-frozen.js${part}: every runtime proof runs exactly its frozen command on the pinned reviewed commit and is appended to the acceptance ledger ${ledger}; ` +
+      `a live acceptance executes nothing and only links the record of the check that ran it. Do not make live or paid calls here. ${EXEC_NOTE}` +
+      frozenBlock([...(lines.length ? lines : [writeJsonBlock(ledger, { version: 2, entries: [] })]), `sha256sum ${q(ledger)}`]) + `\n- ${RULES}`,
+      { label: `acceptance proofs ${i + 1}`, phase: 'Acceptance proofs', effort: 'low', schema: EXEC })
+    if (!proofs || proofs.blocked || proofs.exit_code !== 0) return refusedStatus(proofs, 'acceptance proofs', `run-frozen.js refused a proof or live link (batch ${i + 1} of ${batches.length})`, { proofs, proof_batches: proofRuns, checks })
+    proofRuns.push(proofs)
+  }
   const ledgerSha = shaOf(proofs.stdout, ledger)
-  const proofPrinted = jsonLines(proofs.stdout)
+  const proofPrinted = proofRuns.flatMap(r => jsonLines(r.stdout))
   const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => o.record_path === `${frozenRuns}/proof:${id}.record.json`)),
     ...p.live_acceptances.filter(x => !proofPrinted.some(o => o.linked === true && o.record_path === `${frozenRuns}/check:${x.check_id}.record.json`)).map(x => x.id)]
-  if (!HEX64.test(ledgerSha || '') || missingProof.length) return disclose({ status: 'BLOCKED', stage: 'acceptance proofs', reason: 'the ledger hash or a proof record was not printed: ' + missingProof.join(', '), proofs, checks })
+  if (!HEX64.test(ledgerSha || '') || missingProof.length) return disclose({ status: 'BLOCKED', stage: 'acceptance proofs', reason: 'the ledger hash or a proof record was not printed: ' + missingProof.join(', '), proofs, proof_batches: proofRuns, checks })
   const acceptance = { path: ledger, sha256: ledgerSha }
 
   phase('Final review')
