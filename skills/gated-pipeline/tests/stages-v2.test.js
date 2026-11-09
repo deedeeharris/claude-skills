@@ -472,6 +472,14 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       // the negative control ran after every other piece of evidence was captured
       const negIndex = labels(v.calls).indexOf('negative control HELLO-001-AC1');
       assert.ok(negIndex > labels(v.calls).indexOf('codex spec compliance'));
+      // the negative-control prompt names the manifest FILE hash and the mutation STRING hash separately, and the
+      // stated mutation hash really is the hash of that string (a live run read an ambiguous "its bytes hash to" as the file)
+      const negPrompt = v.calls[negIndex].prompt;
+      const manifest = JSON.parse(fs.readFileSync(c.manifestPath, 'utf8'));
+      const mutation = manifest.requirements.find(x => x.id === 'HELLO-001-AC1').negative_control.mutation;
+      assert.ok(negPrompt.includes(`the manifest FILE hashes to ${c.manifestSha}`), negPrompt.slice(0, 1200));
+      assert.ok(negPrompt.includes(`the mutation STRING itself`) && negPrompt.includes(`hashes to ${sha256(Buffer.from(mutation, 'utf8'))}`), negPrompt.slice(0, 1200));
+      assert.ok(!/its UTF-8 bytes hash to/.test(negPrompt));
       // the check records are run-frozen's, with the manifest's commands
       for (const e of r.check_records) {
         const rec = JSON.parse(fs.readFileSync(e.record_path, 'utf8'));
