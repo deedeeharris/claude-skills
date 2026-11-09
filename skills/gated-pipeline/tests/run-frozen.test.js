@@ -273,6 +273,51 @@ test('git apply --numstat lists the paths a smuggling patch really touches, and 
   assert.deepEqual(checkedPatchPaths(c.repo, good, fs.readFileSync(good)), ['src/hello.js', 'src/new.js']);
 });
 
+// Review fix: `git diff` of a content-only edit to an executable file writes `index <a>..<b> 100755`; the mode is
+// unchanged, so the patch is a plain mutation. Symlinks (120000) and gitlinks (160000) stay refused.
+test('negative-control patch derivation accepts an unchanged 100755 index line and refuses 120000 and 160000', () => {
+  const { patchPaths } = require('../scripts/run-frozen.js');
+  const edit = mode => Buffer.from(`diff --git a/bin/run.sh b/bin/run.sh\nindex de98044..7be73ce${mode}\n--- a/bin/run.sh\n+++ b/bin/run.sh\n@@ -1 +1 @@\n-echo hi\n+echo bye\n`);
+  assert.deepEqual(patchPaths(edit(' 100755')), ['bin/run.sh']);
+  assert.deepEqual(patchPaths(edit(' 100644')), ['bin/run.sh']);
+  assert.deepEqual(patchPaths(edit('')), ['bin/run.sh']);
+  assert.throws(() => patchPaths(edit(' 120000')), /symlink or submodule/);
+  assert.throws(() => patchPaths(edit(' 160000')), /symlink or submodule/);
+  assert.throws(() => patchPaths(edit(' 100700')), /unsupported line/);
+});
+
+test('a git-generated patch editing an executable owned file runs as a negative control', t => {
+  const f = baseFeature();
+  const c = makeRepo(t, { feature: f });
+  c.freeze();
+  c.implement(undefined, ['src/hello.js']);
+  const text = c.gitDiff('src/hello.js', "module.exports = () => 'goodbye';\n");
+  assert.match(text, /^index [0-9a-f]+\.\.[0-9a-f]+ 100755$/m, 'git writes the executable mode on the index line');
+  const dir = path.join(c.run, 'negative', 'HELLO-001-AC1');
+  const r = c.runFrozen('negative:HELLO-001-AC1', { outDir: dir, patch: c.patchFile('HELLO-001-AC1', text) });
+  assert.equal(r.status, 0, r.stderr);
+  const rec = record(r);
+  assert.equal(rec.baseline_exit_code, 0);
+  assert.equal(rec.exit_code, 1);
+  assert.deepEqual(rec.mutated_paths, ['src/hello.js']);
+});
+
+// Review fix: the patch is read once; git applies those bytes, not whatever sits at --patch after the baseline.
+// The setup command (run before the baseline) swaps the --patch file for a weak no-op patch.
+test('a negative control applies the bytes it hashed, even if the --patch file is swapped during the run', t => {
+  const c = frozenRepo(t, f => { f.suite.setup_command = 'if [ -f ../swap.patch ]; then cp ../swap.patch ../mutation.patch; fi'; });
+  const dir = path.join(c.run, 'negative', 'HELLO-001-AC1');
+  const patch = c.patchFile('HELLO-001-AC1', c.MUTATION);
+  fs.writeFileSync(path.join(dir, 'swap.patch'), NOOP_HELLO);
+  const r = c.runFrozen('negative:HELLO-001-AC1', { outDir: dir, patch });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.readFileSync(patch, 'utf8'), NOOP_HELLO, 'the setup command did swap the file');
+  const rec = record(r);
+  assert.equal(rec.exit_code, 1, 'the hashed mutation, not the swapped no-op, was applied');
+  assert.equal(rec.mutation_patch_sha256, sha256(Buffer.from(c.MUTATION)));
+  assert.deepEqual(rec.mutated_paths, ['src/hello.js']);
+});
+
 test('a negative control records the limit applied to its mutated run', t => {
   const c = frozenRepo(t, f => { f.limits.proof_timeout_s = 30; });
   const dir = path.join(c.run, 'negative', 'HELLO-001-AC1');

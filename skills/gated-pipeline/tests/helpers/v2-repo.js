@@ -249,8 +249,10 @@ function makeRepo(t, opts = {}) {
   };
 
   // ---- build/verify side ----------------------------------------------------------------------------------
-  c.implement = (files = IMPL_FILES) => {
+  // `executable` lists files committed with mode 100755 (an owned bin/*.sh script).
+  c.implement = (files = IMPL_FILES, executable = []) => {
     for (const [rel, content] of Object.entries(files)) c.write(rel, content);
+    for (const rel of executable) fs.chmodSync(path.join(repo, rel), 0o755);
     c.git('add', '--', ...Object.keys(files));
     c.git('commit', '-qm', 'implementation');
     c.reviewedSha = c.git('rev-parse', 'HEAD');
@@ -272,6 +274,15 @@ function makeRepo(t, opts = {}) {
     fs.writeFileSync(file, text);
     return file;
   };
+  // The patch `git diff` itself writes for replacing <rel>'s content (index line and mode included); the
+  // checkout is restored afterwards.
+  c.gitDiff = (rel, content) => {
+    c.write(rel, content);
+    const r = c.exec('git', ['diff', '--', rel]);
+    assert.equal(r.status, 0, r.stderr);
+    c.git('checkout', '--', rel);
+    return r.stdout;
+  };
   c.MUTATION = "diff --git a/src/hello.js b/src/hello.js\n--- a/src/hello.js\n+++ b/src/hello.js\n@@ -1 +1 @@\n-module.exports = () => 'hello';\n+module.exports = () => 'goodbye';\n";
   return c;
 }
@@ -280,7 +291,7 @@ function makeRepo(t, opts = {}) {
 function completeRun(t, opts = {}) {
   const c = makeRepo(t, opts);
   c.freeze(opts.freeze || {});
-  c.implement(opts.implFiles);
+  c.implement(opts.implFiles, opts.executable);
   const ok = (r, what) => { assert.equal(r.status, 0, `${what}: ${r.stdout}${r.stderr}`); return r.json(); };
   const preflightPath = path.join(c.run, 'build', 'design-preflight.json');
   fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
@@ -290,7 +301,7 @@ function completeRun(t, opts = {}) {
   const checks = ['CHECK-LINT', 'CHECK-LIVE'].map(id => ({ check_id: id, ...pick(ok(c.runFrozen('check:' + id), id), ['record_path', 'record_sha256']) }));
   ok(c.runFrozen('proof:HELLO-001-AC1'), 'proof');
   ok(c.runFrozen('live:HELLO-001-AC2'), 'live');
-  const neg = ok(c.runFrozen('negative:HELLO-001-AC1', { outDir: path.join(c.run, 'negative', 'HELLO-001-AC1'), patch: c.patchFile('HELLO-001-AC1', opts.mutation || c.MUTATION), env: opts.runEnv }), 'negative');
+  const neg = ok(c.runFrozen('negative:HELLO-001-AC1', { outDir: path.join(c.run, 'negative', 'HELLO-001-AC1'), patch: c.patchFile('HELLO-001-AC1', typeof opts.mutation === 'function' ? opts.mutation(c) : opts.mutation || c.MUTATION), env: opts.runEnv }), 'negative');
   const head = c.reviewedSha;
   const state = () => ({ head_before: head, status_before: [], head_after: head, status_after: [] });
   // review files (mocked model steps; script-hashed)

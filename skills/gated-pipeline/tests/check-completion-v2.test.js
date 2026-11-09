@@ -792,6 +792,26 @@ test('reviews: a security PASS whose raw file holds a high finding is exit 1', t
   blocked(c.completion(), 'E_REVIEW', /security verdict PASS differs/);
 });
 
+// Review fix: the blocking set is every critical or high finding of findings AND blocking, so an empty findings list
+// cannot hide a high entry of blocking (the fallback security reply schema puts its findings in blocking).
+test('reviews: a security PASS whose raw file holds a high finding in blocking next to an empty findings list is exit 1', t => {
+  const c = completeRun(t);
+  c.editRecord(entryOf(c.build.review_files, 'security'), r => { r.findings = []; r.blocking = [{ severity: 'high', file: 'src/hello.js', line: 1, title: 'leak' }]; }, 'raw_path', 'raw_sha256');
+  blocked(c.completion(), 'E_REVIEW', /security verdict PASS differs/);
+});
+
+test('reviews: a wrapped fallback security reply with findings [] and a high blocking entry is exit 1', t => {
+  const c = completeRun(t);
+  const old = entryOf(c.build.review_files, 'security');
+  const raw = c.writeJson(path.join(old.review_dir, 'fallback-security.json'), { gate_kind: 'security', reviewer: FALLBACK_REVIEWER,
+    reply: { verdict: 'PASS', findings: [], blocking: [{ severity: 'high', file: 'src/hello.js', line: 1, title: 'leak' }] } });
+  Object.assign(old, { reviewer: FALLBACK_REVIEWER, raw_path: raw.path, raw_sha256: raw.sha256 });
+  c.build.fallback_used = true;
+  blocked(c.completion(), 'E_REVIEW', /security verdict PASS differs/);
+  c.editRecord(old, r => { r.reply.blocking = [{ severity: 'medium', file: 'src/hello.js', line: 1, title: 'style' }]; }, 'raw_path', 'raw_sha256');
+  passed(c.completion());
+});
+
 test('reviews: a compliance raw file with a FAIL requirement is exit 1 even when the stage relays PASS', t => {
   const c = completeRun(t);
   c.editRecord(entryOf(c.verify.review_files, 'compliance'), r => { r.requirements[0].status = 'FAIL'; }, 'raw_path', 'raw_sha256');
@@ -916,6 +936,16 @@ test('negative controls: a hanging mutation run through run-frozen ends within t
 test('negative controls: a weak control (the mutated proof still passes) is rejected', t => {
   const c = completeRun(t, { mutation: "diff --git a/src/hello.js b/src/hello.js\n--- a/src/hello.js\n+++ b/src/hello.js\n@@ -1 +1,2 @@\n module.exports = () => 'hello';\n+// a comment changes nothing\n" });
   blocked(c.completion(), 'E_NEGATIVE_CONTROL', /weak control/);
+});
+
+// Review fix: a content-only `git diff` of an executable owned file carries `index <a>..<b> 100755` and certifies.
+test('negative controls: a git-generated patch editing an executable owned file certifies', t => {
+  let text;
+  const c = completeRun(t, { executable: ['src/hello.js'], mutation: x => (text = x.gitDiff('src/hello.js', "module.exports = () => 'goodbye';\n")) });
+  assert.match(text, /^index [0-9a-f]+\.\.[0-9a-f]+ 100755$/m);
+  const out = passed(c.completion());
+  assert.deepEqual(JSON.parse(fs.readFileSync(negEntry(c).record_path, 'utf8')).mutated_paths, ['src/hello.js']);
+  assert.ok(out);
 });
 
 // Swaps the recorded patch for `text` and re-hashes it; mutated_paths becomes the literal `paths` (what a recorder
