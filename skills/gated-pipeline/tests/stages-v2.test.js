@@ -1099,6 +1099,22 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.ok(rec.elapsed_s < 10, `killed at the budget (elapsed ${rec.elapsed_s} s)`);
   });
 
+  // ---- no model-written ledger under contract 2 (design section 1): only run-frozen.js writes the acceptance ledger -----------
+  test('contract 2 implementer and fixer prompts ask for no model-written execution or live ledger; v1 keeps them', async (t) => {
+    const c = frozenRepo(t);
+    const b = await buildV2(c, { findings1: [MAJOR], table: { 'fix 1': STOP } });
+    const prompts = b.calls.filter(x => ['implement', 'fix 1'].includes(x.options.label)).map(x => x.prompt);
+    assert.equal(prompts.length, 2, labels(b.calls).join(', '));
+    for (const p of prompts) {
+      assert.ok(!p.includes('execution-ledger.json') && !p.includes('live-ledger.txt') && !/log_sha256/.test(p), 'no model-kept ledger with hashes');
+      assert.match(p, /certify nothing/);
+      assert.match(p, /Live or paid tests: hard cap 1 minutes total/);
+    }
+    const v1 = await run('build', { feature_id: 'f', repo: '/repo', work_branch: 'w', run_dir: '/state/build', review_runner: RUNNER, suite_cmd: 'true', security_schema: SEC_SCHEMA,
+      spec_path: '/state/spec.md', live_budget_min: 2 }, [{ blocked: true, blocked_reason: 'stop here', summary: '', files_changed: [], commit: '' }]);
+    assert.ok(v1.calls[0].prompt.includes('/state/build/execution-ledger.json') && v1.calls[0].prompt.includes('/state/build/live-ledger.txt'), 'v1 is unchanged');
+  });
+
   // ---- one foreground Bash call (at most 600 s): a frozen step whose limits cannot fit in it BLOCKs before it starts ------------
   test('a frozen suite whose limit cannot finish inside one 600 s foreground Bash call -> build BLOCKED at preflight, before the implementer', async (t) => {
     const f = baseFeature();

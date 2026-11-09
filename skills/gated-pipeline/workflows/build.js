@@ -95,9 +95,11 @@ const rulesFor = (liveBudgetMin, extra) => [
   'Before each commit, scan the staged diff for secrets (.env, service-account json, .pem, id_rsa, API keys) and abort if any are present.',
   'Never deploy, never run Terraform, never touch production resources.',
   'Use the checkout selected by the orchestrator at the supplied repo path; an existing checkout is supported and a dedicated feature worktree is optional. Follow the orchestrator\'s checkout ownership and writer coordination. Check branch, clean baseline and the correct dev/client environment before the first edit. Never weaken a guard or verification harness to unblock work.',
-  `Keep atomic per-acceptance checkpoints at ${A.run_dir}/execution-ledger.json: id, status, command, exit code, log_path, log_sha256 and commit. Preserve failed/interrupted output. Stop on unapproved scope expansion.`,
+  // contract 2 (design section 1): no model authors a ledger; the only v2 ledger is the acceptance ledger run-frozen.js writes in verify.
+  C2 ? 'Your red/green notes go in your reply; they certify nothing, so write no ledger, manifest or hash file. The only contract-2 ledger is the acceptance ledger run-frozen.js writes in verify. Preserve failed/interrupted output. Stop on unapproved scope expansion.'
+    : `Keep atomic per-acceptance checkpoints at ${A.run_dir}/execution-ledger.json: id, status, command, exit code, log_path, log_sha256 and commit. Preserve failed/interrupted output. Stop on unapproved scope expansion.`,
   A.lock_note ? `Test runs: ${A.lock_note}` : '',
-  liveBudgetMin ? `Live or paid tests: hard cap ${liveBudgetMin} minutes total; keep a ledger at ${A.run_dir}/live-ledger.txt; record anything that cannot fit as NOT RUN.` : 'Do not run live or paid external-API tests.',
+  liveBudgetMin ? `Live or paid tests: hard cap ${liveBudgetMin} minutes total; ${C2 ? '' : `keep a ledger at ${A.run_dir}/live-ledger.txt; `}record anything that cannot fit as NOT RUN.` : 'Do not run live or paid external-API tests.',
   'Report only numbers you observed in command output. A skipped check is NOT RUN, never a pass.',
   'If any command is blocked, or a tool or the API refuses, STOP and report blocked=true. Never reproduce its effect another way.',
   ...(extra || []),
