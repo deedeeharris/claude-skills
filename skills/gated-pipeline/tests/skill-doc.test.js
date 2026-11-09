@@ -115,6 +115,22 @@ describe('SKILL.md v2 arg tables (plan WP6)', () => {
       'run-frozen.js', 'Contract 1 (v1) compatibility',
     ]) assert.ok(SKILL.includes(term), `SKILL.md mentions ${term}`);
   });
+
+  test('the Migration from v1 section names the id rules, every report key and every conflict kind migrate-v1 writes', () => {
+    const at = SKILL.indexOf('### Migration from v1');
+    assert.ok(at >= 0, 'SKILL.md has a Migration from v1 section');
+    const section = SKILL.slice(at, SKILL.indexOf('\n## ', at));
+    const code = fs.readFileSync(path.join(ROOT, 'scripts', 'migrate-v1.js'), 'utf8');
+    const kinds = [...new Set([...code.matchAll(/conflicts\.push\(\{ kind: '([a-z0-9_]+)'/g)].map(m => m[1]))];
+    assert.ok(kinds.length >= 5, `conflict kinds read from migrate-v1.js: ${kinds}`);
+    // a kind is documented by its own name or, for the original four, by the words the section uses for it
+    const words = { only_in_spec: 'only one of spec.md and the manifest', only_in_manifest: 'only one of spec.md and the manifest',
+      proof_command_differs: 'differing proof commands', spec_sha256_differs: '`spec_sha256`' };
+    for (const k of kinds) assert.ok(section.includes(`\`${k}\``) || (words[k] && section.includes(words[k])), `the section documents the conflict kind ${k}`);
+    for (const term of ['`todos`', '`conflicts`', '`unmapped_tests`', '`lost`', '`provenance_missing`', '`mapping`',
+      'v2 form `<REQ>-ACn` is kept', 'requirement form `<REQ>` becomes `<REQ>-ACn`', '`MIG-NNN-AC1`', '`depends_on`', '`suite.known_failures`',
+      '`E_MIGRATION_TODO`', '`E_PROTECTED_OVERLAP`', '`E_STATE_OVERLAP`']) assert.ok(section.includes(term), `the section mentions ${term}`);
+  });
 });
 
 describe('templates/pipeline.yaml (plan WP6, design section 2)', () => {
