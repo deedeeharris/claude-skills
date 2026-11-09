@@ -449,6 +449,7 @@ test(`${MOCKED}: L3.9 killed after the commit and before freeze: recover:true fr
     assert.equal(again.result.status, 'BLOCKED');
     assert.equal(again.result.code, 'E_LOCK_HELD');
     assert.deepEqual(again.labels, ['start']);
+    assert.ok(again.result.reason.includes(`${c.lockFile} held by ${c.designRun}`), 'the reason names the lock file and the run_dir holding it: ' + again.result.reason);
     const rec = await design(c, c.args({ recover: true, seed_feature_path: undefined }), {});
     if (variant === 'head moved') {
       assert.equal(rec.result.status, 'BLOCKED');

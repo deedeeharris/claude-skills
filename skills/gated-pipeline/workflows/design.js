@@ -461,7 +461,7 @@ async function designV2() {
   const startBody = ['set -e', `cd ${q(REPO)}`,
     `test "$(git symbolic-ref -q HEAD)" = ${q('refs/heads/' + BR)} || { echo GP_WRONG_BRANCH; exit 6; }`,
     LOCK, `mkdir ${q(RUN)} || { echo GP_RUN_DIR_EXISTS; exit 4; }`,
-    `(set -C; printf '%s\\n' ${q(RUN)} > "$L") 2>/dev/null || { echo GP_LOCK_HELD; exit 5; }`,
+    `(set -C; printf '%s\\n' ${q(RUN)} > "$L") 2>/dev/null || { echo "GP_LOCK_HELD $L held by $(cat "$L" 2>/dev/null)"; exit 5; }`,
     'trap \'rm -f "$L"\' EXIT',
     'SH=$(git rev-parse HEAD)',
     `cp ${q(A.source_request_path)} ${q(REQ)}`,
