@@ -116,6 +116,7 @@ function makeRepo(t, opts = {}) {
   c.git('add', '-A');
   c.git('commit', '-qm', 'base');
   c.git('checkout', '-q', '-b', 'feature/greet');
+  if (opts.beforeDesign) opts.beforeDesign(c);
   c.startHead = c.git('rev-parse', 'HEAD');
   // design inputs
   c.request = path.join(run, 'source-request.txt');
@@ -234,6 +235,9 @@ function makeRepo(t, opts = {}) {
     '--approvals', o.approvals || c.approvalsPath, '--approvals-sha256', o.approvalsSha || c.approvalsSha,
     ...(o.expectParent ? ['--expect-parent', o.expectParent] : []), ...(o.out ? ['--out', o.out] : [])];
   c.design = (o = {}) => c.node('check-completion.js', c.designArgs(o));
+  c.plan = (o = {}) => c.node('check-completion.js', ['--mode', 'plan', '--repo', c.repo, '--feature-id', 'greet', '--reviewed-sha', o.sha || c.reviewedSha,
+    '--manifest', c.manifestPath, '--manifest-sha256', c.manifestSha, '--spec', c.featureFile, '--frozen-dir', c.frozenDir, '--commit', c.designCommit,
+    '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha]);
   // Happy path: rev-1, PRD PASS, spec PASS, commit, frozen compile.
   c.freeze = (o = {}) => {
     c.snap(1);
@@ -286,7 +290,7 @@ function completeRun(t, opts = {}) {
   const checks = ['CHECK-LINT', 'CHECK-LIVE'].map(id => ({ check_id: id, ...pick(ok(c.runFrozen('check:' + id), id), ['record_path', 'record_sha256']) }));
   ok(c.runFrozen('proof:HELLO-001-AC1'), 'proof');
   ok(c.runFrozen('live:HELLO-001-AC2'), 'live');
-  const neg = ok(c.runFrozen('negative:HELLO-001-AC1', { outDir: path.join(c.run, 'negative', 'HELLO-001-AC1'), patch: c.patchFile('HELLO-001-AC1', c.MUTATION) }), 'negative');
+  const neg = ok(c.runFrozen('negative:HELLO-001-AC1', { outDir: path.join(c.run, 'negative', 'HELLO-001-AC1'), patch: c.patchFile('HELLO-001-AC1', opts.mutation || c.MUTATION), env: opts.runEnv }), 'negative');
   const head = c.reviewedSha;
   const state = () => ({ head_before: head, status_before: [], head_after: head, status_after: [] });
   // review files (mocked model steps; script-hashed)
@@ -303,7 +307,7 @@ function completeRun(t, opts = {}) {
     } else {
       const file = path.join(dir, kind === 'security' ? 'security.json' : 'compliance.json');
       const raw = kind === 'security' ? { verdict: 'PASS', summary: 'synthetic', findings: [] } : { verdict: 'PASS', summary: 'synthetic', findings: [],
-        requirements: [
+        requirements: opts.complianceRequirements ? opts.complianceRequirements(head) : [
           { id: 'HELLO-001-AC1', status: 'PASS', evidence: [] },
           { id: 'HELLO-001-AC2', status: 'PASS', evidence: [] },
           { id: 'HELLO-001-AC3', status: 'PASS', evidence: [{ kind: 'static', head_sha: head, command: null, exit_code: null, log_path: null, log_sha256: null, file: 'src/hello.js', line: 1 }] },
@@ -354,6 +358,15 @@ function completeRun(t, opts = {}) {
     }
     return entry;
   };
+  // Rewrites the record an entry names (attested evidence edited by hand) and re-hashes the entry.
+  c.editRecord = (entry, mutate, pathKey = 'record_path', hashKey = 'record_sha256') => { entry[hashKey] = c.editJson(entry[pathKey], mutate); return entry; };
+  // Rewrites the footer of a framed log to match an edited record, and returns the log's new hash.
+  c.setFooter = (logPath, footer) => {
+    const lines = fs.readFileSync(logPath, 'utf8').split('\n');
+    lines[lines.length - 2] = 'gp-run-frozen footer ' + JSON.stringify(footer);
+    fs.writeFileSync(logPath, lines.join('\n'));
+    return sha256(fs.readFileSync(logPath));
+  };
   // Rewrites a JSON file through a mutation and returns its new hash (for re-hashed tamper cases).
   c.editJson = (file, mutate) => {
     const v = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -361,14 +374,11 @@ function completeRun(t, opts = {}) {
     fs.writeFileSync(file, JSON.stringify(v, null, 2) + '\n');
     return sha256(fs.readFileSync(file));
   };
-  c.completionArgs = (o = {}) => ['--repo', repo, '--feature-id', 'greet', '--reviewed-sha', o.sha || head, '--manifest', c.manifestPath,
+  c.completionArgs = (o = {}) => ['--repo', c.repo, '--feature-id', 'greet', '--reviewed-sha', o.sha || head, '--manifest', c.manifestPath,
     '--manifest-sha256', c.manifestSha, '--spec', c.featureFile, '--build-result', c.buildPath, '--verify-result', c.verifyPath, '--out', o.out || c.out,
     '--frozen-dir', c.frozenDir, '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha,
     ...(o.trunkRef ? ['--trunk-ref', o.trunkRef] : []), ...(o.previous ? ['--previous-proof', o.previous] : []), ...(o.extra || [])];
   c.completion = (o = {}) => { c.save(); return c.node('check-completion.js', c.completionArgs(o)); };
-  c.plan = (o = {}) => c.node('check-completion.js', ['--mode', 'plan', '--repo', repo, '--feature-id', 'greet', '--reviewed-sha', o.sha || c.reviewedSha,
-    '--manifest', c.manifestPath, '--manifest-sha256', c.manifestSha, '--spec', c.featureFile, '--frozen-dir', c.frozenDir, '--commit', c.designCommit,
-    '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha]);
   return c;
 }
 const pick = (o, keys) => Object.fromEntries(keys.map(k => [k, o[k]]));
