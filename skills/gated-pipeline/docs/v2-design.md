@@ -392,7 +392,14 @@ Resume: a gated stage is never resumed with the Workflow runtime's `resumeFromRu
 cached agent replies would replay stale preflight, check and review results); SKILL.md forbids
 it. An interrupted stage is rerun as a new Workflow call with a fresh `run_dir`, from the
 persisted result of the previous stage (design: 6.2 recovery). Every stage run uses a fresh
-`run_dir`. Certifying scripts re-derive identity live, so a replay that slips through still
+`run_dir`, which the caller only names (a normalized absolute path outside the repo that does
+not exist yet): the stage's first `gp-exec` block (design start, build preflight, verify plan
+preflight) makes its parent with `mkdir -p` (the parent computed by the workflow from the
+run_dir) and then the run_dir itself with a plain `mkdir`. An existing run_dir prints
+`GP_RUN_DIR_EXISTS` and is BLOCKED with code `E_RUN_DIR_EXISTS` before anything else runs; a
+parent that cannot be made prints `GP_RUN_DIR_PARENT` (any other `mkdir` failure
+`GP_RUN_DIR_CREATE`), code `E_RUN_DIR`. Design recovery (`recover: true`) reuses its run_dir
+and creates none. Certifying scripts re-derive identity live, so a replay that slips through still
 fails completion: verify ends INCOMPLETE at stage `completion` and land refuses.
 
 ### 6.2 design (contract 2)
@@ -404,9 +411,10 @@ repo_path }` (this feature's earlier frozen design; required whenever one exists
 optional `recover: true`. Before the first agent, design.js applies G32/G38 to `features_dir`
 in-script and returns `{ status: 'BLOCKED', code: 'E_SCOPE' }` on failure.
 
-Start `gp-exec` block: takes the run lock `<git-dir>/gp-design-<feature_id>.lock` with
-O_EXCL (`set -C`, content `run_dir`; exits nonzero if it exists); asserts
-`git symbolic-ref -q HEAD` = `refs/heads/<work_branch>`; writes `<run_dir>/start-head.json`
+Start `gp-exec` block: asserts `git symbolic-ref -q HEAD` = `refs/heads/<work_branch>`;
+creates the fresh `run_dir` with its parent (6.1), before the lock, so a run_dir failure
+leaves no lock; takes the run lock `<git-dir>/gp-design-<feature_id>.lock` with O_EXCL
+(`set -C`, content `run_dir`; exits nonzero if it exists); writes `<run_dir>/start-head.json`
 (`{ start_head, previous_design }`, start_head = the work_branch HEAD); saves rev-0: with
 `previous_design`, the blob `<commit>:<repo_path>` (if `<start_head>:<path>` also exists it
 must equal that blob, else BLOCKED: two predecessors); without it, `<start_head>:<path>` when
@@ -466,7 +474,7 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
 - `contract: 2` (design-gated) needs `frozen_dir`, `manifest_path`, `manifest_sha256`,
   `spec_path` (canonical file), `design_commit`, `approvals_path`, `approvals_sha256`, and
   `base_commit` equal to `design_commit` (BLOCKED otherwise, before any agent). Before the
-  implementer, a preflight runs `--mode design --commit <design_commit> --out
+  implementer, a preflight creates the fresh `run_dir` (6.1) and runs `--mode design --commit <design_commit> --out
   <run_dir>/design-preflight.json` and checks `git merge-base --is-ancestor <design_commit>
   HEAD`; any failure is BLOCKED. `clean_ignore`, `suite.unit_command`,
   `suite.live_budget_min` and the known-failure ids come from the preflight output (the
@@ -502,7 +510,7 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
 ### 6.4 verify (contract 2)
 - Args additionally need `frozen_dir`, `design_commit`, `approvals_path`, `approvals_sha256`
   (forbidden args: 6.1).
-- Plan preflight `--mode plan` (v2; also takes `--frozen-dir --commit <design_commit>
+- Plan preflight: creates the fresh `run_dir` (6.1), then `--mode plan` (v2; also takes `--frozen-dir --commit <design_commit>
   --approvals --approvals-sha256`) fails when any proof, check, suite, unit or setup command
   contains `realpath(--repo)` or the `--repo` spelling, and returns `manifest_version`, per
   applicable check `id, name, quiet, effort, budget_min, timeout_min`, `runtime_acceptance_ids[]`

@@ -65,6 +65,15 @@ const MAX = A.max_fix_rounds ?? 4
 const IMPL_EFFORT = A.impl_effort || 'medium'
 const TIMEOUT_S = A.review_timeout_seconds || 1200
 const q = s => `'${s}'`
+// contract 2: every stage run uses a FRESH run_dir, made by the stage's first gp-exec block: its parent with mkdir -p
+// (the parent computed here from the normalized absolute run_dir), then the run_dir itself with a plain mkdir.
+// GP_RUN_DIR_EXISTS only when the run_dir already exists; GP_RUN_DIR_PARENT when its parent cannot be made;
+// GP_RUN_DIR_CREATE when mkdir fails for any other reason.
+const freshRunDir = run => [
+  `mkdir -p ${q(run.slice(0, run.lastIndexOf('/')) || '/')} || { echo GP_RUN_DIR_PARENT; exit 4; }`,
+  `mkdir ${q(run)} || { if [ -e ${q(run)} ] || [ -L ${q(run)} ]; then echo GP_RUN_DIR_EXISTS; else echo GP_RUN_DIR_CREATE; fi; exit 4; }`,
+]
+const runDirCode = stdout => /GP_RUN_DIR_EXISTS/.test(stdout || '') ? 'E_RUN_DIR_EXISTS' : /GP_RUN_DIR_(PARENT|CREATE)/.test(stdout || '') ? 'E_RUN_DIR' : null
 // Config values that reach shell commands must be plain tokens.
 if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 'BLOCKED', reason: 'codex_model must match [A-Za-z0-9._-]' }
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
@@ -427,6 +436,7 @@ if (C2) {
     `the design commit as an ancestor of HEAD${ciLog ? ', and the hash of the CI failure log' : ''}. ${EXEC_NOTE}` +
     execBlock([
       'set -e',
+      ...freshRunDir(A.run_dir),
       `node ${SCRIPT('check-completion.js')} --mode design --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} ` +
         `--spec ${q(A.spec_path)} --commit ${A.design_commit} --approvals ${q(A.approvals_path)} --approvals-sha256 ${A.approvals_sha256} --out ${q(prePath)} 2>&1`,
       `git -C ${q(A.repo)} merge-base --is-ancestor ${A.design_commit} HEAD || { echo GP_DESIGN_NOT_ANCESTOR; exit 5; }`,
@@ -436,7 +446,12 @@ if (C2) {
         `node ${SCRIPT('hash-inputs.js')} --out ${q(A.run_dir + '/ci-failure-log.inputs.json')} ${q(ciLog)}`] : []),
     ].join('\n')) + `\n- ${RULES}`,
     { label: 'design preflight', phase: 'Preflight', schema: EXEC, effort: 'low' })
-  if (!pre || pre.blocked || pre.exit_code !== 0) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: 'the design preflight failed: nothing was changed', preflight: pre })
+  if (!pre || pre.blocked || pre.exit_code !== 0) {
+    const code = pre && runDirCode(pre.stdout)
+    return disclose({ status: 'BLOCKED', stage: 'preflight', ...(code ? { code } : {}),
+      reason: code === 'E_RUN_DIR_EXISTS' ? 'run_dir already exists (GP_RUN_DIR_EXISTS): every build run needs a fresh run_dir; nothing was changed'
+        : code ? `run_dir ${A.run_dir} could not be created: nothing was changed` : 'the design preflight failed: nothing was changed', preflight: pre })
+  }
   const lines = jsonLines(pre.stdout)
   const d = lines.find(o => o.mode === 'design')
   const preSha = shaOf(pre.stdout, prePath)

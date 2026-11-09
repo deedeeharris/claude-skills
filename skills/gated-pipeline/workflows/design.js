@@ -38,6 +38,15 @@ if (A.security_docs !== undefined && (!Array.isArray(A.security_docs) || A.secur
 const SEC_DOCS = A.security_docs || []
 
 const q = s => `'${s}'`
+// contract 2: every stage run uses a FRESH run_dir, made by the stage's first gp-exec block: its parent with mkdir -p
+// (the parent computed here from the normalized absolute run_dir), then the run_dir itself with a plain mkdir.
+// GP_RUN_DIR_EXISTS only when the run_dir already exists; GP_RUN_DIR_PARENT when its parent cannot be made;
+// GP_RUN_DIR_CREATE when mkdir fails for any other reason.
+const freshRunDir = run => [
+  `mkdir -p ${q(run.slice(0, run.lastIndexOf('/')) || '/')} || { echo GP_RUN_DIR_PARENT; exit 4; }`,
+  `mkdir ${q(run)} || { if [ -e ${q(run)} ] || [ -L ${q(run)} ]; then echo GP_RUN_DIR_EXISTS; else echo GP_RUN_DIR_CREATE; fi; exit 4; }`,
+]
+const runDirCode = stdout => /GP_RUN_DIR_EXISTS/.test(stdout || '') ? 'E_RUN_DIR_EXISTS' : /GP_RUN_DIR_(PARENT|CREATE)/.test(stdout || '') ? 'E_RUN_DIR' : null
 // Config values that reach shell commands must be plain tokens.
 if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 'BLOCKED', reason: 'codex_model must match [A-Za-z0-9._-]' }
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
@@ -289,9 +298,12 @@ async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
 // --mode approvals / --mode design re-derive every approval record, verdict, source, manifest and view from the
 // snapshots, review files and git, so a relay mistake in any of them BLOCKS. Choices where the design is silent:
 // - scripts are found next to completion_runner (scripts/check-completion.js), the feature schema in ../schemas;
-// - run_dir must not exist (the start block makes it); a failed start block takes no lock (it removes a lock it
-//   took); every other end after the lock but a crash (FAIL, BLOCKED) runs one release block, except a BLOCKED
-//   recovery, which leaves the lock of the run it could not recover;
+// - run_dir must not exist: the start block makes it fresh, after the branch check and before the lock, with its
+//   parent (mkdir -p) and then itself with a plain mkdir (GP_RUN_DIR_EXISTS only when it already exists,
+//   GP_RUN_DIR_PARENT when the parent cannot be made, GP_RUN_DIR_CREATE for any other mkdir failure), so a
+//   run_dir failure takes no lock; a failed start block takes no lock (it removes a lock it took); every other end
+//   after the lock but a crash (FAIL, BLOCKED) runs one release block, except a BLOCKED recovery, which leaves the
+//   lock of the run it could not recover;
 // - deterministic errors are repaired up to max_rounds times in a row, then BLOCKED (stage validate, the first
 //   diagnostic's code); each review gate has its own round counter, FAIL when a gate's max_rounds-th review fails;
 // - the --previous of a snapshot is the latest snapshot that validated (rev-0 when it exists);
@@ -318,6 +330,8 @@ async function designV2() {
   if (fdBad) return stop(fdBad, { code: 'E_SCOPE' })
   const REPO = A.repo.replace(/[\/\\]+$/, '')
   const RUN = A.run_dir.replace(/[\/\\]+$/, '')
+  // Normalized (no //, /./, .., backslash), so the parent the start block makes is the run_dir's real parent.
+  if (!/^\/./.test(RUN) || /\/\/|\/\.(\/|$)|\/\.\.(\/|$)|\\/.test(RUN)) return stop(`run_dir must be a normalized absolute POSIX path of safe characters: ${A.run_dir}`)
   const under = (p, root) => p === root || p.startsWith(root + '/') || p.startsWith(root + '\\')
   if (under(RUN, REPO)) return stop('run_dir must lie outside the repo')
   if (under(A.source_request_path, REPO)) return stop('source_request_path must lie outside the repo')
@@ -462,7 +476,7 @@ async function designV2() {
   const pdJson = PD ? JSON.stringify(PD) : 'null'
   const startBody = ['set -e', `cd ${q(REPO)}`,
     `test "$(git symbolic-ref -q HEAD)" = ${q('refs/heads/' + BR)} || { echo GP_WRONG_BRANCH; exit 6; }`,
-    LOCK, `mkdir ${q(RUN)} || { echo GP_RUN_DIR_EXISTS; exit 4; }`,
+    LOCK, ...freshRunDir(RUN),
     `(set -C; printf '%s\\n' ${q(RUN)} > "$L") 2>/dev/null || { echo "GP_LOCK_HELD $L held by $(cat "$L" 2>/dev/null)"; exit 5; }`,
     'trap \'rm -f "$L"\' EXIT',
     'SH=$(git rev-parse HEAD)',
@@ -482,7 +496,8 @@ async function designV2() {
   const sd = st.docs.find(x => x && 'rev0' in x)
   const pin = st.docs.find(x => x && Array.isArray(x.inputs))
   if (!st.ok || !sd || !SHA.test(sd.start_head) || !pin || !pin.inputs[0] || !HEX.test(pin.inputs[0].sha256)) {
-    const code = /GP_LOCK_HELD/.test(st.stdout) ? 'E_LOCK_HELD' : /GP_WRONG_BRANCH/.test(st.stdout) ? 'E_BRANCH' : /GP_TWO_PREDECESSORS/.test(st.stdout) ? 'E_REV0' : 'E_START'
+    const code = /GP_LOCK_HELD/.test(st.stdout) ? 'E_LOCK_HELD' : /GP_WRONG_BRANCH/.test(st.stdout) ? 'E_BRANCH' : runDirCode(st.stdout) ||
+      (/GP_TWO_PREDECESSORS/.test(st.stdout) ? 'E_REV0' : 'E_START')
     return disclose({ status: 'BLOCKED', contract: 2, stage: 'start', code, feature_id: ID, run_dir: RUN, reason: 'the start block failed: ' + shown(st) })
   }
   locked = true

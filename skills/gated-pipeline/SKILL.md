@@ -14,7 +14,7 @@ Invoking this skill is the user's opt-in to run the Workflow tool for these stag
 ## Before any stage
 1. Read the repo's `.claude/pipeline.yaml`. If it is missing, copy `templates/pipeline.yaml` there, fill it from the repo (test commands, branches, lock), and show the user the result before running anything.
 2. Read the repo's CLAUDE.md. Its rules win over this skill.
-3. Pick a run id and a run directory: `<state_dir>/<feature>/<stage>/<run_id>`, where `state_dir` is an ABSOLUTE path OUTSIDE the repo (default `<home>/.pipeline-state/<repo-name>`). Create it. A run dir inside the repo makes the tree dirty and blocks the suite's clean-tree check unless its prefix is in `clean_ignore`. Every stage run uses a FRESH `run_dir`, including a build rerun after `HEAD_MOVED` or `CI_RED`: each review relay creates its out dir (and the Opus fallback its `<out>-opus/`) with a plain `mkdir` and returns BLOCKED when it already exists, so an older result can never be read as this run's.
+3. Pick a run id and a run directory: `<state_dir>/<feature>/<stage>/<run_id>`, where `state_dir` is an ABSOLUTE path OUTSIDE the repo (default `<home>/.pipeline-state/<repo-name>`). Under `contract: 2`, do NOT create it: pass a path that does not exist yet, and the stage's first `gp-exec` block (design start, build design preflight, verify plan preflight) makes its parent with `mkdir -p` and then the run dir itself with a plain `mkdir`; an existing run dir is BLOCKED with `GP_RUN_DIR_EXISTS` (code `E_RUN_DIR_EXISTS`), a parent that cannot be made with `GP_RUN_DIR_PARENT` (code `E_RUN_DIR`). Under `contract: 1`, create it (a new, empty dir) before the stage. A run dir inside the repo makes the tree dirty and blocks the suite's clean-tree check unless its prefix is in `clean_ignore`. Every stage run uses a FRESH `run_dir`, including a build rerun after `HEAD_MOVED` or `CI_RED`: each review relay creates its out dir (and the Opus fallback its `<out>-opus/`) with a plain `mkdir` and returns BLOCKED when it already exists, so an older result can never be read as this run's.
 4. Pass config values to the workflow through `args`. Workflow scripts cannot read files, so the main session reads the config and passes what the stage needs.
 5. Every path arg must be ABSOLUTE and use only letters, digits, space and `._/\:+@-` (no `~`, quotes, `$`, backticks). The workflows single-quote paths into shell commands and refuse anything else with BLOCKED. `review_timeout_seconds` (default 1200) is the per-attempt codex timeout; real reviews of a few files take 10+ minutes. `review_fallback` is `none` (default) or `opus-high` (see Hard rules); any other value is BLOCKED.
 
@@ -81,7 +81,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
 | `feature_id` | required | letters, digits, `._-`; the file is `<features_dir>/<feature_id>.feature.json` |
 | `repo` | required | absolute path of the checkout |
 | `work_branch` | required | the branch checked out in `repo`; the design commit lands on it |
-| `run_dir` | required | a FRESH absolute dir outside the repo (it must not exist yet) |
+| `run_dir` | required | a FRESH absolute dir outside the repo that must not exist yet; the start block creates it, with its parent |
 | `review_runner` | required | absolute path of codex-review's `scripts/run-review.js` |
 | `completion_runner` | required | absolute path of this skill's `scripts/check-completion.js`; the other scripts are found next to it |
 | `source_request_path` | required | absolute path of the raw request, outside the repo |
@@ -98,7 +98,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
 |---|---|---|
 | `contract` | required | `2` |
 | `feature_id`, `repo`, `work_branch` | required | as for design |
-| `run_dir` | required | a FRESH absolute dir outside the repo, for every build run |
+| `run_dir` | required | a FRESH absolute dir outside the repo, for every build run; it must not exist yet (the preflight creates it, with its parent) |
 | `review_runner` | required | as for design |
 | `security_schema` | required | `<skill-dir>/schemas/security.schema.json` |
 | `completion_runner` | required | as for design |
@@ -118,7 +118,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
 |---|---|---|
 | `contract` | required | `2` |
 | `feature_id`, `repo`, `work_branch`, `review_runner`, `completion_runner` | required | as for build |
-| `run_dir` | required | a FRESH absolute dir outside the repo |
+| `run_dir` | required | a FRESH absolute dir outside the repo that must not exist yet (the plan preflight creates it, with its parent) |
 | `compliance_schema` | required | `<skill-dir>/schemas/compliance.schema.json` |
 | `spec_path` | required | design `feature_path` |
 | `frozen_dir`, `manifest_path`, `manifest_sha256`, `design_commit`, `approvals_path`, `approvals_sha256` | required | the design values, unchanged |

@@ -72,6 +72,15 @@ if (C2) {
 }
 
 const q = s => `'${s}'`
+// contract 2: every stage run uses a FRESH run_dir, made by the stage's first gp-exec block: its parent with mkdir -p
+// (the parent computed here from the normalized absolute run_dir), then the run_dir itself with a plain mkdir.
+// GP_RUN_DIR_EXISTS only when the run_dir already exists; GP_RUN_DIR_PARENT when its parent cannot be made;
+// GP_RUN_DIR_CREATE when mkdir fails for any other reason.
+const freshRunDir = run => [
+  `mkdir -p ${q(run.slice(0, run.lastIndexOf('/')) || '/')} || { echo GP_RUN_DIR_PARENT; exit 4; }`,
+  `mkdir ${q(run)} || { if [ -e ${q(run)} ] || [ -L ${q(run)} ]; then echo GP_RUN_DIR_EXISTS; else echo GP_RUN_DIR_CREATE; fi; exit 4; }`,
+]
+const runDirCode = stdout => /GP_RUN_DIR_EXISTS/.test(stdout || '') ? 'E_RUN_DIR_EXISTS' : /GP_RUN_DIR_(PARENT|CREATE)/.test(stdout || '') ? 'E_RUN_DIR' : null
 // The validator reports Windows paths with backslashes; compare by form, not by spelling.
 const pathForm = p => p.replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase())
 const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
@@ -403,10 +412,15 @@ if (C2) {
   phase('Plan preflight')
   const planRun = await agent(
     `Validate the frozen plan of feature ${A.feature_id} BEFORE running any check or proof command, with the read-only validator (check-completion.js --mode plan; it prints ids, never a command). ${EXEC_NOTE}` +
-    execBlock(['set -e', `mkdir -p ${q(A.run_dir)}`, `node ${SCRIPT('check-completion.js')} --mode plan --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --reviewed-sha ${sha} --manifest ${q(A.manifest_path)} ` +
+    execBlock(['set -e', ...freshRunDir(A.run_dir), `node ${SCRIPT('check-completion.js')} --mode plan --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --reviewed-sha ${sha} --manifest ${q(A.manifest_path)} ` +
       `--manifest-sha256 ${A.manifest_sha256} --spec ${q(A.spec_path)} --frozen-dir ${q(A.frozen_dir)} --commit ${A.design_commit} --approvals ${q(A.approvals_path)} --approvals-sha256 ${A.approvals_sha256} 2>&1`].join('\n')) + `\n- ${RULES}`,
     { label: 'plan preflight', phase: 'Plan preflight', effort: 'low', schema: EXEC })
-  if (!planRun || planRun.blocked || planRun.exit_code !== 0) return disclose({ status: 'BLOCKED', stage: 'plan preflight', reason: 'the plan preflight failed: nothing was executed', plan: planRun })
+  if (!planRun || planRun.blocked || planRun.exit_code !== 0) {
+    const code = planRun && runDirCode(planRun.stdout)
+    return disclose({ status: 'BLOCKED', stage: 'plan preflight', ...(code ? { code } : {}),
+      reason: code === 'E_RUN_DIR_EXISTS' ? 'run_dir already exists (GP_RUN_DIR_EXISTS): every verify run needs a fresh run_dir; nothing was executed'
+        : code ? `run_dir ${A.run_dir} could not be created: nothing was executed` : 'the plan preflight failed: nothing was executed', plan: planRun })
+  }
   const p = jsonLines(planRun.stdout).find(o => o.mode === 'plan')
   const isInt = (v, min) => Number.isInteger(v) && v >= min
   const relPath = x => typeof x === 'string' && SAFE.test(x) && !ABS.test(x) && !DOTDOT.test(x)
