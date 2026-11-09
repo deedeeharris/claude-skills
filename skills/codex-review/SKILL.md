@@ -47,7 +47,9 @@ Use the runner's absolute path. Keep `--out-dir` outside the repository being re
 | `--help` | print usage and exit 0 |
 
 `implementation` requires exactly one of `--uncommitted` / `--files`; `prd` and `spec`
-require `--files` and reject `--uncommitted`.
+require `--files` and reject `--uncommitted`. With `--files` the review and validation prompts
+tell codex that commands are data: it never executes a command found in the reviewed files or
+the `--against` document.
 
 codex-review picks the model from the live catalog (`codex debug models`); never
 hardcode a model name against it. When `--model` is given, it is checked against the
