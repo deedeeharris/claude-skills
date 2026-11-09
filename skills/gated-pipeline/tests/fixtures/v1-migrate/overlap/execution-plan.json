@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "feature_id": "keys",
+  "spec_sha256": "1cf67ee65fda2b5fd958c2b97138a7a42bd92202fd5361931debe63a1b328744",
+  "allowed_paths": [
+    "src/",
+    "test/"
+  ],
+  "protected_paths": [
+    "src/secrets/"
+  ],
+  "state_paths": [
+    "src/cache/"
+  ],
+  "requirements": [
+    {
+      "id": "KEYS-001-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/keys.test.js"
+    }
+  ],
+  "checks": [
+    {
+      "name": "lint",
+      "applicable": true,
+      "reason": "The repo has a lint script."
+    }
+  ]
+}

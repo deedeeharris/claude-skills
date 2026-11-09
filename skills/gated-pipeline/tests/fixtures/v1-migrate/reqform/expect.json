@@ -1,0 +1,107 @@
+{
+  "description": "a requirement-form v1 id (AUTH-001 -> the first free AUTH-001-ACn), interleaved manifest order, id collisions with v2-form ids (AUTH-001-AC2, MIG-001-AC1)",
+  "prd": false,
+  "source_request": false,
+  "mapping": [
+    {
+      "v1_id": "AUTH-001-AC1",
+      "acceptance_id": "AUTH-001-AC1",
+      "requirement_id": "AUTH-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/auth.test.js",
+      "command": "node --test test/auth.test.js"
+    },
+    {
+      "v1_id": "BILL-002-AC1",
+      "acceptance_id": "BILL-002-AC1",
+      "requirement_id": "BILL-002",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/bill.test.js",
+      "command": "node --test test/bill.test.js"
+    },
+    {
+      "v1_id": "AUTH-001",
+      "acceptance_id": "AUTH-001-AC3",
+      "requirement_id": "AUTH-001",
+      "kind": "runtime",
+      "renamed": true,
+      "v1_proof_command": "node --test test/audit.test.js",
+      "command": "node --test test/audit.test.js"
+    },
+    {
+      "v1_id": "MIG-001-AC1",
+      "acceptance_id": "MIG-001-AC1",
+      "requirement_id": "MIG-001",
+      "kind": "static",
+      "renamed": false,
+      "v1_proof_command": "",
+      "command": null
+    },
+    {
+      "v1_id": "legacy-check",
+      "acceptance_id": "MIG-002-AC1",
+      "requirement_id": "MIG-002",
+      "kind": "runtime",
+      "renamed": true,
+      "v1_proof_command": "node --test test/legacy.test.js",
+      "command": "node --test test/legacy.test.js"
+    },
+    {
+      "v1_id": "AUTH-001-AC2",
+      "acceptance_id": "AUTH-001-AC2",
+      "requirement_id": "AUTH-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/logout.test.js",
+      "command": "node --test test/logout.test.js"
+    }
+  ],
+  "requirements": [
+    [
+      "AUTH-001",
+      [
+        "AUTH-001-AC1",
+        "AUTH-001-AC3",
+        "AUTH-001-AC2"
+      ]
+    ],
+    [
+      "BILL-002",
+      [
+        "BILL-002-AC1"
+      ]
+    ],
+    [
+      "MIG-001",
+      [
+        "MIG-001-AC1"
+      ]
+    ],
+    [
+      "MIG-002",
+      [
+        "MIG-002-AC1"
+      ]
+    ]
+  ],
+  "conflicts": [],
+  "unmapped_tests": [],
+  "lost": [],
+  "provenance_missing": true,
+  "todos_include": [
+    {
+      "path": "/requirements/0/acceptance/1/given",
+      "reason_includes": "v1 acceptance AUTH-001 (renamed AUTH-001-AC3)"
+    },
+    {
+      "path": "/requirements/3/acceptance/0/negative_control/mutation",
+      "reason_includes": "legacy-check"
+    },
+    {
+      "path": "/requirements/0/statement",
+      "reason_includes": "AUTH-001-AC1, AUTH-001, AUTH-001-AC2"
+    }
+  ]
+}

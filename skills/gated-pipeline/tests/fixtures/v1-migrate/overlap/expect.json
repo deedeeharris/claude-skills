@@ -1,0 +1,43 @@
+{
+  "description": "v1 scope lists that v2 rejects: a protected path inside an allowed one (G33) and a state path inside an allowed one (G34)",
+  "prd": false,
+  "source_request": false,
+  "mapping": [
+    {
+      "v1_id": "KEYS-001-AC1",
+      "acceptance_id": "KEYS-001-AC1",
+      "requirement_id": "KEYS-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/keys.test.js",
+      "command": "node --test test/keys.test.js"
+    }
+  ],
+  "conflicts": [
+    {
+      "kind": "scope_overlap",
+      "id": null,
+      "rule": "G33",
+      "path": "/scope/allowed_paths/0",
+      "value": "src/",
+      "overlaps": "src/secrets/"
+    },
+    {
+      "kind": "scope_overlap",
+      "id": null,
+      "rule": "G34",
+      "path": "/scope/state_paths/0",
+      "value": "src/cache/",
+      "overlaps": "src/"
+    }
+  ],
+  "unmapped_tests": [],
+  "lost": [],
+  "provenance_missing": true,
+  "todos_include": [
+    {
+      "path": "/suite/known_failures",
+      "reason_includes": "tests.known_failures"
+    }
+  ]
+}

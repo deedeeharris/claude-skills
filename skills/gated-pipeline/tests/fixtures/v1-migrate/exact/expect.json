@@ -55,6 +55,14 @@
     {
       "path": "/suite/command",
       "reason_includes": "v1 manifest has no suite"
+    },
+    {
+      "path": "/requirements/0/depends_on",
+      "reason_includes": "v1 has no dependencies"
+    },
+    {
+      "path": "/suite/known_failures",
+      "reason_includes": "tests.known_failures"
     }
   ]
 }

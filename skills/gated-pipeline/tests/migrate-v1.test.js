@@ -3,9 +3,10 @@
 // WP6 (docs/v2-plan.md, docs/v2-design.md section 8): scripts/migrate-v1.js on synthetic v1 fixtures
 // (tests/fixtures/v1-migrate/<case>/: execution-plan.json, spec.md, optional prd.md and request.txt, expect.json).
 // Each case names the report entries it must produce: the exact acceptance-id/proof mapping, todos, conflicts,
-// unmapped tests, lost sections and missing provenance. Every case also checks that the inputs are byte-unchanged,
-// that every MIGRATION-TODO in the draft is listed in the report (and nothing else is), and that the draft never
-// validates. The preservation test runs the v1 completion on a real v1 run after migrating it.
+// unmapped tests, lost sections, scope overlaps and missing provenance. Every case also checks that the inputs are
+// byte-unchanged, that every field the v1 inputs cannot determine holds MIGRATION-TODO (an independent list, written
+// from design 8 and the schema), that every token in the draft is listed in the report (and nothing else is), and
+// that the validator rejects the draft for its todos only. The preservation test runs the v1 completion on a real v1 run after migrating it.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -64,6 +65,49 @@ function setAt(root, pointer, value) {
   keys.reduce((v, k) => v[k], root)[last] = value;
 }
 
+// Written from design section 8 and schemas/feature.schema.json, not from the migrator: every field the v1 inputs
+// (manifest, spec.md, prd.md, the request) cannot determine, located by its meaning in the draft. Each must hold
+// the token, whatever its type, so a migrator that invents a value (live false, priority P2, budget 0, ...) fails.
+const TYPED = ['priority', 'depends_on', 'live', 'exclusive', 'known_failures', 'isolated', 'timeout_min', 'live_budget_min',
+  'proof_timeout_s', 'negative_controls_total_min', 'budget_min', 'quiet', 'effort'];
+function underivable(draft, manifest, mapping, expect) {
+  const out = ['/coverage/0/excerpt', '/product/problem', '/product/actors/0', '/product/goals/0/statement', '/product/success_metrics/0',
+    '/architecture/approach', '/architecture/components/0/name', '/architecture/components/0/description',
+    '/architecture/components/0/owned_paths/0', '/architecture/components/0/exclusive',
+    '/architecture/security/data_exposure', '/architecture/security/input_validation', '/architecture/security/resource_consumption',
+    '/suite/command', '/suite/unit_command', '/suite/known_failures', '/suite/isolated', '/suite/setup_command', '/suite/timeout_min',
+    '/suite/live_budget_min', '/limits/proof_timeout_s', '/limits/negative_controls_total_min', '/test_plan'];
+  if (!expect.source_request) out.push('/source_request/text');
+  const v1 = id => manifest.requirements.find(r => r.id === mapping.find(m => m.acceptance_id === id).v1_id);
+  let runtime = false;
+  draft.requirements.forEach((q, i) => {
+    out.push(`/requirements/${i}/statement`, `/requirements/${i}/priority`, `/requirements/${i}/depends_on`);
+    q.acceptance.forEach((a, j) => {
+      const p = `/requirements/${i}/acceptance/${j}`;
+      out.push(`${p}/given`, `${p}/when`, `${p}/then`, `${p}/negative_control/description`);
+      if (v1(a.id).kind === 'runtime') {
+        runtime = true;
+        out.push(`${p}/verification/live`, `${p}/negative_control/mutation`);
+        if (!v1(a.id).proof_command.trim() || /[\r\n]/.test(v1(a.id).proof_command)) out.push(`${p}/verification/command`);
+      } else out.push(`${p}/verification/evidence/paths/0`, `${p}/verification/evidence/description`, `${p}/negative_control/exemption_reason`);
+    });
+  });
+  if (runtime) out.push('/scope/test_paths/0');
+  manifest.checks.forEach((c, i) => {
+    out.push(...['budget_min', 'quiet', 'effort', 'environment'].map(k => `/checks/${i}/${k}`));
+    if (c.applicable) out.push(`/checks/${i}/command`, `/checks/${i}/timeout_min`);
+    if (!c.reason.trim()) out.push(`/checks/${i}/reason`);
+  });
+  return out;
+}
+// The list fields whose placeholder item exists only when a spec.md/prd.md section maps to them.
+const PLACEHOLDER_LISTS = ['/product/non_goals/', '/product/constraints/', '/product/risks/', '/architecture/decisions/',
+  '/architecture/invariants/', '/architecture/security/accepted_risks/'];
+const SCHEMA_CODES = ['E_TYPE', 'E_ENUM', 'E_CONST', 'E_PATTERN', 'E_MIN_LENGTH', 'E_MIN_ITEMS', 'E_MINIMUM', 'E_MAXIMUM', 'E_REQUIRED', 'E_UNKNOWN_FIELD'];
+// A schema-valid value for a typed todo (by field name), so the graph rules run on the rest.
+const TYPED_FILL = { priority: 'P1', depends_on: [], live: false, exclusive: true, known_failures: [], isolated: false, timeout_min: 5,
+  live_budget_min: 0, proof_timeout_s: 60, negative_controls_total_min: 5, budget_min: 0, quiet: false, effort: 'low' };
+
 function runCase(name, extra = {}) {
   const dir = path.join(FIXTURES, name);
   const expect = JSON.parse(fs.readFileSync(path.join(dir, 'expect.json'), 'utf8'));
@@ -105,11 +149,18 @@ describe('migrate-v1 fixtures (design 8, plan 5.4)', () => {
       assert.ok(tokens.equal.length > 0, 'a draft always carries MIGRATION-TODO');
       assert.deepEqual(report.todos.map(t => t.path).sort(), tokens.equal.sort(), 'todos are exactly the token fields');
       assert.equal(new Set(report.todos.map(t => t.path)).size, report.todos.length, 'one todo per field');
-      // exact acceptance ids and proof commands, in manifest order
+      // every field the v1 inputs cannot determine holds the token (an independent list, see underivable)
+      const required = underivable(draft, manifest, expect.mapping, expect);
+      for (const p of required) assert.equal(at(draft, p), TOKEN, `${p} is underivable and must hold ${TOKEN}`);
+      const extraTokens = tokens.equal.filter(p => !required.includes(p));
+      assert.deepEqual(extraTokens.filter(p => !PLACEHOLDER_LISTS.some(l => p.startsWith(l))), [], 'no other field holds the token');
+      // the draft's requirements and their acceptances, when the fixture names them
+      if (expect.requirements) assert.deepEqual(draft.requirements.map(q => [q.id, q.acceptance.map(a => a.id)]), expect.requirements);
+      // exact acceptance ids and proof commands; the mapping is in manifest order, the draft groups by requirement
       const acceptances = draft.requirements.flatMap(q => q.acceptance.map(a => ({ q, a })));
-      assert.deepEqual(acceptances.map(x => x.a.id), report.mapping.map(m => m.acceptance_id));
+      assert.deepEqual(acceptances.map(x => x.a.id).sort(), report.mapping.map(m => m.acceptance_id).sort());
       report.mapping.forEach((m, i) => {
-        const { q, a } = acceptances[i];
+        const { q, a } = acceptances.find(x => x.a.id === m.acceptance_id);
         assert.equal(m.v1_id, manifest.requirements[i].id);
         assert.equal(m.v1_proof_command, manifest.requirements[i].proof_command);
         assert.equal(q.id, m.requirement_id);
@@ -123,10 +174,31 @@ describe('migrate-v1 fixtures (design 8, plan 5.4)', () => {
       for (const k of ['allowed_paths', 'protected_paths', 'state_paths', 'clean_ignore']) assert.deepEqual(draft.scope[k], manifest[k] || [], k);
       assert.deepEqual(draft.checks.map(c => [c.name, c.applicable]), manifest.checks.map(c => [c.name, c.applicable]));
       manifest.checks.forEach((c, i) => assert.equal(draft.checks[i].reason, c.reason || TOKEN));
-      // the draft is rejected by the validator
-      const v = node(VALIDATE, ['--file', out, '--repo-path', `.pipeline/features/${manifest.feature_id}.feature.json`]);
+      // the draft is rejected by the validator, and only for its todos: on the raw draft every error is a schema
+      // error at a typed todo (the graph rules wait for a schema-valid file) ...
+      const repoPath = `.pipeline/features/${manifest.feature_id}.feature.json`;
+      const v = node(VALIDATE, ['--file', out, '--repo-path', repoPath]);
       assert.equal(v.status, 1, v.stderr + v.stdout);
-      assert.equal(JSON.parse(v.stdout).valid, false);
+      const raw = JSON.parse(v.stdout);
+      assert.equal(raw.valid, false);
+      const todoPaths = report.todos.map(t => t.path);
+      const typed = todoPaths.filter(p => TYPED.includes(p.split('/').pop()));
+      for (const e of raw.errors) assert.ok(SCHEMA_CODES.includes(e.code) && typed.includes(e.path), `raw draft error ${e.code} at ${e.path} is a schema error at a typed todo`);
+      assert.deepEqual([...new Set(raw.errors.map(e => e.path))].sort(), [...typed].sort(), 'every typed todo is a schema error');
+      // ... and with the typed todos filled, every string todo is E_MIGRATION_TODO (G39); any other error is at a
+      // todo path or is a scope overlap the report lists as a conflict
+      const filledTyped = JSON.parse(JSON.stringify(draft));
+      for (const p of typed) setAt(filledTyped, p, TYPED_FILL[p.split('/').pop()]);
+      const typedOut = out.replace(/draft/, 'typed');
+      fs.writeFileSync(typedOut, JSON.stringify(filledTyped, null, 2) + '\n');
+      const v2 = node(VALIDATE, ['--file', typedOut, '--repo-path', repoPath]);
+      assert.equal(v2.status, 1, v2.stderr + v2.stdout);
+      const errs = JSON.parse(v2.stdout).errors;
+      const strings = todoPaths.filter(p => !typed.includes(p));
+      for (const p of strings) assert.ok(errs.some(e => e.path === p && e.code === 'E_MIGRATION_TODO' && e.rule === 'G39'), `${p}: E_MIGRATION_TODO`);
+      const overlaps = report.conflicts.filter(c => c.kind === 'scope_overlap').map(c => c.path);
+      for (const e of errs) assert.ok(strings.includes(e.path) || overlaps.includes(e.path), `error ${e.code} ${e.rule} at ${e.path} is a todo or a reported overlap`);
+      for (const p of overlaps) assert.ok(errs.some(e => e.path === p && ['G33', 'G34'].includes(e.rule)), `${p}: the reported overlap is what v2 rejects`);
     });
   }
 
@@ -135,7 +207,7 @@ describe('migrate-v1 fixtures (design 8, plan 5.4)', () => {
     const byKey = {
       priority: 'P1', live: false, exclusive: true, timeout_min: 5, budget_min: 0, quiet: false, effort: 'low', isolated: false,
       proof_timeout_s: 60, negative_controls_total_min: 5, live_budget_min: 0, command: 'npm test', unit_command: 'npm test',
-      setup_command: null,
+      setup_command: null, depends_on: [], known_failures: [],
     };
     const byPath = { '/architecture/components/0/owned_paths/0': 'src/', '/scope/test_paths/0': 'test/', '/requirements/1/acceptance/0/verification/evidence/paths/0': 'src/' };
     let n = 0;
@@ -177,6 +249,12 @@ describe('migrate-v1 fixtures (design 8, plan 5.4)', () => {
     fs.writeFileSync(badManifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(dir, 'execution-plan.json'), 'utf8')), version: 2 }));
     const dupManifest = path.join(root, 'dup.json');
     fs.writeFileSync(dupManifest, '{"version":1,"version":1}');
+    const exactManifest = JSON.parse(fs.readFileSync(path.join(dir, 'execution-plan.json'), 'utf8'));
+    const variant = (file, change) => { const m = JSON.parse(JSON.stringify(exactManifest)); change(m); fs.writeFileSync(path.join(root, file), JSON.stringify(m)); return path.join(root, file); };
+    const extraTop = variant('extra-top.json', m => { m.extra_field = 'dropped?'; });
+    const extraReq = variant('extra-req.json', m => { m.requirements[0].priority = 'P0'; });
+    const extraCheck = variant('extra-check.json', m => { m.checks[0].command = 'npm run lint'; });
+    const noAllowed = variant('no-allowed.json', m => { m.allowed_paths = []; });
     const badSpec = path.join(root, 'bad.md');
     fs.writeFileSync(badSpec, Buffer.from([0x23, 0x20, 0xff, 0x0a]));
     const existing = path.join(root, 'existing.json');
@@ -191,6 +269,10 @@ describe('migrate-v1 fixtures (design 8, plan 5.4)', () => {
       ['unsafe feature id', [...base.slice(0, 5), '../x', '--out', path.join(root, 'd.json')]],
       ['a version 2 manifest', ['--manifest', badManifest, ...base.slice(2), '--out', path.join(root, 'e.json')]],
       ['a duplicate key in the manifest', ['--manifest', dupManifest, ...base.slice(2), '--out', path.join(root, 'f.json')]],
+      ['an unknown top-level manifest key', ['--manifest', extraTop, ...base.slice(2), '--out', path.join(root, 'f1.json')]],
+      ['an unknown requirement key', ['--manifest', extraReq, ...base.slice(2), '--out', path.join(root, 'f2.json')]],
+      ['an unknown check key', ['--manifest', extraCheck, ...base.slice(2), '--out', path.join(root, 'f3.json')]],
+      ['an empty allowed_paths', ['--manifest', noAllowed, ...base.slice(2), '--out', path.join(root, 'f4.json')]],
       ['invalid UTF-8 in spec.md', [...base.slice(0, 2), '--spec', badSpec, ...base.slice(4), '--out', path.join(root, 'g.json')]],
       ['missing prd.md', [...base, '--prd', path.join(root, 'absent.md'), '--out', path.join(root, 'h.json')]],
       ['an existing --out', [...base, '--out', existing]],
@@ -208,6 +290,22 @@ describe('migrate-v1 fixtures (design 8, plan 5.4)', () => {
     }
     assert.deepEqual(hashTree(root), before, 'nothing written');
     assert.deepEqual(hashTree(dir), fixturesBefore, 'inputs unchanged');
+  });
+
+  test('an I/O error while writing the draft or its report exits 2 and leaves nothing behind', () => {
+    // A file name is at most 255 bytes; each write goes to a sibling temp name `.<name>.tmp-<pid>-<12 hex>` first
+    // (19 bytes plus the pid). A 240-byte draft name fails on the draft's temp file; a 229-byte one writes the
+    // draft and fails on the report's temp file (12 bytes longer), so the draft must be removed again.
+    const dir = path.join(FIXTURES, 'exact');
+    const base = ['--manifest', path.join(dir, 'execution-plan.json'), '--spec', path.join(dir, 'spec.md'), '--feature-id', 'login'];
+    for (const [label, len] of [['the draft write fails', 240], ['the report write fails', 229]]) {
+      const root = tmp();
+      const r = migrate([...base, '--out', path.join(root, 'd'.repeat(len - 5) + '.json')]);
+      assert.equal(r.status, 2, `${label}: ${r.stdout}${r.stderr}`);
+      assert.equal(r.stdout, '', label);
+      assert.match(r.stderr, /^migrate-v1: /, `${label}: one reason line, no stack trace`);
+      assert.deepEqual(fs.readdirSync(root), [], `${label}: nothing written`);
+    }
   });
 });
 
