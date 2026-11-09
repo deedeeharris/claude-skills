@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "feature_id": "settings",
+  "spec_sha256": "dcfa95d0ea943b9887d24a333aa340d1fa83a6a756fc6b23a4c1d15b8d6b1caa",
+  "allowed_paths": [
+    "src/",
+    "test/"
+  ],
+  "protected_paths": [],
+  "requirements": [
+    {
+      "id": "UI-001-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/ui.test.js"
+    },
+    {
+      "id": "UI-001-AC2",
+      "kind": "static",
+      "proof_command": "inspect test/snapshot.test.js"
+    }
+  ],
+  "checks": []
+}

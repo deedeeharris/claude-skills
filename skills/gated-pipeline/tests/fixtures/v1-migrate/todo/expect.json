@@ -1,0 +1,60 @@
+{
+  "description": "v1 ids outside the v2 form, an empty and a multi-line runtime command, a static command, a check without reason",
+  "prd": false,
+  "source_request": false,
+  "mapping": [
+    {
+      "v1_id": "R1",
+      "acceptance_id": "MIG-001-AC1",
+      "requirement_id": "MIG-001",
+      "kind": "runtime",
+      "renamed": true,
+      "v1_proof_command": "",
+      "command": "MIGRATION-TODO"
+    },
+    {
+      "v1_id": "R2",
+      "acceptance_id": "MIG-002-AC1",
+      "requirement_id": "MIG-002",
+      "kind": "runtime",
+      "renamed": true,
+      "v1_proof_command": "node scripts/export.js\nnode scripts/check-header.js",
+      "command": "MIGRATION-TODO"
+    },
+    {
+      "v1_id": "R3",
+      "acceptance_id": "MIG-003-AC1",
+      "requirement_id": "MIG-003",
+      "kind": "static",
+      "renamed": true,
+      "v1_proof_command": "inspect src/export.js",
+      "command": null
+    }
+  ],
+  "conflicts": [],
+  "unmapped_tests": [],
+  "lost": [],
+  "provenance_missing": true,
+  "todos_include": [
+    {
+      "path": "/requirements/0/acceptance/0/verification/command",
+      "reason_includes": "empty"
+    },
+    {
+      "path": "/requirements/1/acceptance/0/verification/command",
+      "reason_includes": "multi-line"
+    },
+    {
+      "path": "/requirements/2/acceptance/0/verification/evidence/description",
+      "reason_includes": "inspect src/export.js"
+    },
+    {
+      "path": "/checks/0/reason",
+      "reason_includes": "empty"
+    },
+    {
+      "path": "/checks/0/command",
+      "reason_includes": "service smoke"
+    }
+  ]
+}

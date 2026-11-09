@@ -1,0 +1,37 @@
+{
+  "description": "spec.md and prd.md sections with no v2 field",
+  "prd": true,
+  "source_request": false,
+  "mapping": [
+    {
+      "v1_id": "SEARCH-001-AC1",
+      "acceptance_id": "SEARCH-001-AC1",
+      "requirement_id": "SEARCH-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/search.test.js",
+      "command": "node --test test/search.test.js"
+    }
+  ],
+  "conflicts": [],
+  "unmapped_tests": [],
+  "lost": [
+    {
+      "file": "prd.md",
+      "line": 3,
+      "heading": "Background"
+    },
+    {
+      "file": "spec.md",
+      "line": 6,
+      "heading": "Rollout timeline"
+    },
+    {
+      "file": "spec.md",
+      "line": 9,
+      "heading": "Glossary"
+    }
+  ],
+  "provenance_missing": true,
+  "todos_include": []
+}

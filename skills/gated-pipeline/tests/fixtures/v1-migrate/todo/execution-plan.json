@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "feature_id": "export",
+  "spec_sha256": "4016089026a9513d4a35a88c387fd3b45699a9b4f5811a00062461a7454de772",
+  "allowed_paths": [
+    "src/"
+  ],
+  "protected_paths": [],
+  "requirements": [
+    {
+      "id": "R1",
+      "kind": "runtime",
+      "proof_command": ""
+    },
+    {
+      "id": "R2",
+      "kind": "runtime",
+      "proof_command": "node scripts/export.js\nnode scripts/check-header.js"
+    },
+    {
+      "id": "R3",
+      "kind": "static",
+      "proof_command": "inspect src/export.js"
+    }
+  ],
+  "checks": [
+    {
+      "name": "service smoke",
+      "applicable": true,
+      "reason": ""
+    }
+  ]
+}

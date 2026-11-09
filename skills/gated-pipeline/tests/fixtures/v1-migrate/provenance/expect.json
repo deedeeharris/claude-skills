@@ -1,0 +1,30 @@
+{
+  "description": "no prd.md and no original request",
+  "prd": false,
+  "source_request": false,
+  "mapping": [
+    {
+      "v1_id": "HEALTH-001-AC1",
+      "acceptance_id": "HEALTH-001-AC1",
+      "requirement_id": "HEALTH-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/health.test.js",
+      "command": "node --test test/health.test.js"
+    }
+  ],
+  "conflicts": [],
+  "unmapped_tests": [],
+  "lost": [],
+  "provenance_missing": true,
+  "todos_include": [
+    {
+      "path": "/source_request/text",
+      "reason_includes": "no original request"
+    },
+    {
+      "path": "/product/problem",
+      "reason_includes": "no prd.md"
+    }
+  ]
+}
