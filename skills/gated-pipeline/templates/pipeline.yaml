@@ -1,4 +1,9 @@
 # gated-pipeline config for this repo. The main session reads it and passes values to the workflows as args.
+# contract 2 (v2, every new feature): the canonical feature file <design.features_dir>/<feature_id>.feature.json holds the
+# suite, unit and setup commands and the checks, so tests.unit_cmd/suite_cmd/suite_isolated/isolated_setup and verify_checks
+# are v1-only. tests.known_failures, tests.clean_ignore and state.paths stay here as the repo owner's UPPER BOUND: write each as a
+# one-line JSON array (a trailing # comment is fine); the canonical lists must be subsets of them at the design commit.
+# Repos that convert line endings: add `.pipeline/features/*.feature.json -text` (your features_dir) to .gitattributes.
 branches:
   work: feature/my-change   # orchestrator-selected branch; existing checkout or optional feature worktree
   trunk: main               # PR target; the human merges
@@ -11,6 +16,8 @@ reviews:
   review_timeout_seconds: 1200   # per codex attempt; a real review of a few files takes 10+ minutes
   review_fallback: none     # none | opus-high. opus-high: ONLY when codex is NOT AVAILABLE in the environment, Claude Opus 5.5 at
                             # high effort runs the same review, labelled "claude-opus-high (codex unavailable)". A capped codex still WAITs.
+design:
+  features_dir: .pipeline/features   # contract 2: repo-relative dir of the canonical feature files (never under .git/); design arg features_dir
 agents:
   impl_effort: medium       # Claude implementer/fixer reasoning effort
   author_effort: medium     # PRD/spec author
@@ -18,14 +25,14 @@ limits:
   max_fix_rounds: 4         # build: codex FAIL -> fix -> re-review, at most this many times
   max_design_rounds: 3      # design: per document
 tests:
-  unit_cmd: ""              # focused tests for the change
-  suite_cmd: ""             # full suite, always run LAST
+  unit_cmd: ""              # v1 only: focused tests for the change (v2: suite.unit_command in the canonical file)
+  suite_cmd: ""             # v1 only: full suite, always run LAST (v2: suite.command)
   lock_note: ""             # e.g. "only via scripts/test/run.sh, which takes a machine-wide lock; never delete the lock"
-  known_failures: []        # EXACT failing test ids that predate the feature (list, or one id per line)
-  clean_ignore: []          # genuine state prefixes only; freeze in execution-plan.json too, never hide code or verification changes
-  suite_isolated: false     # true = run the suite in a fresh worktree of the reviewed commit (strongest; needs isolated_setup if deps are not committed)
-  isolated_setup: ""        # one-line setup run in that worktree first, e.g. "npm ci"
-verify_checks: []           # optional: [{name, how, budget_min, quiet, effort}]
+  known_failures: []        # EXACT failing test ids that predate the feature, one-line JSON array, e.g. ["suite::old test"] (v2: upper bound)
+  clean_ignore: []          # genuine state prefixes only, one-line JSON array, e.g. ["tmp/"]; never hide code or verification changes (v2: upper bound)
+  suite_isolated: false     # v1 only: true = run the suite in a fresh worktree of the reviewed commit (v2: suite.isolated)
+  isolated_setup: ""        # v1 only: one-line setup run in that worktree first, e.g. "npm ci" (v2: suite.setup_command)
+verify_checks: []           # v1 only, optional: [{name, how, budget_min, quiet, effort}] (v2: checks[] in the canonical file)
 security:                   # optional; the repo's own rules (this block, its checklist, CLAUDE.md) win over the skill's
   docs: []                  # ABSOLUTE paths to the repo's threat model / accepted-risk docs (design + build security pass read them)
   checklist: ""             # ABSOLUTE path to the repo's own OWASP checklist doc (build security pass applies it)
@@ -34,7 +41,7 @@ security:                   # optional; the repo's own rules (this block, its ch
 state:
   mode: simple              # simple = <state_dir>/<feature>/<stage>/<run_id>/result.json; or a repo-specific harness note
   state_dir: ""             # ABSOLUTE path OUTSIDE the repo, e.g. <home>/.pipeline-state/<repo-name>; run dirs (evidence, review worktrees) live here
-  paths: []                 # optional state-only paths on the branch; freeze as state_paths in execution-plan.json
+  paths: []                 # optional state-only paths on the branch, one-line JSON array, e.g. ["state/"] (v2: upper bound of scope.state_paths)
 completion:
   runner: ""                # default <gated-pipeline skill-dir>/scripts/check-completion.js, an ABSOLUTE path
                             # completion is mandatory; carry design's manifest_path/hash and saved build/verify results

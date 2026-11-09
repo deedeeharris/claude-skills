@@ -42,7 +42,7 @@ async function missingArgs(stage, args = {}) {
 }
 async function forbiddenArgs(stage) {
   const extra = stage === 'design' ? { feature_id: 'a', repo: '/r', run_dir: '/x', review_runner: '/y', completion_runner: '/z/check-completion.js', work_branch: 'b', source_request_path: '/s' } : {};
-  const { result } = await run(stage, { contract: 2, ...extra, ...Object.fromEntries(ALL_FORBIDDEN.filter(k => !['task', 'charge'].includes(k)).map(k => [k, 'x'])) }, []);
+  const { result } = await run(stage, { contract: 2, ...extra, ...Object.fromEntries(ALL_FORBIDDEN.filter(k => stage === 'design' || !['task', 'charge'].includes(k)).map(k => [k, 'x'])) }, []);
   const m = /^contract 2 does not take (.*?):/.exec(result.reason || '');
   assert.ok(m, `${stage}: contract 2 refuses the forbidden args (${JSON.stringify(result)})`);
   return m[1].split(', ');
@@ -63,7 +63,7 @@ describe('SKILL.md v2 arg tables (plan WP6)', () => {
     test(`${stage}: every required contract-2 arg is documented as required, every documented arg is read by the workflow`, async () => {
       const need = await missingArgs(stage);
       const { rows } = table(`### v2 args: ${stage}`);
-      const doc = new Map(rows.map(r => [ticked(r[0])[0], r[1]]));
+      const doc = new Map(rows.flatMap(r => ticked(r[0]).map(n => [n, r[1]])));
       for (const a of need) {
         assert.ok(doc.has(a), `${stage}: required arg ${a} is in the v2 arg table`);
         assert.match(doc.get(a), /^required/, `${stage}: ${a} is marked required`);
