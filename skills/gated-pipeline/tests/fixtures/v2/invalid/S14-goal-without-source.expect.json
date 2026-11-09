@@ -1,10 +1,10 @@
 {
   "case": "S14",
-  "variant": "goal without source",
-  "base": "valid/S01-minimal.feature.json",
+  "variant": "goal whose source_ids name only an excluded SRC",
+  "base": "valid/medium.feature.json",
   "mutation": {
-    "find": "\"source_ids\": [\"SRC-001\"]",
-    "replace": "\"source_ids\": []"
+    "find": "\"source_ids\": [\"SRC-001\", \"SRC-002\"]",
+    "replace": "\"source_ids\": [\"SRC-003\"]"
   },
   "exit": 1,
   "codes": [

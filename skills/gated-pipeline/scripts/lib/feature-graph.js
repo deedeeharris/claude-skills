@@ -14,7 +14,14 @@
 //   character, on every `id`, on `feature_id` and on `title`; `-rev<n>` takes any digits, `-v2` is literal;
 // - G04 compares every pair of requirements (active or retired); G07 reports one diagnostic per cycle, at the
 //   depends_on of the cycle's smallest id; G26 reports once, at /scope/test_paths;
-// - G38 rejects a `.git` segment anywhere in the features_dir;
+// - G38 rejects a `.git` segment anywhere in the features_dir, and a feature_id made only of dots (`.`, `..`:
+//   the schema pattern admits them, but later stages use feature_id as a path segment);
+// - G32 also rejects a `.git` segment (any case) in every scope, owned and evidence path, so no write scope
+//   can reach git hooks or config (the same reason G38 keeps features_dir out of `.git/`);
+// - G20 also rejects a suite command, unit_command or non-null setup_command that is empty or only whitespace
+//   (acceptance and check commands get that check from G18 and G28; the schema's minLength admits "   ");
+// - G03 matches title segments the same way as ids, so a title such as "Pre-fix greeting" is rejected (fail
+//   closed; the title is free text, so rename it);
 // - P02 covers lifecycle status and SRC disposition (checks have no "retired" state; a not-applicable check
 //   may become applicable again).
 
@@ -75,6 +82,7 @@ function unsafePath(p) {
   if (CONTROL.test(p) || /[\u0000-\u001F]/.test(p)) return 'contains a control character';
   if (!PATH_CHARS.test(p)) return 'contains a character outside [A-Za-z0-9._/ +@-]';
   if (p.split('/').includes('..')) return 'has a .. segment';
+  if (p.split('/').some(s => s.toLowerCase() === '.git')) return 'has a .git segment';
   return null;
 }
 const segs = p => p.split('/').filter(s => s !== '' && s !== '.');
@@ -94,6 +102,7 @@ function checkRepoPath(f, repoPath) {
   else if (!segs(dir).length) out.push(diag('E_SCOPE', 'G38', '', null, 'features_dir (the dirname of --repo-path) must be a directory inside the repo'));
   else if (segs(dir).some(s => s.toLowerCase() === '.git')) out.push(diag('E_SCOPE', 'G38', '', null, `features_dir ${JSON.stringify(dir)} is under .git/`));
   else featuresDir = segs(dir).join('/') + '/';
+  if (/^\.+$/.test(f.feature_id)) out.push(diag('E_SCOPE', 'G38', '/feature_id', null, `feature_id ${JSON.stringify(f.feature_id)} is only dots, which is no safe path segment`));
   const base = parts[parts.length - 1];
   if (base !== `${f.feature_id}.feature.json`) out.push(diag('E_SCOPE', 'G38', '/feature_id', null, `--repo-path basename ${JSON.stringify(base)} is not "${f.feature_id}.feature.json"`));
   return { out, featuresDir };
@@ -279,6 +288,7 @@ function graphRules(f, { repoPath }) {
   });
   for (const k of ['command', 'unit_command', 'setup_command']) {
     if (typeof f.suite[k] === 'string' && f.suite[k].includes('\n')) out.push(diag('E_PROOF', 'G20', `/suite/${k}`, null, `suite ${k} spans several lines`));
+    else if (typeof f.suite[k] === 'string' && blank(f.suite[k])) out.push(diag('E_PROOF', 'G20', `/suite/${k}`, null, `suite ${k} is empty or only whitespace`));
   }
   f.suite.known_failures.forEach((k, i) => { if (blank(k.reason)) out.push(diag('E_REASON_MISSING', 'G29', `/suite/known_failures/${i}/reason`, null, `known failure ${JSON.stringify(k.test_id)} has no reason`)); });
   // G31 control characters, G39 migration marker
