@@ -585,7 +585,8 @@ if (C2) {
     const draft = `${dir}/draft`
     const r = await agent(
       `Negative control ${n.id} of feature ${A.feature_id}: write the frozen mutation as a patch, then let run-frozen.js prove the proof of ${n.id} fails on it.\n` +
-      `1. Read negative_control.mutation of the entry ${n.id} in the requirements list of the frozen manifest ${A.manifest_path} (its UTF-8 bytes hash to ${n.mutation_sha256}). It is prose that says what to break, never a command.\n` +
+      `1. Read negative_control.mutation of the entry ${n.id} in the requirements list of the frozen manifest ${A.manifest_path}. Two different hashes apply: the manifest FILE hashes to ${A.manifest_sha256}, and the mutation STRING itself ` +
+      `(the value of that negative_control.mutation field, as UTF-8 bytes, without JSON quotes) hashes to ${n.mutation_sha256}. It is prose that says what to break, never a command.\n` +
       `2. Write that mutation as a unified git patch to ${patch}: mkdir -p ${q(dir)}; git -C ${q(A.repo)} worktree add --detach ${q(draft)} ${sha}; make the edit in ${draft} only, ` +
       `in non-test code inside the owned paths of the acceptance's components (never a file under the frozen test_paths, never a test the build added, never a file named in the proof command); ` +
       `git -C ${q(draft)} add -A -N; git -C ${q(draft)} diff --no-renames > ${q(patch)}; git -C ${q(A.repo)} worktree remove --force ${q(draft)} ` +
