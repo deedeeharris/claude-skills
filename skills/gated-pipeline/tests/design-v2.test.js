@@ -178,6 +178,8 @@ test(`${MOCKED}: contract 2 BLOCKS forbidden or mixed args, an unsafe features_d
     [{ feature_id: 'gr eet' }, /feature_id must match/],
     [{ completion_runner: '/x/other.js' }, /check-completion\.js/],
     [{ source_request_path: undefined }, /missing args: source_request_path/],
+    [{ run_dir: c.root + '/state/../design-run' }, /run_dir must be a normalized absolute POSIX path/],
+    [{ run_dir: c.root + '//design-run' }, /run_dir must be a normalized absolute POSIX path/],
   ];
   for (const [over, reason, code] of cases) {
     const { result, calls } = await run('design', c.args(over), []);
@@ -187,6 +189,48 @@ test(`${MOCKED}: contract 2 BLOCKS forbidden or mixed args, an unsafe features_d
     assert.equal(calls.length, 0, 'no agent call: ' + JSON.stringify(over));
   }
   assert.ok(!fs.existsSync(c.designRun), 'nothing was created');
+});
+
+// ---- the fresh run_dir: the start block makes it, with its parent ------------------------------------------------
+test(`${MOCKED}: the start block creates a run_dir whose parent does not exist (<state_dir>/<feature>/<stage>/<run_id>) and the run PASSes`, async t => {
+  const c = fixture(t);
+  const run = path.join(c.root, 'state', 'greet', 'design', 'r1');
+  assert.ok(!fs.existsSync(path.dirname(path.dirname(run))), 'the parent of the run_dir does not exist yet');
+  const { result, labels } = await design(c, c.args({ run_dir: run }), { reviews: { prd: [[]], spec: [[]] } });
+  assert.equal(result.status, 'PASS', JSON.stringify(result).slice(0, 2000));
+  assert.equal(labels[0], 'start');
+  assert.ok(fs.statSync(run).isDirectory(), 'the stage made the run_dir');
+  assert.equal(result.frozen_dir, path.join(run, 'frozen'));
+  assert.ok(fs.existsSync(path.join(run, 'start-head.json')));
+  assert.ok(!fs.existsSync(c.lockFile), 'the lock is released');
+});
+
+test(`${MOCKED}: an existing run_dir is BLOCKED at start with GP_RUN_DIR_EXISTS: no lock, no commit, no file written; a parent that cannot be made is GP_RUN_DIR_PARENT`, async t => {
+  const c = fixture(t);
+  const before = tip(c);
+  fs.mkdirSync(c.designRun);
+  fs.writeFileSync(path.join(c.designRun, 'old.txt'), 'an older run\n');
+  const existing = await design(c, c.args(), {});
+  assert.equal(existing.result.status, 'BLOCKED');
+  assert.equal(existing.result.stage, 'start');
+  assert.equal(existing.result.code, 'E_RUN_DIR_EXISTS');
+  assert.match(existing.result.reason, /GP_RUN_DIR_EXISTS/);
+  assert.deepEqual(existing.labels, ['start']);
+  assert.ok(!fs.existsSync(c.lockFile), 'no lock file');
+  assert.equal(tip(c), before, 'no commit');
+  assert.deepEqual(fs.readdirSync(c.designRun), ['old.txt'], 'nothing was written into the existing run_dir');
+  assert.ok(!fs.existsSync(c.featureFile), 'the seed was not copied');
+  // a parent path that is a regular file: its own marker, never "run dir exists"
+  const plain = path.join(c.root, 'plain-file');
+  fs.writeFileSync(plain, 'x\n');
+  const parent = await design(c, c.args({ run_dir: path.join(plain, 'r1') }), {});
+  assert.equal(parent.result.status, 'BLOCKED');
+  assert.equal(parent.result.code, 'E_RUN_DIR');
+  assert.match(parent.result.reason, /GP_RUN_DIR_PARENT/);
+  assert.doesNotMatch(parent.result.reason, /GP_RUN_DIR_EXISTS/);
+  assert.deepEqual(parent.labels, ['start']);
+  assert.ok(!fs.existsSync(c.lockFile), 'no lock file');
+  assert.equal(tip(c), before, 'no commit');
 });
 
 // ---- happy paths --------------------------------------------------------------------------------------------------

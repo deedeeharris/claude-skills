@@ -41,11 +41,10 @@ const bash = (body, env) => spawnSync('bash', ['-c', body], { env: env || cleanE
 const labels = calls => calls.map(c => c.options.label);
 const sameKeys = (o, keys) => assert.deepEqual(Object.keys(o).sort(), [...keys].sort());
 
+// A fresh run_dir path (<state_dir>/<stage>/<run_id>): picked here, created by the stage's first gp-exec block.
 let runCount = 0;
 function freshRun(c, name) {
-  const dir = path.join(c.root, `${name}-${++runCount}`);
-  fs.mkdirSync(dir);
-  return dir;
+  return path.join(c.root, 'state', name, `r${++runCount}`);
 }
 function frozenRepo(t, opts = {}) {
   const c = makeRepo(t, opts);
@@ -148,7 +147,7 @@ const suiteStep = (failures = [], other = []) => scriptStep(r => ({ stdout: r.st
 
 // Build v2 with the codex path (or the fallback when opts.fallback), saved to <root>/<name>.json.
 async function buildV2(c, opts = {}) {
-  const runDir = freshRun(c, 'build');
+  const runDir = opts.runDir || freshRun(c, 'build');
   const table = {
     'design preflight': stub(),
     implement: opts.implement || implement(c, opts.files),
@@ -170,7 +169,7 @@ async function buildV2(c, opts = {}) {
   return { result, calls, path: file, runDir };
 }
 async function verifyV2(c, build, opts = {}) {
-  const runDir = freshRun(c, 'verify');
+  const runDir = opts.runDir || freshRun(c, 'verify');
   const patch = id => () => {
     const dir = path.join(runDir, 'negative', id);
     fs.mkdirSync(dir, { recursive: true });
@@ -1158,6 +1157,52 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     });
   }
 
+  // ---- the fresh run_dir: the first gp-exec block of build and verify makes it, with its parent ----------------------------
+  test('fresh run_dir: build and verify create a run_dir whose parent does not exist; an existing run_dir is BLOCKED with GP_RUN_DIR_EXISTS and nothing else runs; an unusable parent is GP_RUN_DIR_PARENT', async (t) => {
+    const c = frozenRepo(t);
+    const nested = stage => path.join(c.root, 'fresh-state', 'greet', stage, 'r1');
+    assert.ok(!fs.existsSync(path.join(c.root, 'fresh-state')), 'the parent of the run_dirs does not exist yet');
+    // build: the preflight makes <state_dir>/greet/build/r1 and the run goes on to PASS
+    const b = await buildV2(c, { runDir: nested('build') });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    assert.equal(labels(b.calls)[0], 'design preflight');
+    assert.ok(fs.statSync(nested('build')).isDirectory());
+    assert.ok(fs.existsSync(path.join(nested('build'), 'design-preflight.json')));
+    // verify: the plan preflight makes <state_dir>/greet/verify/r1 and the stage proceeds to its checks
+    const v = await verifyV2(c, b, { runDir: nested('verify'), table: { 'check CHECK-LINT': STOP } });
+    assert.ok(v.result.stopped, JSON.stringify(v.result).slice(0, 2000));
+    assert.deepEqual(labels(v.calls), ['plan preflight', 'check CHECK-LINT']);
+    assert.ok(fs.statSync(nested('verify')).isDirectory());
+    // an existing run_dir: BLOCKED at the first step, nothing written into it, HEAD unchanged
+    const sha = head(c);
+    for (const stage of ['build', 'verify']) {
+      const dir = path.join(c.root, `existing-${stage}`);
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, 'old.txt'), 'an older run\n');
+      const out = stage === 'build' ? await buildV2(c, { runDir: dir }) : await verifyV2(c, b, { runDir: dir });
+      const first = stage === 'build' ? 'design preflight' : 'plan preflight';
+      assert.equal(out.result.status, 'BLOCKED', stage);
+      assert.equal(out.result.stage, stage === 'build' ? 'preflight' : 'plan preflight', stage);
+      assert.equal(out.result.code, 'E_RUN_DIR_EXISTS', stage);
+      assert.match((stage === 'build' ? out.result.preflight : out.result.plan).stdout, /GP_RUN_DIR_EXISTS/, stage);
+      assert.deepEqual(labels(out.calls), [first], `${stage}: nothing ran after the first step`);
+      assert.deepEqual(fs.readdirSync(dir), ['old.txt'], `${stage}: nothing was written into the existing run_dir`);
+      assert.equal(head(c), sha, `${stage}: HEAD unchanged`);
+    }
+    // a parent that is a regular file: its own marker, never "run dir exists"
+    const plain = path.join(c.root, 'plain-file');
+    fs.writeFileSync(plain, 'x\n');
+    const bo = await buildV2(c, { runDir: path.join(plain, 'r1') });
+    const vo = await verifyV2(c, b, { runDir: path.join(plain, 'r2') });
+    for (const [out, stdout] of [[bo, bo.result.preflight && bo.result.preflight.stdout], [vo, vo.result.plan && vo.result.plan.stdout]]) {
+      assert.equal(out.result.status, 'BLOCKED');
+      assert.equal(out.result.code, 'E_RUN_DIR');
+      assert.match(stdout, /GP_RUN_DIR_PARENT/);
+      assert.doesNotMatch(stdout, /GP_RUN_DIR_EXISTS/);
+      assert.equal(out.calls.length, 1);
+    }
+  });
+
   // ---- L3.9: resume is a new call with a fresh run_dir ------------------------------------------------------------------------
   test('L3.9: after a crashed build and verify, new calls with fresh run_dirs from the persisted design result keep source hash and base; the frozen dir is never recompiled; a partial ledger is never reused', async (t) => {
     const c = frozenRepo(t);
@@ -1187,10 +1232,13 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.ok(partial.result.stopped);
     const partialLedger = path.join(partialDir, 'acceptance-ledger.json');
     assert.ok(fs.existsSync(partialLedger));
-    // rerun in the same run_dir: run-frozen never overwrites a record, so the stage BLOCKS (not HEAD_MOVED: the checkout is pinned)
-    const reused = await run('verify', verifyArgs(c, partialDir, b.path), many(responder({ 'plan preflight': stub(), 'check CHECK-LINT': stub() })));
+    // rerun in the same run_dir: the plan preflight makes a fresh run_dir, so the stage BLOCKS before any check (not HEAD_MOVED: the checkout is pinned)
+    const reused = await run('verify', verifyArgs(c, partialDir, b.path), many(responder({ 'plan preflight': stub() })));
     assert.equal(reused.result.status, 'BLOCKED', JSON.stringify(reused.result).slice(0, 2000));
-    assert.equal(reused.result.stage, 'check CHECK-LINT');
+    assert.equal(reused.result.stage, 'plan preflight');
+    assert.equal(reused.result.code, 'E_RUN_DIR_EXISTS');
+    assert.match(reused.result.plan.stdout, /GP_RUN_DIR_EXISTS/);
+    assert.deepEqual(labels(reused.calls), ['plan preflight']);
     // the resumed verify: a fresh run_dir, its own ledger
     const v = await verifyV2(c, b);
     assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
