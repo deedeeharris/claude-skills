@@ -1,0 +1,20 @@
+{
+  "case": "X02",
+  "variant": "id segment -FIX",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"id\": \"CHECK-LINT\"",
+    "replace": "\"id\": \"CHECK-LINT-FIX\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_SHADOW_ID"
+  ],
+  "rules": [
+    "G03"
+  ],
+  "paths": [
+    "/checks/0/id"
+  ],
+  "args": {}
+}

@@ -1,0 +1,18 @@
+{
+  "case": "S12",
+  "variant": "unsupported kind manual",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"kind\": \"runtime\"",
+    "replace": "\"kind\": \"manual\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ENUM"
+  ],
+  "rules": [],
+  "paths": [
+    "/requirements/0/acceptance/0/verification/kind"
+  ],
+  "args": {}
+}

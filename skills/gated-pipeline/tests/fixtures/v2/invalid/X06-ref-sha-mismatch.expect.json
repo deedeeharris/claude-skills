@@ -1,0 +1,23 @@
+{
+  "case": "X06",
+  "variant": "ref sha256 differs from the request bytes",
+  "base": "valid/X06-ref.feature.json",
+  "mutation": {
+    "find": "45811ca106dfe2d600994e0961be70c94a88c27ff3ed404a1e079c3ad44032a5",
+    "replace": "05811ca106dfe2d600994e0961be70c94a88c27ff3ed404a1e079c3ad44032a5"
+  },
+  "exit": 1,
+  "codes": [
+    "E_SOURCE_MISMATCH"
+  ],
+  "rules": [
+    "R02"
+  ],
+  "paths": [
+    "/source_request/sha256"
+  ],
+  "args": {
+    "source_request": "valid/X06-ref.request.txt",
+    "source_mode": "ref"
+  }
+}

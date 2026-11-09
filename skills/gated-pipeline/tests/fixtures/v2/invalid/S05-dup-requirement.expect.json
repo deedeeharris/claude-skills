@@ -1,0 +1,20 @@
+{
+  "case": "S05",
+  "variant": "duplicate requirement id",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "    }\n  ],\n  \"scope\"",
+    "replace": "    },\n    { \"id\": \"HELLO-001\", \"status\": \"active\", \"goal_ids\": [\"GOAL-001\"], \"statement\": \"GET /hello sets the content type to text/plain.\", \"priority\": \"P1\", \"depends_on\": [], \"component_ids\": [\"COMP-SERVER\"], \"acceptance\": [ { \"id\": \"HELLO-001-AC2\", \"status\": \"active\", \"given\": \"the server is running\", \"when\": \"a client sends GET /hello\", \"then\": \"the content type is text/plain\", \"verification\": { \"kind\": \"runtime\", \"live\": false, \"command\": \"node --test test/hello-type.test.js\", \"expected\": { \"exit_code\": 0 } }, \"negative_control\": { \"method\": \"isolated_mutation\", \"description\": \"Drop the header.\", \"mutation\": \"Remove the content type header.\" } } ] }\n  ],\n  \"scope\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_DUP_ID"
+  ],
+  "rules": [
+    "G01"
+  ],
+  "paths": [
+    "/requirements/1/id"
+  ],
+  "args": {}
+}

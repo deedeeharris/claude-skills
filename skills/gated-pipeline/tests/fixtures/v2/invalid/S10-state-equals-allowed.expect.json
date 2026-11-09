@@ -1,0 +1,20 @@
+{
+  "case": "S10",
+  "variant": "state path equal to an allowed path",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"state_paths\": []",
+    "replace": "\"state_paths\": [\"test/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_STATE_OVERLAP"
+  ],
+  "rules": [
+    "G34"
+  ],
+  "paths": [
+    "/scope/state_paths/0"
+  ],
+  "args": {}
+}

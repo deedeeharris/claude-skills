@@ -1,0 +1,11 @@
+{
+  "case": "L2",
+  "variant": "several components, exclusive and shared",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "args": {}
+}

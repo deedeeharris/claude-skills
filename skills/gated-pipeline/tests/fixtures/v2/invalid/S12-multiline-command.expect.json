@@ -1,0 +1,20 @@
+{
+  "case": "S12",
+  "variant": "multi-line acceptance command",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"command\": \"node --test test/hello.test.js\"",
+    "replace": "\"command\": \"node --test\\ntest/hello.test.js\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G20"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/verification/command"
+  ],
+  "args": {}
+}

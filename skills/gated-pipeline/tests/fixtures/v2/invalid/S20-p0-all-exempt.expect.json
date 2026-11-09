@@ -1,0 +1,20 @@
+{
+  "case": "S20",
+  "variant": "P0 all-exempt without alternate evidence",
+  "base": "valid/S20-alternate-evidence.feature.json",
+  "mutation": {
+    "find": ",\n            \"alternate_evidence\": {\n              \"paths\": [\n                \"docs/route-review.md\"\n              ],\n              \"description\": \"Review notes of the generated route.\"\n            }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_NEGATIVE_CONTROL"
+  ],
+  "rules": [
+    "G25"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/negative_control/alternate_evidence"
+  ],
+  "args": {}
+}

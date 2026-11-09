@@ -1,0 +1,18 @@
+{
+  "case": "S12",
+  "variant": "expected exit_code 1",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"command\": \"node --test test/hello.test.js\", \"expected\": { \"exit_code\": 0 }",
+    "replace": "\"command\": \"node --test test/hello.test.js\", \"expected\": { \"exit_code\": 1 }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_CONST"
+  ],
+  "rules": [],
+  "paths": [
+    "/requirements/0/acceptance/0/verification/expected/exit_code"
+  ],
+  "args": {}
+}

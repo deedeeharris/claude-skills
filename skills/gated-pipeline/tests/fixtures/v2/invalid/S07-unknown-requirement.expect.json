@@ -1,0 +1,20 @@
+{
+  "case": "S07",
+  "variant": "unknown requirement in coverage",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"requirement_ids\": [\"HELLO-001\"]",
+    "replace": "\"requirement_ids\": [\"HELLO-001\", \"HELLO-009\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_REF"
+  ],
+  "rules": [
+    "G05"
+  ],
+  "paths": [
+    "/coverage/0/requirement_ids/1"
+  ],
+  "args": {}
+}

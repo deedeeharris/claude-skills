@@ -1,0 +1,20 @@
+{
+  "case": "X02",
+  "variant": "identical normalized statements",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"statement\": \"Passwords are compared in constant time.\"",
+    "replace": "\"statement\": \"after 5 failed  logins, the account is LOCKED for 15 minutes\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_DUP_STATEMENT"
+  ],
+  "rules": [
+    "G04"
+  ],
+  "paths": [
+    "/requirements/2/statement"
+  ],
+  "args": {}
+}

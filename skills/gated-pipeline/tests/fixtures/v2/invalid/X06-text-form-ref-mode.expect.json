@@ -1,0 +1,23 @@
+{
+  "case": "X06",
+  "variant": "text form in ref mode",
+  "base": "valid/X06-ref.feature.json",
+  "mutation": {
+    "find": "\"source_request\": {\n    \"ref\": \"tracker item EXP-7 (private)\",\n    \"sha256\": \"45811ca106dfe2d600994e0961be70c94a88c27ff3ed404a1e079c3ad44032a5\",\n    \"summary\": \"Limit export requests per partner.\"\n  }",
+    "replace": "\"source_request\": {\n    \"text\": \"Confidential: add rate limiting to the partner export endpoint so that one partner cannot exhaust the export workers.\"\n  }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_SOURCE_FORM"
+  ],
+  "rules": [
+    "R03"
+  ],
+  "paths": [
+    "/source_request"
+  ],
+  "args": {
+    "source_request": "valid/X06-ref.request.txt",
+    "source_mode": "ref"
+  }
+}

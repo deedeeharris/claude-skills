@@ -1,0 +1,22 @@
+{
+  "case": "X01",
+  "variant": "check removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n    { \"id\": \"CHECK-MANUAL\", \"name\": \"Phone check\", \"applicable\": false, \"reason\": \"Needs a human with a phone.\", \"budget_min\": 0, \"quiet\": false, \"effort\": \"low\", \"environment\": \"\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/checks"
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

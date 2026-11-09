@@ -1,0 +1,22 @@
+{
+  "case": "X01",
+  "variant": "acceptance removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n        {\n          \"id\": \"AUTH-001-AC2\", \"status\": \"retired\", \"retired_rationale\": \"Merged into AUTH-001-AC1.\",\n          \"given\": \"a locked account\",\n          \"when\": \"15 minutes pass\",\n          \"then\": \"login works again\",\n          \"verification\": { \"kind\": \"runtime\", \"live\": false, \"command\": \"node --test test/unlock.test.js\", \"expected\": { \"exit_code\": 0 } },\n          \"negative_control\": { \"method\": \"exempt\", \"description\": \"Covered elsewhere.\", \"exemption_reason\": \"Retired before any control was written.\" }\n        }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/requirements/0/acceptance"
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

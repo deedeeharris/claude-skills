@@ -1,0 +1,11 @@
+{
+  "case": "S13",
+  "variant": "not-applicable check with reason",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "args": {}
+}

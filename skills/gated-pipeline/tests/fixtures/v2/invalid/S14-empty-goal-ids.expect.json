@@ -1,0 +1,20 @@
+{
+  "case": "S14",
+  "variant": "active requirement with empty goal_ids",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"goal_ids\": [\"GOAL-001\"],\n      \"statement\": \"Every failed login",
+    "replace": "\"goal_ids\": [],\n      \"statement\": \"Every failed login"
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G13"
+  ],
+  "paths": [
+    "/requirements/1/goal_ids"
+  ],
+  "args": {}
+}

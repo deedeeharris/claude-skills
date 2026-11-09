@@ -1,0 +1,20 @@
+{
+  "case": "S12",
+  "variant": "budget_min above timeout_min",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"timeout_min\": 5, \"budget_min\": 0",
+    "replace": "\"timeout_min\": 5, \"budget_min\": 9"
+  },
+  "exit": 1,
+  "codes": [
+    "E_LIMIT"
+  ],
+  "rules": [
+    "G30"
+  ],
+  "paths": [
+    "/checks/0/budget_min"
+  ],
+  "args": {}
+}

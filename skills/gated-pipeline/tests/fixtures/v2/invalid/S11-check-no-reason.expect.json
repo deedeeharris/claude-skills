@@ -1,0 +1,20 @@
+{
+  "case": "S11",
+  "variant": "check without reason",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"reason\": \"The repo has a lint script.\"",
+    "replace": "\"reason\": \"\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REASON_MISSING"
+  ],
+  "rules": [
+    "G27"
+  ],
+  "paths": [
+    "/checks/0/reason"
+  ],
+  "args": {}
+}

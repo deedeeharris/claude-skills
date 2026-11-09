@@ -1,0 +1,18 @@
+{
+  "case": "X04",
+  "variant": "lower-case component id",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"id\": \"COMP-SERVER\", \"name\"",
+    "replace": "\"id\": \"COMP-server\", \"name\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PATTERN"
+  ],
+  "rules": [],
+  "paths": [
+    "/architecture/components/0/id"
+  ],
+  "args": {}
+}

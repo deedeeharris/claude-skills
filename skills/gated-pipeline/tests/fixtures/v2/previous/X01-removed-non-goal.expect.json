@@ -1,0 +1,22 @@
+{
+  "case": "X01",
+  "variant": "non-goal removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n      { \"id\": \"NG-002\", \"statement\": \"No IP blocking.\", \"rationale\": \"Handled by the proxy.\", \"status\": \"retired\", \"retired_rationale\": \"Merged into NG-001 review notes.\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/product/non_goals"
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

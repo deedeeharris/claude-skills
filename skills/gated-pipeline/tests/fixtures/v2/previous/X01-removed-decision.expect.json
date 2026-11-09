@@ -1,0 +1,22 @@
+{
+  "case": "X01",
+  "variant": "decision removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n      { \"id\": \"DEC-002\", \"decision\": \"Lock for 10 minutes.\", \"rationale\": \"First draft value.\", \"status\": \"retired\", \"retired_rationale\": \"Replaced by DEC-001.\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/architecture/decisions"
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

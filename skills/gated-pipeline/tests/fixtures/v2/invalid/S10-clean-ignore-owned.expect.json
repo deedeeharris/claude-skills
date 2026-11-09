@@ -1,0 +1,20 @@
+{
+  "case": "S10",
+  "variant": "clean_ignore containing an owned path",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"clean_ignore\": []",
+    "replace": "\"clean_ignore\": [\"src/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_STATE_OVERLAP"
+  ],
+  "rules": [
+    "G34"
+  ],
+  "paths": [
+    "/scope/clean_ignore/0"
+  ],
+  "args": {}
+}

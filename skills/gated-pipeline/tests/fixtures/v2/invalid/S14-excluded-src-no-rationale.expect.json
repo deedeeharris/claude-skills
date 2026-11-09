@@ -1,0 +1,20 @@
+{
+  "case": "S14",
+  "variant": "excluded SRC without rationale",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ", \"rationale\": \"The request defers it to a later release.\"",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G10"
+  ],
+  "paths": [
+    "/coverage/2/rationale"
+  ],
+  "args": {}
+}

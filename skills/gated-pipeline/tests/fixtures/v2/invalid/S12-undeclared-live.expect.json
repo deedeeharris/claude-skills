@@ -1,0 +1,20 @@
+{
+  "case": "S12",
+  "variant": "live: false with the command of a budgeted check",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"live\": true, \"check_id\": \"CHECK-E2E\"",
+    "replace": "\"live\": false, \"check_id\": \"CHECK-E2E\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G22"
+  ],
+  "paths": [
+    "/requirements/1/acceptance/0/verification/command"
+  ],
+  "args": {}
+}

@@ -1,0 +1,20 @@
+{
+  "case": "S07",
+  "variant": "unknown id cited by an accepted risk",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"cites\": [\"DEC-001\"]",
+    "replace": "\"cites\": [\"DEC-009\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_REF"
+  ],
+  "rules": [
+    "G05"
+  ],
+  "paths": [
+    "/architecture/security/accepted_risks/0/cites/0"
+  ],
+  "args": {}
+}

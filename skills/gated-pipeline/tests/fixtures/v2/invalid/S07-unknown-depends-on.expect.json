@@ -1,0 +1,20 @@
+{
+  "case": "S07",
+  "variant": "unknown depends_on",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"depends_on\": [],",
+    "replace": "\"depends_on\": [\"HELLO-009\"],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_REF"
+  ],
+  "rules": [
+    "G05"
+  ],
+  "paths": [
+    "/requirements/0/depends_on/0"
+  ],
+  "args": {}
+}

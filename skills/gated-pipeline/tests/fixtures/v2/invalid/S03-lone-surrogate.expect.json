@@ -1,0 +1,18 @@
+{
+  "case": "S03",
+  "variant": "lone surrogate escape",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\"",
+    "replace": "\"title\": \"Greeting \\ud800 endpoint\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PARSE"
+  ],
+  "rules": [],
+  "paths": [
+    "/title"
+  ],
+  "args": {}
+}

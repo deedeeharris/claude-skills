@@ -1,0 +1,20 @@
+{
+  "case": "X04",
+  "variant": "acceptance id not prefixed by its requirement",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"id\": \"HELLO-001-AC1\"",
+    "replace": "\"id\": \"HELO-001-AC1\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_FORMAT"
+  ],
+  "rules": [
+    "G02"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/id"
+  ],
+  "args": {}
+}

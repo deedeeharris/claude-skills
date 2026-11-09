@@ -1,0 +1,20 @@
+{
+  "case": "S06",
+  "variant": "runtime acceptance without expected",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"command\": \"node --test test/hello.test.js\", \"expected\": { \"exit_code\": 0 } }",
+    "replace": "\"command\": \"node --test test/hello.test.js\" }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G18"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/verification/expected"
+  ],
+  "args": {}
+}

@@ -1,0 +1,20 @@
+{
+  "case": "S11",
+  "variant": "known failure without reason",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"known_failures\": []",
+    "replace": "\"known_failures\": [{ \"test_id\": \"test/flaky.test.js\", \"reason\": \"\" }]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_REASON_MISSING"
+  ],
+  "rules": [
+    "G29"
+  ],
+  "paths": [
+    "/suite/known_failures/0/reason"
+  ],
+  "args": {}
+}

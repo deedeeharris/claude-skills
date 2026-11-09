@@ -1,0 +1,11 @@
+{
+  "case": "L2",
+  "variant": "graph base for Level 1 and Level 2",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "args": {}
+}

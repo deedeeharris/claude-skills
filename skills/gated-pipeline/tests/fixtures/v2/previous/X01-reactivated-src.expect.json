@@ -1,0 +1,22 @@
+{
+  "case": "X01",
+  "variant": "excluded SRC covered again",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"disposition\": \"excluded\", \"rationale\"",
+    "replace": "\"disposition\": \"covered\", \"requirement_ids\": [\"AUTH-001\"], \"rationale\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REACTIVATED"
+  ],
+  "rules": [
+    "P02"
+  ],
+  "paths": [
+    "/coverage/2/disposition"
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

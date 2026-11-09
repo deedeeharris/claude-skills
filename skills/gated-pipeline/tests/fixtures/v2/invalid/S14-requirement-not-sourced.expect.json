@@ -1,0 +1,20 @@
+{
+  "case": "S14",
+  "variant": "requirement listed by no SRC, no derived_rationale",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "      \"derived_rationale\": \"Lockout is pointless if timing leaks the password.\",\n",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G16"
+  ],
+  "paths": [
+    "/requirements/2"
+  ],
+  "args": {}
+}

@@ -1,0 +1,11 @@
+{
+  "case": "S02",
+  "variant": "unicode and multi-line strings",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "args": {}
+}

@@ -1,0 +1,20 @@
+{
+  "case": "S11",
+  "variant": "retired goal without retired_rationale",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"status\": \"retired\", \"retired_rationale\": \"Excluded as SRC-003.\"",
+    "replace": "\"status\": \"retired\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REASON_MISSING"
+  ],
+  "rules": [
+    "G17"
+  ],
+  "paths": [
+    "/product/goals/1/retired_rationale"
+  ],
+  "args": {}
+}

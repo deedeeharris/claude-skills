@@ -1,0 +1,18 @@
+{
+  "case": "S06",
+  "variant": "requirement without statement",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "      \"statement\": \"GET /hello responds with status 200 and body hello.\",\n",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REQUIRED"
+  ],
+  "rules": [],
+  "paths": [
+    "/requirements/0/statement"
+  ],
+  "args": {}
+}

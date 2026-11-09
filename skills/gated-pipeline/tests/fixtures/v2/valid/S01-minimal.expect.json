@@ -1,0 +1,14 @@
+{
+  "case": "S01",
+  "variant": "minimal",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "args": {
+    "source_request": "valid/S01-minimal.request.txt",
+    "source_mode": "text"
+  }
+}

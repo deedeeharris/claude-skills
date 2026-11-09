@@ -1,0 +1,20 @@
+{
+  "case": "S09",
+  "variant": "owned path outside allowed",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"owned_paths\": [\"src/\"]",
+    "replace": "\"owned_paths\": [\"lib/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_OWNERSHIP"
+  ],
+  "rules": [
+    "G36"
+  ],
+  "paths": [
+    "/architecture/components/0/owned_paths/0"
+  ],
+  "args": {}
+}

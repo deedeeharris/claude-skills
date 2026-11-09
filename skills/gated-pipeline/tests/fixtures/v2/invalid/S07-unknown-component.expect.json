@@ -1,0 +1,20 @@
+{
+  "case": "S07",
+  "variant": "unknown component",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"component_ids\": [\"COMP-SERVER\"],",
+    "replace": "\"component_ids\": [\"COMP-SERVER\", \"COMP-NOPE\"],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_REF"
+  ],
+  "rules": [
+    "G05"
+  ],
+  "paths": [
+    "/requirements/0/component_ids/1"
+  ],
+  "args": {}
+}

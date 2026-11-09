@@ -1,0 +1,20 @@
+{
+  "case": "X02",
+  "variant": "title segment -final",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\",",
+    "replace": "\"title\": \"Greeting endpoint-final\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_SHADOW_ID"
+  ],
+  "rules": [
+    "G03"
+  ],
+  "paths": [
+    "/title"
+  ],
+  "args": {}
+}

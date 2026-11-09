@@ -1,0 +1,18 @@
+{
+  "case": "X04",
+  "variant": "__proto__ key",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\",",
+    "replace": "\"__proto__\": \"x\",\n  \"title\": \"Greeting endpoint\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_FORBIDDEN_KEY"
+  ],
+  "rules": [],
+  "paths": [
+    "/__proto__"
+  ],
+  "args": {}
+}

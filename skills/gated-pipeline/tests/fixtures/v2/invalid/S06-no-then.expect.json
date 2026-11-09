@@ -1,0 +1,18 @@
+{
+  "case": "S06",
+  "variant": "acceptance without then",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "          \"then\": \"the response is 200 with body hello\",\n",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REQUIRED"
+  ],
+  "rules": [],
+  "paths": [
+    "/requirements/0/acceptance/0/then"
+  ],
+  "args": {}
+}

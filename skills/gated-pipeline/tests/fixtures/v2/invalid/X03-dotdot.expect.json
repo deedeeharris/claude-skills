@@ -1,0 +1,20 @@
+{
+  "case": "X03",
+  "variant": ".. segment in an owned path",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"owned_paths\": [\"src/\"]",
+    "replace": "\"owned_paths\": [\"src/../src/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_UNSAFE_PATH"
+  ],
+  "rules": [
+    "G32"
+  ],
+  "paths": [
+    "/architecture/components/0/owned_paths/0"
+  ],
+  "args": {}
+}

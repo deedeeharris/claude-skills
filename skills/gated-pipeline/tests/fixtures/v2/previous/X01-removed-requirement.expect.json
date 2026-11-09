@@ -1,0 +1,22 @@
+{
+  "case": "X01",
+  "variant": "requirement removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n    {\n      \"id\": \"OLD-001\",\n      \"status\": \"retired\",\n      \"retired_rationale\": \"Split into AUTH-001 and AUTH-002.\",\n      \"goal_ids\": [],\n      \"statement\": \"Accounts are protected against guessing.\",\n      \"priority\": \"P2\",\n      \"depends_on\": [],\n      \"component_ids\": [],\n      \"acceptance\": [\n        {\n          \"id\": \"OLD-001-AC1\", \"status\": \"retired\", \"retired_rationale\": \"Requirement retired.\",\n          \"given\": \"any account\",\n          \"when\": \"many guesses arrive\",\n          \"then\": \"they are slowed down\",\n          \"verification\": { \"kind\": \"runtime\", \"live\": false, \"command\": \"node --test test/old.test.js\", \"expected\": { \"exit_code\": 0 } },\n          \"negative_control\": { \"method\": \"exempt\", \"description\": \"Retired.\", \"exemption_reason\": \"Retired before implementation.\" }\n        }\n      ]\n    }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/requirements"
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "case": "S04",
+  "variant": "schema_version 3",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"schema_version\": 2,",
+    "replace": "\"schema_version\": 3,"
+  },
+  "exit": 1,
+  "codes": [
+    "E_SCHEMA_VERSION"
+  ],
+  "rules": [],
+  "paths": [
+    "/schema_version"
+  ],
+  "args": {}
+}
