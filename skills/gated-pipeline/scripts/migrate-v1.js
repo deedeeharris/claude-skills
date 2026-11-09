@@ -20,20 +20,30 @@
 //   title (the first H1) and the original request text.
 // - conflicts: acceptance ids only in spec.md (only_in_spec) or only in the manifest (only_in_manifest), proof
 //   commands that differ (proof_command_differs: a code span or fenced line next to the id in spec.md, none
-//   equal to the manifest command), and a spec.md that does not hash to the manifest spec_sha256.
+//   equal to the manifest command), a spec.md that does not hash to the manifest spec_sha256, and copied scope
+//   entries v2 rejects (scope_overlap: { rule, path, value, overlaps }, G33 a protected path overlapping an
+//   allowed, state or clean_ignore path, G34 a state or clean_ignore path overlapping an allowed path; v1 let
+//   them overlap), so filling every todo is not enough while one is listed.
 // - unmapped_tests: test files named by spec.md or by a manifest command that appear in no runtime proof
 //   command of the draft, with their sources (spec.md:<line>, manifest:<v1 id>).
 // - lost: spec.md/prd.md sections whose heading names no v2 field.
 // - provenance_missing: true when there is no prd.md or no original request.
 // Prints { status: "DRAFT_WRITTEN", draft_path, report_path, todos, conflicts, unmapped_tests, lost,
-// provenance_missing }. Exit 0 means "draft written", never "certified"; exit 2 is a usage or setup error
-// (the reason on stderr, nothing on stdout, nothing written). It never executes a string from its inputs.
+// provenance_missing }. Exit 0 means "draft written", never "certified"; exit 2 is a usage or setup error,
+// including a manifest outside the v1 shape and an I/O error while writing (the reason on stderr, nothing on
+// stdout, nothing written: a draft whose report cannot be written is removed). It never executes a string from
+// its inputs.
 //
 // Choices where the design is silent (the simplest reading):
 // - --source-request is an optional addition: the design names "no original request" as a provenance gap but
 //   gives the CLI no way to pass one; with it the draft carries { text } (one trailing newline removed);
 // - --feature-id must equal the manifest feature_id; both files are written once (an existing --out or
 //   report is refused) next to each other, in an existing directory;
+// - the manifest shape is schemas/execution-plan.schema.json (unknown keys and an empty allowed_paths are
+//   refused, never silently dropped), except that an empty check reason is accepted and becomes a todo, as the
+//   v1 completion accepts it for an applicable check;
+// - requirements.depends_on and suite.known_failures hold the token as a whole field (v1 has no dependencies,
+//   and its known failures lived in pipeline.yaml, not in the inputs);
 // - a v1 runtime negative control is "the code mutation that must make that proof fail" (v1 design prompt),
 //   so it becomes method isolated_mutation; a static one must be exempt (G24). Their prose stays a todo;
 // - one placeholder SRC, goal and component carry every migrated requirement, so the draft's graph is whole;
@@ -46,6 +56,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { parse, StrictJsonError } = require('./lib/strict-json.js');
 const { writeOnce, Refusal, SetupError } = require('./write-json.js');
+const { overlap } = require('./lib/feature-graph.js');
 
 const MIGRATOR_VERSION = '1.0.0';
 const TOKEN = 'MIGRATION-TODO';
@@ -118,7 +129,9 @@ function readManifest(file) {
     throw e;
   }
   const bad = why => { throw new SetupError(`manifest ${file} is not a v1 execution plan: ${why}`); };
+  const onlyKeys = (o, keys, where) => { const extra = Object.keys(o).filter(k => !keys.includes(k)); if (extra.length) bad(`unknown ${where} key ${JSON.stringify(extra[0])}`); };
   if (!isObject(m)) bad('not an object');
+  onlyKeys(m, ['version', 'feature_id', 'spec_sha256', 'allowed_paths', 'protected_paths', 'state_paths', 'clean_ignore', 'requirements', 'checks'], 'top-level');
   if (m.version !== 1) bad('version must be 1');
   if (typeof m.feature_id !== 'string' || !m.feature_id) bad('feature_id');
   if (typeof m.spec_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(m.spec_sha256)) bad('spec_sha256');
@@ -126,14 +139,17 @@ function readManifest(file) {
     if (m[k] === undefined && (k === 'state_paths' || k === 'clean_ignore')) continue;
     if (!Array.isArray(m[k]) || !m[k].every(p => typeof p === 'string')) bad(k);
   }
+  if (!m.allowed_paths.length) bad('allowed_paths must not be empty');
   if (!Array.isArray(m.requirements) || !m.requirements.length) bad('requirements');
   const ids = new Set();
   for (const r of m.requirements) {
     if (!isObject(r) || typeof r.id !== 'string' || !r.id || !['runtime', 'static'].includes(r.kind) || typeof r.proof_command !== 'string') bad('a requirement needs id, kind runtime|static and proof_command');
+    onlyKeys(r, ['id', 'kind', 'proof_command'], 'requirement');
     if (ids.has(r.id)) bad(`duplicate acceptance id ${r.id}`);
     ids.add(r.id);
   }
   if (!Array.isArray(m.checks) || !m.checks.every(c => isObject(c) && typeof c.name === 'string' && c.name && typeof c.applicable === 'boolean' && typeof c.reason === 'string')) bad('checks');
+  for (const c of m.checks) onlyKeys(c, ['name', 'applicable', 'reason'], 'check');
   return { bytes, value: m };
 }
 
@@ -247,7 +263,8 @@ function migrate({ manifest: m, specText, specSha, prdText, requestText }) {
       id: reqId, status: 'active', goal_ids: ['GOAL-001'],
       statement: todo(`${base}/statement`, `state the requirement behind v1 acceptance ${label}`),
       priority: todo(`${base}/priority`, 'v1 has no priority: P0, P1 or P2'),
-      depends_on: [], component_ids: ['COMP-MIGRATED'], acceptance: [],
+      depends_on: todo(`${base}/depends_on`, 'v1 has no dependencies between requirements: [] or the requirement ids this one depends on'),
+      component_ids: ['COMP-MIGRATED'], acceptance: [],
     };
     members.forEach(({ r, x }, ai) => {
       const p = `${base}/acceptance/${ai}`;
@@ -320,7 +337,7 @@ function migrate({ manifest: m, specText, specSha, prdText, requestText }) {
     suite: {
       command: todo('/suite/command', 'the v1 manifest has no suite: the full suite command (v1 kept it in pipeline.yaml tests.suite_cmd)'),
       unit_command: todo('/suite/unit_command', 'the v1 manifest has no suite: the focused test command (v1: tests.unit_cmd)'),
-      known_failures: [],
+      known_failures: todo('/suite/known_failures', 'the v1 manifest has no known failures: [] or { test_id, reason } items (v1 kept them in pipeline.yaml tests.known_failures)'),
       isolated: todo('/suite/isolated', 'whether the suite runs in a fresh worktree (v1: tests.suite_isolated)'),
       setup_command: todo('/suite/setup_command', 'the isolated setup command or null (v1: tests.isolated_setup)'),
       timeout_min: todo('/suite/timeout_min', 'the suite kill limit in minutes'),
@@ -378,6 +395,15 @@ function migrate({ manifest: m, specText, specSha, prdText, requestText }) {
     });
     if (cands.length && !cands.includes(r.proof_command.trim())) conflicts.push({ kind: 'proof_command_differs', id: r.id, line, manifest: r.proof_command, spec: [...new Set(cands)] });
   }
+  const scopeList = k => (m[k] || []).map((value, i) => ({ value, path: `/scope/${k}/${i}` }));
+  for (const e of ['allowed_paths', 'state_paths', 'clean_ignore'].flatMap(scopeList)) {
+    const hit = m.protected_paths.find(q => overlap(e.value, q));
+    if (hit !== undefined) conflicts.push({ kind: 'scope_overlap', id: null, rule: 'G33', path: e.path, value: e.value, overlaps: hit });
+  }
+  for (const e of ['state_paths', 'clean_ignore'].flatMap(scopeList)) {
+    const hit = m.allowed_paths.find(q => overlap(e.value, q));
+    if (hit !== undefined) conflicts.push({ kind: 'scope_overlap', id: null, rule: 'G34', path: e.path, value: e.value, overlaps: hit });
+  }
   conflicts.sort((a, b) => (a.id || '') < (b.id || '') ? -1 : (a.id || '') > (b.id || '') ? 1 : a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0);
 
   // ---- unmapped tests --------------------------------------------------------------------------------------
@@ -416,8 +442,8 @@ function main(argv) {
       ...(req ? [['source_request', args['source-request'], req.bytes]] : [])].map(([role, p, bytes]) => ({ role, path: path.resolve(p), sha256: sha256(bytes) }));
     const report = { migrator_version: MIGRATOR_VERSION, feature_id: args['feature-id'], inputs, mapping: r.mapping, todos: r.todos, conflicts: r.conflicts,
       unmapped_tests: r.unmapped_tests, lost: r.lost, provenance_missing: r.provenance_missing };
-    writeOnce(out, Buffer.from(JSON.stringify(r.draft, null, 2) + '\n', 'utf8'));
-    writeOnce(reportPath, Buffer.from(JSON.stringify(report, null, 2) + '\n', 'utf8'));
+    write(out, r.draft);
+    try { write(reportPath, report); } catch (e) { fs.rmSync(out, { force: true }); throw e; }
     process.stdout.write(JSON.stringify({ status: 'DRAFT_WRITTEN', draft_path: out, report_path: reportPath, todos: r.todos.length, conflicts: r.conflicts.length,
       unmapped_tests: r.unmapped_tests.length, lost: r.lost.length, provenance_missing: r.provenance_missing }) + '\n');
     return 0;
@@ -425,6 +451,13 @@ function main(argv) {
     if (!(e instanceof Refusal) && !(e instanceof SetupError)) throw e;
     process.stderr.write(`migrate-v1: ${e.message}\n`);
     return 2;
+  }
+}
+// writeOnce, with any I/O error (ENOENT, EACCES, ENAMETOOLONG, ...) a setup error.
+function write(file, value) {
+  try { writeOnce(file, Buffer.from(JSON.stringify(value, null, 2) + '\n', 'utf8')); } catch (e) {
+    if (e instanceof Refusal || e instanceof SetupError) throw e;
+    throw new SetupError(`cannot write ${file}: ${e.code || e.message}`);
   }
 }
 function isLink(p) { try { return fs.lstatSync(p).isSymbolicLink(); } catch { return false; } }
