@@ -16,6 +16,13 @@ const A = args || {}
 // v1 flow, unchanged.
 if (A.contract !== undefined && A.contract !== 1 && A.contract !== 2) return { status: 'BLOCKED', reason: 'contract must be 1 or 2' }
 const V2 = A.contract === 2
+// As in build, verify and land: contract-2 args under contract 1 BLOCK, so a v2 call that omits `contract` never runs
+// the v1 PRD/spec flow silently.
+const ONLY_V2 = ['source_request_path', 'source_request_mode', 'source_request_ref', 'seed_feature_path', 'features_dir', 'previous_design', 'recover']
+if (!V2) {
+  const v2only = ONLY_V2.filter(k => A[k] !== undefined)
+  if (v2only.length) return { status: 'BLOCKED', stage: 'args', reason: `${v2only.join(', ')} need contract: 2` }
+}
 const need = V2 ? ['feature_id', 'repo', 'run_dir', 'review_runner', 'completion_runner', 'work_branch', 'source_request_path']
   : ['feature_id', 'repo', 'task', 'run_dir', 'review_runner', 'execution_schema']
 const missing = need.filter(k => !A[k])

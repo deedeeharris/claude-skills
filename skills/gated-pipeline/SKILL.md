@@ -146,7 +146,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
 
 ### v2 forbidden args
 `checks`, `clean_ignore`, `state_paths`, `suite_cmd`, `unit_cmd`, `known_failures`, `isolated_setup`, `suite_isolated`, `live_budget_min` are BLOCKED under contract 2 before any agent, in every stage that accepts them: the frozen manifest is their only source.
-Mixing contracts is BLOCKED too: `contract: 2` with `task` or `charge` (CI failure context goes in `ci_failure_log_path`), a v2-only arg (`frozen_dir`, `design_commit`, `approvals_path`, `approvals_sha256`, `ci_failure_log_path`) without `contract: 2`, and a v1 manifest under `contract: 2` or a v2 manifest under `contract: 1`.
+Mixing contracts is BLOCKED too: `contract: 2` with `task` or `charge` (CI failure context goes in `ci_failure_log_path`), a v2-only arg (`frozen_dir`, `design_commit`, `approvals_path`, `approvals_sha256`, `ci_failure_log_path`; for design `source_request_path`, `source_request_mode`, `source_request_ref`, `seed_feature_path`, `features_dir`, `previous_design`, `recover`) without `contract: 2`, and a v1 manifest under `contract: 2` or a v2 manifest under `contract: 1`.
 
 ### v2 stage handoff
 Persist each stage's raw result (`result.json` in its run dir) and pass these values on unchanged:

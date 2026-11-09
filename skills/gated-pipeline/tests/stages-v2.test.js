@@ -347,6 +347,17 @@ describe('S18: every forbidden arg BLOCKS build and verify under contract 2 befo
     const ci = await run('build', { feature_id: 'f', repo: '/repo', work_branch: 'w', run_dir: '/state/build', review_runner: RUNNER, suite_cmd: 'true', security_schema: SEC_SCHEMA, spec_path: '/state/spec.md', ci_failure_log_path: '/state/ci.log' }, []);
     assert.equal(ci.result.status, 'BLOCKED');
     assert.match(ci.result.reason, /ci_failure_log_path need contract: 2/);
+    // design too: a v1 call carrying contract-2 design args never runs the v1 PRD/spec flow silently
+    const v1Design = { feature_id: 'f', repo: '/repo', task: 'Do it.', run_dir: '/state/design', review_runner: RUNNER, execution_schema: '/skill/execution-plan.schema.json' };
+    for (const [k, v] of Object.entries({ source_request_path: '/state/request.txt', source_request_mode: 'ref', source_request_ref: 'ticket 7', seed_feature_path: '/state/seed.json',
+      features_dir: '.pipeline/features', previous_design: { commit: 'a'.repeat(40), repo_path: 'x.feature.json' }, recover: true })) {
+      for (const contract of [undefined, 1]) {
+        const d = await run('design', { ...v1Design, ...(contract ? { contract } : {}), [k]: v }, []);
+        assert.equal(d.result.status, 'BLOCKED', `design contract ${contract} with ${k}`);
+        assert.match(d.result.reason, new RegExp(`${k} need contract: 2`));
+        assert.equal(d.calls.length, 0);
+      }
+    }
   });
   test('build and verify contract 2: base_commit must equal design_commit, manifest_path must be the frozen one, paths must be normalized', async () => {
     for (const [stage, make] of [['build', dummyBuild], ['verify', dummyVerify]]) {
