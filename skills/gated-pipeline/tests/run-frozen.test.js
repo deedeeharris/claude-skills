@@ -238,6 +238,50 @@ for (const [kind, text] of Object.entries(NEGATIVE_PATCHES)) {
   });
 }
 
+// Patches git apply reads as touching more than their `diff --git` headers name (review fix: mutated_paths must be what
+// git will touch). Each breaks test/hello.test.js while the headers name only src/hello.js; expectations are literals.
+const TEST_BREAK = "--- a/test/hello.test.js\n+++ b/test/hello.test.js\n@@ -1,3 +1,3 @@\n const assert = require('assert');\n-assert.equal(require('../src/hello.js')(), 'hello');\n+process.exit(1);\n console.log('hello test ok');\n";
+const NOOP_HELLO = "diff --git a/src/hello.js b/src/hello.js\n--- a/src/hello.js\n+++ b/src/hello.js\n@@ -1 +1,2 @@\n module.exports = () => 'hello';\n+// a comment changes nothing\n";
+const SMUGGLING_PATCHES = {
+  'leading plain hunk': [TEST_BREAK + NOOP_HELLO, /text before its first diff --git header/],
+  'trailing plain hunk': [NOOP_HELLO + TEST_BREAK, /outside a diff --git section's hunks/],
+  'trailing plain hunk after a blank line': [NOOP_HELLO + '\n' + TEST_BREAK, /outside a diff --git section's hunks/],
+  'mismatched ---/+++ names': ["diff --git a/src/hello.js b/src/hello.js\n" + TEST_BREAK, /does not name src\/hello.js/],
+  'mismatched +++ name': ["diff --git a/src/hello.js b/src/hello.js\n--- a/src/hello.js\n+++ b/test/hello.test.js\n@@ -1 +1 @@\n-x\n+y\n", /does not name src\/hello.js/],
+  'hunk longer than its counts': ["diff --git a/src/hello.js b/src/hello.js\n--- a/src/hello.js\n+++ b/src/hello.js\n@@ -1 +1 @@\n-module.exports = () => 'hello';\n+module.exports = () => 'goodbye';\n+extra\n", /outside a diff --git section's hunks/],
+  'hunk shorter than its counts': ["diff --git a/src/hello.js b/src/hello.js\n--- a/src/hello.js\n+++ b/src/hello.js\n@@ -1,2 +1,2 @@\n-module.exports = () => 'hello';\n+module.exports = () => 'goodbye';\n", /ends early/],
+};
+for (const [kind, [text, pattern]] of Object.entries(SMUGGLING_PATCHES)) {
+  test(`negative-control patch derivation rejects a ${kind}`, t => {
+    const c = frozenRepo(t);
+    const dir = path.join(c.run, 'negative', 'HELLO-001-AC1');
+    const r = c.runFrozen('negative:HELLO-001-AC1', { outDir: dir, patch: c.patchFile('HELLO-001-AC1', text) });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, pattern);
+    assert.equal(fs.existsSync(path.join(dir, 'negative:HELLO-001-AC1.record.json')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'wt')), false);
+  });
+}
+
+test('git apply --numstat lists the paths a smuggling patch really touches, and the cross-check refuses it', t => {
+  const c = frozenRepo(t);
+  const { gitPatchPaths, checkedPatchPaths } = require('../scripts/run-frozen.js');
+  const file = c.patchFile('HELLO-001-AC1', TEST_BREAK + NOOP_HELLO);
+  assert.deepEqual(gitPatchPaths(c.repo, file), ['test/hello.test.js', 'src/hello.js']);
+  assert.throws(() => checkedPatchPaths(c.repo, file, fs.readFileSync(file)), /text before its first diff --git header/);
+  const good = c.patchFile('HELLO-001-AC1', c.MUTATION + "diff --git a/src/new.js b/src/new.js\nnew file mode 100644\nindex 0000000..e69de29\n");
+  assert.deepEqual(checkedPatchPaths(c.repo, good, fs.readFileSync(good)), ['src/hello.js', 'src/new.js']);
+});
+
+test('a negative control records the limit applied to its mutated run', t => {
+  const c = frozenRepo(t, f => { f.limits.proof_timeout_s = 30; });
+  const dir = path.join(c.run, 'negative', 'HELLO-001-AC1');
+  const r = c.runFrozen('negative:HELLO-001-AC1', { outDir: dir, patch: c.patchFile('HELLO-001-AC1', c.MUTATION), env: { GP_RUN_FROZEN_SECONDS_PER_MINUTE: '1' } });
+  assert.equal(r.status, 0, r.stderr);
+  const rec = record(r);
+  assert.ok(rec.timeout_s > 0 && rec.timeout_s < 30, `timeout_s ${rec.timeout_s} is the phase-bounded limit, not proof_timeout_s`);
+});
+
 test('a negative control runs baseline and mutation in a throwaway worktree and records both', t => {
   const c = frozenRepo(t);
   const dir = path.join(c.run, 'negative', 'HELLO-001-AC1');

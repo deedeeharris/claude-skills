@@ -875,6 +875,7 @@ test('proofs: an acceptance ledger missing a runtime acceptance is exit 1', t =>
 
 // negative controls (L3.13)
 const negEntry = c => c.verify.negative_controls[0];
+const negRecord = c => JSON.parse(fs.readFileSync(negEntry(c).record_path, 'utf8'));
 for (const [name, mutate, pattern, footerExit] of [
   ['an environment failure (baseline red)', r => { r.baseline_exit_code = 1; }, /baseline proof must pass/],
   ['a null mutated exit code', r => { r.exit_code = null; }, /must be integers/, null],
@@ -917,14 +918,13 @@ test('negative controls: a weak control (the mutated proof still passes) is reje
   blocked(c.completion(), 'E_NEGATIVE_CONTROL', /weak control/);
 });
 
-function swapPatch(c, text) {
+// Swaps the recorded patch for `text` and re-hashes it; mutated_paths becomes the literal `paths` (what a recorder
+// would have claimed), or stays as recorded when `paths` is omitted.
+function swapPatch(c, text, paths) {
   const e = negEntry(c);
   const rec = JSON.parse(fs.readFileSync(e.record_path, 'utf8'));
   fs.writeFileSync(rec.mutation_patch_path, text);
-  const { patchPaths } = require('../scripts/run-frozen.js');
-  let paths = rec.mutated_paths;
-  try { paths = patchPaths(Buffer.from(text)); } catch { /* the recorded list stays */ }
-  c.editRecord(e, r => { r.mutation_patch_sha256 = sha256(Buffer.from(text)); r.mutated_paths = paths; });
+  c.editRecord(e, r => { r.mutation_patch_sha256 = sha256(Buffer.from(text)); if (paths) r.mutated_paths = paths; });
 }
 const patchFor = (file, from, to) => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1 +1 @@\n-${from}\n+${to}\n`;
 
@@ -937,20 +937,66 @@ test('negative controls: a patch deleting the test file is rejected', t => {
 test('negative controls: a patch editing a co-located test the build added is rejected', t => {
   const c = completeRun(t, { implFiles: { ...require('./helpers/v2-repo.js').IMPL_FILES, 'src/hello.spec.js': "console.log('spec');\n" } });
   c.build.history[0].work.tests_added.push('src/hello.spec.js');
-  swapPatch(c, patchFor('src/hello.spec.js', "console.log('spec');", "process.exit(1);"));
+  swapPatch(c, patchFor('src/hello.spec.js', "console.log('spec');", "process.exit(1);"), ['src/hello.spec.js']);
   blocked(c.completion(), 'E_NEGATIVE_CONTROL', /is a test this build added/);
 });
 
 test('negative controls: a patch that does not apply to reviewed_sha is rejected', t => {
   const c = completeRun(t);
-  swapPatch(c, patchFor('src/hello.js', "module.exports = () => 'nothing like this';", "module.exports = () => 'x';"));
+  swapPatch(c, patchFor('src/hello.js', "module.exports = () => 'nothing like this';", "module.exports = () => 'x';"), ['src/hello.js']);
   blocked(c.completion(), 'E_NEGATIVE_CONTROL', /does not apply/);
 });
 
 test('negative controls: a patch outside the requirement\'s owned paths is rejected', t => {
   const c = completeRun(t);
-  swapPatch(c, patchFor('README.md', 'Synthetic repo.', 'Changed.'));
+  swapPatch(c, patchFor('README.md', 'Synthetic repo.', 'Changed.'), ['README.md']);
   blocked(c.completion(), 'E_NEGATIVE_CONTROL', /outside the owned paths/);
+});
+
+// A recorder that took mutated_paths from the diff --git headers alone would claim ['src/hello.js'] for these
+// patches, while git apply also edits test/hello.test.js (review fix; expectations are literals).
+const TEST_BREAK = "--- a/test/hello.test.js\n+++ b/test/hello.test.js\n@@ -1,3 +1,3 @@\n const assert = require('assert');\n-assert.equal(require('../src/hello.js')(), 'hello');\n+process.exit(1);\n console.log('hello test ok');\n";
+const NOOP_HELLO = "diff --git a/src/hello.js b/src/hello.js\n--- a/src/hello.js\n+++ b/src/hello.js\n@@ -1 +1,2 @@\n module.exports = () => 'hello';\n+// a comment changes nothing\n";
+for (const [name, text, pattern] of [
+  ['a leading plain hunk on a test file', TEST_BREAK + NOOP_HELLO, /text before its first diff --git header/],
+  ['a trailing plain hunk on a test file', NOOP_HELLO + TEST_BREAK, /outside a diff --git section's hunks/],
+  ['---/+++ names that differ from the diff --git header', 'diff --git a/src/hello.js b/src/hello.js\n' + TEST_BREAK, /does not name src\/hello.js/],
+]) {
+  test(`negative controls: a patch with ${name} is rejected although its headers name only owned code`, t => {
+    const c = completeRun(t);
+    swapPatch(c, text, ['src/hello.js']);
+    // the swapped patch applies to reviewed_sha, so only the path derivation can catch it
+    const check = spawnSync('git', ['apply', '--check', negRecord(c).mutation_patch_path], { cwd: c.repo, encoding: 'utf8' });
+    assert.equal(check.status, 0, check.stderr);
+    blocked(c.completion(), 'E_NEGATIVE_CONTROL', pattern);
+  });
+}
+
+test('negative controls: the setup log of a control is hashed and frame-checked when setup_command is set', t => {
+  const feature = baseFeature();
+  feature.suite.setup_command = 'node -e "console.log(1)"';
+  const c = completeRun(t, { feature });
+  c.build.suite_identity.setup_command = feature.suite.setup_command;
+  passed(c.completion());
+  const rec = negRecord(c);
+  assert.equal(rec.setup.exit_code, 0);
+  fs.appendFileSync(rec.setup.log_path, 'tampered\n');
+  blocked(c.completion(), 'E_HASH', /setup log/);
+  const sha = c.setFooter(rec.setup.log_path, { exit_code: 3, signal: null, elapsed_s: 0 });
+  c.editRecord(negEntry(c), r => { r.setup.log_sha256 = sha; });
+  blocked(c.completion(), 'E_RECORD', /setup: the log/);
+});
+
+test('negative controls: a record without setup_command but with a setup block is rejected', t => {
+  const c = completeRun(t);
+  c.editRecord(negEntry(c), r => { r.setup = { exit_code: 0, log_path: r.log_path, log_sha256: r.log_sha256, timed_out: false }; });
+  blocked(c.completion(), 'E_NEGATIVE_CONTROL', /setup null/);
+});
+
+test('negative controls: a mutated run under a limit above proof_timeout_s is rejected', t => {
+  const c = completeRun(t);
+  c.editRecord(negEntry(c), r => { r.timeout_s = 31; });
+  blocked(c.completion(), 'E_NEGATIVE_CONTROL', /above proof_timeout_s/);
 });
 
 test('negative controls: a patch file that changed after the run is rejected', t => {
