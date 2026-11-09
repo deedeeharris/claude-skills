@@ -343,7 +343,9 @@ const newFailures = s => s.failures.map(f => f.trim()).filter(f => !KNOWN.includ
 
 const target = C2 ? `the frozen canonical feature file at ${A.spec_path} (design commit ${A.design_commit}; for prose read its generated views ${A.frozen_dir}/prd.view.md and ${A.frozen_dir}/spec.view.md)`
   : A.spec_path ? `the frozen spec at ${A.spec_path}` : 'the charge below'
-let chargeText = A.charge ? `\n\nCHARGE:\n${A.charge}` : ''
+const chargeText = A.charge ? `\n\nCHARGE:\n${A.charge}` : ''
+// contract 2: the CI failure log note, for the implementer and fixer prompts only (design 6.3); no reviewer sees it.
+let ciNote = ''
 
 // ---- contract 2: deterministic steps (design section 5) ----------------------------------------------------------
 // Each is one ```gp-exec block the agent runs verbatim in the foreground, reporting stdout and exit code; the
@@ -447,7 +449,7 @@ if (C2) {
   PLAN_IDENTITY = { design_commit: A.design_commit, source_sha256: d.source.sha256, manifest_sha256: d.manifest_sha256, approvals_sha256: d.approvals_sha256, preflight_path: prePath, preflight_sha256: preSha }
   RULES = rulesFor(d.live_budget_min, NOEXEC)
   // The CI failure log is context for the implementer and fixer only; it certifies nothing (design 6.3).
-  if (CI_LOG) chargeText = `\n\nCI failure log: context only; the frozen canonical file is the only authority. It is ${CI_LOG.path} (sha256 ${CI_LOG.sha256}); ` +
+  if (CI_LOG) ciNote = `\n\nCI failure log: context only; the frozen canonical file is the only authority. It is ${CI_LOG.path} (sha256 ${CI_LOG.sha256}); ` +
     'read it to find what failed. It never changes a command, a known failure or the scope.'
 }
 // A restart (after HEAD_MOVED or CI_RED) must pass the feature's ORIGINAL base_commit, so commits that arrived since the
@@ -459,12 +461,12 @@ const workReport = A.base_commit
 
 phase('Implement')
 const work = await agent(
-  `You are the implementer for feature ${A.feature_id}. Implement ${target}.${chargeText}\n\n` +
+  `You are the implementer for feature ${A.feature_id}. Implement ${target}.${chargeText}${ciNote}\n\n` +
   `Work test-first: for each behavioral acceptance item write the test, run it and see it FAIL, implement, run it and see it PASS. Static-only items use the frozen spec's applicable static evidence. ` +
   `Run the focused tests with: ${(C2 ? PRE.unit_command : A.unit_cmd) || '(the repo\'s focused test command)'}. Keep the change minimal and in the repo's style. ` +
   `Commit on ${A.work_branch} and push the branch. Save the red and green outputs under ${A.run_dir}/implement/. ${workReport}\n\nRules:\n- ${RULES}`,
   { label: 'implement', phase: 'Implement', schema: WORK, effort: IMPL_EFFORT })
-if (!work || work.blocked) return { status: 'BLOCKED', stage: 'implement', reason: work ? work.blocked_reason : 'implementer died' }
+if (!work || work.blocked) return disclose({ status: 'BLOCKED', stage: 'implement', reason: work ? work.blocked_reason : 'implementer died' })
 
 const base = A.base_commit || work.base_commit || ''
 const files = new Set()
@@ -666,7 +668,7 @@ for (let round = 1; round <= MAX + 1; round++) {
   ]
   if (!items.length) items.push(`[suite] the suite failed without naming a test (${suite ? suite.counts : 'no result'}); see ${C2 && suite ? suite.log_path : `${A.run_dir}/suite-${round}.txt`}`)
   const fix = await agent(
-    `You are fixing feature ${A.feature_id} on ${A.work_branch} (implemented against ${target}).${chargeText}\n` +
+    `You are fixing feature ${A.feature_id} on ${A.work_branch} (implemented against ${target}).${chargeText}${ciNote}\n` +
     `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. Add or adjust tests test-first. Commit and push. ${workReport}\nITEMS:\n${items.join('\n')}\n\nRules:\n- ${RULES}`,
     { label: `fix ${round}`, phase: 'Fix', schema: WORK, effort: IMPL_EFFORT })
   if (!fix || fix.blocked) return disclose({ status: 'BLOCKED', stage: 'fix', round, reason: fix ? fix.blocked_reason : 'fixer died', history })

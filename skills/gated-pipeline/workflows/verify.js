@@ -297,7 +297,7 @@ const RELAY = RELAY_REVIEW({ head_sha: { type: 'string' } })
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
 // Every review step is recorded, so the result discloses any Opus fallback review.
 const reviewers = []
-const disclose = o => ({ ...o, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
+const disclose = o => ({ ...o, ...(C2 ? { contract: 2 } : {}), reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
 async function reviewed(step, gate, viaCodex, fallback) {
   const r = await viaCodex()
   let res
@@ -330,6 +330,28 @@ const SCRIPT = name => q(`${V2_SCRIPTS}/${name}`)
 const writeJsonBlock = (file, value) => `node ${SCRIPT('write-json.js')} --out ${q(file)} <<'GP_JSON'\n${JSON.stringify(value)}\nGP_JSON`
 const runFrozen = (target, outDir, extra = '') => `node ${SCRIPT('run-frozen.js')} --repo ${q(A.repo)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} ` +
   `--reviewed-sha ${A.reviewed_sha} --target ${target} --out-dir ${q(outDir)}${extra} 2>&1`
+// A run-frozen block also prints the work checkout's HEAD and status when it exits (an EXIT trap keeps the exit code),
+// so a refusal because the branch moved or the checkout got dirty is routed as HEAD_MOVED (design 6.6), any other
+// refusal as BLOCKED.
+const STATE_TRAP = [`gp_state() { echo "gp-state head: $(git -C ${q(A.repo)} rev-parse HEAD)"; echo "gp-state status:"; git -C ${q(A.repo)} status --porcelain --untracked-files=all; }`, 'trap gp_state EXIT']
+const frozenBlock = lines => execBlock(['set -e', ...STATE_TRAP, ...lines].join('\n'))
+// null when the block printed no state; else the drift from the pinned reviewed commit (empty = still pinned and clean).
+function stateDrift(stdout) {
+  const lines = String(stdout || '').split('\n')
+  const at = lines.lastIndexOf('gp-state status:')
+  const h = lines.slice(0, at < 0 ? 0 : at).reverse().find(l => l.startsWith('gp-state head: '))
+  if (at < 0 || !h) return null
+  const headNow = h.slice('gp-state head: '.length).trim()
+  const dirt = dirty(lines.slice(at + 1).filter(l => l.trim()))
+  return [...(headNow === A.reviewed_sha ? [] : [`HEAD is ${headNow}, reviewed ${A.reviewed_sha}`]), ...dirt.map(l => `dirty: ${l}`)]
+}
+// The status of a failed run-frozen step: HEAD_MOVED when the checkout left the reviewed commit or got dirty, else BLOCKED.
+const refusedStatus = (r, stage, reason, extra) => {
+  const drift = r ? stateDrift(r.stdout) : null
+  return drift && drift.length
+    ? disclose({ status: 'HEAD_MOVED', stage, reason: `the work checkout is no longer the clean reviewed commit (${drift.join('; ')}): re-run build`, ...extra })
+    : disclose({ status: 'BLOCKED', stage, reason, ...extra })
+}
 // Review files (design 6.3/6.4): steps final and compliance, one entry per round, every path and hash printed by a script.
 const reviewFiles = []
 const fbInputs = dir => [`node ${SCRIPT('hash-inputs.js')} --out ${q(dir + '/inputs.json')} --files ${q(dir + '/change.patch')} >/dev/null`]
@@ -379,7 +401,7 @@ if (C2) {
     execBlock(['set -e', `mkdir -p ${q(A.run_dir)}`, `node ${SCRIPT('check-completion.js')} --mode plan --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --reviewed-sha ${sha} --manifest ${q(A.manifest_path)} ` +
       `--manifest-sha256 ${A.manifest_sha256} --spec ${q(A.spec_path)} --frozen-dir ${q(A.frozen_dir)} --commit ${A.design_commit} --approvals ${q(A.approvals_path)} --approvals-sha256 ${A.approvals_sha256} 2>&1`].join('\n')) + `\n- ${RULES}`,
     { label: 'plan preflight', phase: 'Plan preflight', effort: 'low', schema: EXEC })
-  if (!planRun || planRun.blocked || planRun.exit_code !== 0) return { status: 'BLOCKED', stage: 'plan preflight', reason: 'the plan preflight failed: nothing was executed', plan: planRun }
+  if (!planRun || planRun.blocked || planRun.exit_code !== 0) return disclose({ status: 'BLOCKED', stage: 'plan preflight', reason: 'the plan preflight failed: nothing was executed', plan: planRun })
   const p = jsonLines(planRun.stdout).find(o => o.mode === 'plan')
   const isInt = (v, min) => Number.isInteger(v) && v >= min
   const relPath = x => typeof x === 'string' && SAFE.test(x) && !ABS.test(x) && !DOTDOT.test(x)
@@ -390,7 +412,7 @@ if (C2) {
     : !Array.isArray(p.live_acceptances) || !p.live_acceptances.every(x => x && ACC_ID.test(x.id) && CHECK_ID.test(x.check_id)) ? 'a live acceptance id fails its pattern'
     : !Array.isArray(p.negative_controls) || !p.negative_controls.every(x => x && ACC_ID.test(x.id) && HEX64.test(x.mutation_sha256 || '')) ? 'a negative control id fails its pattern'
     : !Array.isArray(p.clean_ignore) || !p.clean_ignore.every(relPath) ? 'the frozen clean_ignore is not a list of repo-relative paths' : ''
-  if (planBad) return { status: 'BLOCKED', stage: 'plan preflight', reason: planBad, plan: planRun }
+  if (planBad) return disclose({ status: 'BLOCKED', stage: 'plan preflight', reason: planBad, plan: planRun })
   IGNORE = p.clean_ignore.map(x => x.replace(/^\.\//, ''))
   stateNote = stateNoteFor()
 
@@ -402,9 +424,9 @@ if (C2) {
     const r = await agent(
       `Run the frozen check ${c.id} (${c.name}) of feature ${A.feature_id} through run-frozen.js: it runs exactly the manifest's command for ${c.id} on the pinned, clean reviewed commit ${sha} (${limit}); never type the check's command yourself. ` +
       (c.quiet ? 'Run only on a quiet machine: before the block, check that no other heavy test process is running and wait (bounded) if one is; if the machine never goes quiet, run nothing and return blocked=true with the reason in note. ' : '') +
-      EXEC_NOTE + execBlock(['set -e', runFrozen(`check:${c.id}`, frozenRuns)].join('\n')) + `\n- ${RULES}`,
+      EXEC_NOTE + frozenBlock([runFrozen(`check:${c.id}`, frozenRuns)]) + `\n- ${RULES}`,
       { label: `check ${c.id}`, phase: 'Checks', schema: EXEC, effort: c.effort })
-    if (!r || r.blocked || r.exit_code !== 0) return disclose({ status: 'BLOCKED', stage: `check ${c.id}`, reason: 'run-frozen.js refused the check, or the checkout moved or got dirty during it', check: r, checks })
+    if (!r || r.blocked || r.exit_code !== 0) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check', { check: r, checks })
     const printed = jsonLines(r.stdout).find(o => o.record_path === `${frozenRuns}/check:${c.id}.record.json` && HEX64.test(o.record_sha256 || ''))
     if (!printed) return disclose({ status: 'BLOCKED', stage: `check ${c.id}`, reason: 'the check record was not printed', check: r, checks })
     checks.push({ check_id: c.id, name: c.name, record_path: printed.record_path, record_sha256: printed.record_sha256, exit_code: printed.exit_code, timed_out: printed.timed_out,
@@ -423,9 +445,9 @@ if (C2) {
   const proofs = await agent(
     `Record the acceptance evidence of feature ${A.feature_id} with run-frozen.js: every runtime proof runs exactly its frozen command on the pinned reviewed commit and is appended to the acceptance ledger ${ledger}; ` +
     `a live acceptance executes nothing and only links the record of the check that ran it. Do not make live or paid calls here. ${EXEC_NOTE}` +
-    execBlock(['set -e', ...(proofLines.length ? proofLines : [writeJsonBlock(ledger, { version: 2, entries: [] })]), `sha256sum ${q(ledger)}`].join('\n')) + `\n- ${RULES}`,
+    frozenBlock([...(proofLines.length ? proofLines : [writeJsonBlock(ledger, { version: 2, entries: [] })]), `sha256sum ${q(ledger)}`]) + `\n- ${RULES}`,
     { label: 'acceptance proofs', phase: 'Acceptance proofs', effort: 'low', schema: EXEC })
-  if (!proofs || proofs.blocked || proofs.exit_code !== 0) return disclose({ status: 'BLOCKED', stage: 'acceptance proofs', reason: 'run-frozen.js refused a proof or live link, or the checkout moved', proofs, checks })
+  if (!proofs || proofs.blocked || proofs.exit_code !== 0) return refusedStatus(proofs, 'acceptance proofs', 'run-frozen.js refused a proof or live link', { proofs, checks })
   const ledgerSha = shaOf(proofs.stdout, ledger)
   const proofPrinted = jsonLines(proofs.stdout)
   const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => o.record_path === `${frozenRuns}/proof:${id}.record.json`)),
@@ -521,8 +543,9 @@ if (C2) {
       `1. Read negative_control.mutation of the entry ${n.id} in the requirements list of the frozen manifest ${A.manifest_path} (its UTF-8 bytes hash to ${n.mutation_sha256}). It is prose that says what to break, never a command.\n` +
       `2. Write that mutation as a unified git patch to ${patch}: mkdir -p ${q(dir)}; git -C ${q(A.repo)} worktree add --detach ${q(draft)} ${sha}; make the edit in ${draft} only, ` +
       `in non-test code inside the owned paths of the acceptance's components (never a file under the frozen test_paths, never a test the build added, never a file named in the proof command); ` +
-      `git -C ${q(draft)} diff --no-renames > ${q(patch)}; git -C ${q(A.repo)} worktree remove --force ${q(draft)}. The patch may only change existing files or add regular files: no rename, deletion, mode change or binary change. Never touch the work checkout ${A.repo}.\n` +
-      `3. Then: ${EXEC_NOTE}` + execBlock(['set -e', runFrozen(`negative:${n.id}`, dir, ` --patch ${q(patch)}`)].join('\n')) + `\n- ${RULES}`,
+      `git -C ${q(draft)} add -A -N; git -C ${q(draft)} diff --no-renames > ${q(patch)}; git -C ${q(A.repo)} worktree remove --force ${q(draft)} ` +
+      `(add -N, intent to add, makes git diff include a new file). The patch may only change existing files or add regular files: no rename, deletion, mode change or binary change. Never touch the work checkout ${A.repo}.\n` +
+      `3. Then: ${EXEC_NOTE}` + frozenBlock([runFrozen(`negative:${n.id}`, dir, ` --patch ${q(patch)}`)]) + `\n- ${RULES}`,
       { label: `negative control ${n.id}`, phase: 'Negative controls', schema: EXEC, effort: 'medium' })
     if (!r || r.blocked) return reportOf('BLOCKED', { stage: 'negative controls', reason: `negative control ${n.id} was blocked`, negative: r, negative_controls: negatives })
     const printed = jsonLines(r.stdout).find(o => o.record_path === `${dir}/negative:${n.id}.record.json` && HEX64.test(o.record_sha256 || ''))
@@ -530,6 +553,8 @@ if (C2) {
       negatives.push({ id: n.id, record_path: printed.record_path, record_sha256: printed.record_sha256 })
       return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} is NOT RUN: negative_controls_total_min of phase time was used before it`, negative: r, negative_controls: negatives })
     }
+    const negDrift = r.exit_code !== 0 ? stateDrift(r.stdout) : null
+    if (negDrift && negDrift.length) return reportOf('HEAD_MOVED', { stage: 'negative controls', reason: `during negative control ${n.id} the work checkout left the clean reviewed commit (${negDrift.join('; ')}): re-run build`, negative: r, negative_controls: negatives })
     if (r.exit_code !== 0 || !printed) return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} did not run (refused patch, or the checkout moved)`, negative: r, negative_controls: negatives })
     negatives.push({ id: n.id, record_path: printed.record_path, record_sha256: printed.record_sha256 })
   }
