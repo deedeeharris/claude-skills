@@ -23,7 +23,17 @@
 // - G03 matches title segments the same way as ids, so a title such as "Pre-fix greeting" is rejected (fail
 //   closed; the title is free text, so rename it);
 // - P02 covers lifecycle status and SRC disposition (checks have no "retired" state; a not-applicable check
-//   may become applicable again).
+//   may become applicable again);
+// - G13 and G14 count only active goals and active components (a retired component owns nothing, so a
+//   requirement naming only retired items has no live goal and no owned scope);
+// - G33, G34, G35 and G37 compare path segments with ASCII case folded, so a path that differs only in case
+//   from a protected, state or owned path is rejected (fail closed on case-insensitive filesystems such as
+//   default macOS); G36 ("inside allowed_paths") compares exactly, so it must hold on a case-sensitive
+//   filesystem too. Paths are ASCII (G32), so folding is lowercasing;
+// - G34's owned candidates only add a diagnostic of their own when G36 also fails: an owned path inside an
+//   allowed path overlaps every state path it overlaps through that allowed path;
+// - R01 normalizes one trailing LF or CRLF on both sides (source_request.text holds no CR, G31; a request
+//   file saved with CRLF line ends still mismatches on any inner CRLF).
 
 const crypto = require('node:crypto');
 
@@ -87,8 +97,9 @@ function unsafePath(p) {
 }
 const segs = p => p.split('/').filter(s => s !== '' && s !== '.');
 const isPrefix = (a, b) => a.length <= b.length && a.every((s, i) => s === b[i]);
-const overlap = (a, b) => { const x = segs(a), y = segs(b); return isPrefix(x, y) || isPrefix(y, x); };
-const inside = (a, b) => isPrefix(segs(b), segs(a)); // a equal to or inside b
+const folded = p => segs(p.toLowerCase());
+const overlap = (a, b) => { const x = folded(a), y = folded(b); return isPrefix(x, y) || isPrefix(y, x); }; // case folded
+const inside = (a, b) => isPrefix(segs(b), segs(a)); // a equal to or inside b, exact case
 
 // ---- G01-G39 -------------------------------------------------------------------------------------------
 
@@ -214,6 +225,8 @@ function graphRules(f, { repoPath }) {
   });
   const coveredSrc = new Set(f.coverage.filter(c => c.disposition === 'covered').map(c => c.id));
   const activeReqs = reqs.filter(r => r.status === 'active');
+  const activeGoals = new Set(f.product.goals.filter(g => g.status === 'active').map(g => g.id));
+  const activeComps = new Set(f.architecture.components.filter(c => c.status === 'active').map(c => c.id));
   f.product.goals.forEach((g, i) => {
     if (g.status !== 'active') return;
     if (!activeReqs.some(r => r.goal_ids.includes(g.id))) out.push(diag('E_COVERAGE', 'G11', `/product/goals/${i}`, g.id, `active goal ${g.id} has no active requirement`));
@@ -221,8 +234,8 @@ function graphRules(f, { repoPath }) {
   });
   reqs.forEach((r, i) => {
     if (r.status !== 'active') return;
-    if (!r.goal_ids.length) out.push(diag('E_COVERAGE', 'G13', `/requirements/${i}/goal_ids`, r.id, `active requirement ${r.id} has no goal`));
-    if (!r.component_ids.length) out.push(diag('E_COVERAGE', 'G14', `/requirements/${i}/component_ids`, r.id, `active requirement ${r.id} has no component`));
+    if (!r.goal_ids.some(g => activeGoals.has(g))) out.push(diag('E_COVERAGE', 'G13', `/requirements/${i}/goal_ids`, r.id, `active requirement ${r.id} has no active goal`));
+    if (!r.component_ids.some(c => activeComps.has(c))) out.push(diag('E_COVERAGE', 'G14', `/requirements/${i}/component_ids`, r.id, `active requirement ${r.id} has no active component`));
     if (!r.acceptance.some(a => a.status === 'active')) out.push(diag('E_COVERAGE', 'G15', `/requirements/${i}/acceptance`, r.id, `active requirement ${r.id} has no active acceptance`));
     if (!listedByCovered.has(r.id) && blank(r.derived_rationale)) out.push(diag('E_COVERAGE', 'G16', `/requirements/${i}`, r.id, `active requirement ${r.id} is listed by no covered SRC and has no derived_rationale`));
   });
@@ -348,7 +361,7 @@ function sourceRules(f, { requestBytes, requestText, mode }) {
   const sr = f.source_request;
   const refKeys = ['ref', 'sha256', 'summary'].filter(k => has(sr, k));
   const form = has(sr, 'text') && !refKeys.length ? 'text' : !has(sr, 'text') && refKeys.length === 3 ? 'ref' : null; // else G08
-  const strip = s => (s.endsWith('\n') ? s.slice(0, -1) : s);
+  const strip = s => (s.endsWith('\r\n') ? s.slice(0, -2) : s.endsWith('\n') ? s.slice(0, -1) : s);
   if (form !== null && form !== mode) out.push(diag('E_SOURCE_FORM', 'R03', '/source_request', null, `source_request uses the ${form} form but --source-mode is ${mode}`));
   if (form === 'text' && strip(sr.text) !== strip(requestText)) out.push(diag('E_SOURCE_MISMATCH', 'R01', '/source_request/text', null, 'source_request.text differs from the source request file'));
   if (form === 'ref') {
