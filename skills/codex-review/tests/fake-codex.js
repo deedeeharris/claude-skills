@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 'use strict';
-// Stub codex executable for the offline test suite. Behavior is controlled by two
-// env vars: FAKE_CODEX_SCENARIO selects a canned response, FAKE_CODEX_STATE is a
+// Stub codex executable for the offline test suite. Behavior is controlled by env
+// vars: FAKE_CODEX_SCENARIO selects a canned response, FAKE_CODEX_STATE is a
 // directory the stub appends its invocation history to on every call. It tells a
 // review call from a validation call by the schema file named with --output-schema.
+// Optional, all absent by default (existing scenarios unchanged):
+// - FAKE_CODEX_DELAY_MS: wait this long before answering an exec call.
+// - FAKE_CODEX_PLAN: JSON { "review": [ { "delay_ms": n, "ignore_term": bool }, ... ],
+//   "validate": [ ... ] }, entry i applying to the i-th call of that kind (overrides the
+//   delay; ignore_term makes the stub ignore SIGTERM, so only SIGKILL stops it).
+// - FAKE_CODEX_TABLE (scenario "table"): JSON { findings: [review findings],
+//   model_verdict, unable_to_review, validation: { <id>: "CONFIRMED"|"REFUTED" } (an id
+//   left out is omitted from the validation reply), validation_failure: "error"|null }.
 
 const fs = require('fs');
 const path = require('path');
@@ -26,6 +34,26 @@ function writeOut(outPath, payload) {
 function getFlag(argv, name) {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : null;
+}
+
+function reviewFindings(name) {
+  const sets = {
+    pass: [],
+    'one-major-low': [{ id: 'F1', severity: 'MAJOR', confidence: 0.6, category: 'correctness', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
+    'blocking-and-major': [
+      { id: 'F1', severity: 'BLOCKING', confidence: 0.9, category: 'security', iso_property: null, location: { file: 'a.js', line: 1, section: null }, claim: 'sql injection', evidence: 'concat', suggested_fix: 'parameterize' },
+      { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'correctness', iso_property: null, location: { file: 'a.js', line: 2, section: null }, claim: 'off by one', evidence: 'loop', suggested_fix: 'fix bound' },
+    ],
+    minor: [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
+    'with-unknown-key': [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z', confirmed_by_reproduction: 'sneaky leftover field' }],
+    special: [{ id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'template', iso_property: null, location: { file: null, line: null, section: 'rubric' }, claim: 'has $& and {{rubric}}', evidence: 'rubric text present', suggested_fix: 'none' }],
+    'three-major-null-iso': [
+      { id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R1' }, claim: 'gap one', evidence: 'text one', suggested_fix: 'fix one' },
+      { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R2' }, claim: 'gap two', evidence: 'text two', suggested_fix: 'fix two' },
+      { id: 'F3', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R3' }, claim: 'gap three', evidence: 'text three', suggested_fix: 'fix three' },
+    ],
+  };
+  return sets[name] || [];
 }
 
 function main() {
@@ -59,25 +87,29 @@ function main() {
   }
   appendState(state, { argv, stdin, call, callIndex });
 
-  const reviewFindings = (name) => {
-    const sets = {
-      pass: [],
-      'one-major-low': [{ id: 'F1', severity: 'MAJOR', confidence: 0.6, category: 'correctness', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
-      'blocking-and-major': [
-        { id: 'F1', severity: 'BLOCKING', confidence: 0.9, category: 'security', iso_property: null, location: { file: 'a.js', line: 1, section: null }, claim: 'sql injection', evidence: 'concat', suggested_fix: 'parameterize' },
-        { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'correctness', iso_property: null, location: { file: 'a.js', line: 2, section: null }, claim: 'off by one', evidence: 'loop', suggested_fix: 'fix bound' },
-      ],
-      minor: [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
-      'with-unknown-key': [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z', confirmed_by_reproduction: 'sneaky leftover field' }],
-      special: [{ id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'template', iso_property: null, location: { file: null, line: null, section: 'rubric' }, claim: 'has $& and {{rubric}}', evidence: 'rubric text present', suggested_fix: 'none' }],
-      'three-major-null-iso': [
-        { id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R1' }, claim: 'gap one', evidence: 'text one', suggested_fix: 'fix one' },
-        { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R2' }, claim: 'gap two', evidence: 'text two', suggested_fix: 'fix two' },
-        { id: 'F3', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R3' }, claim: 'gap three', evidence: 'text three', suggested_fix: 'fix three' },
-      ],
-    };
-    return sets[name] || [];
-  };
+  let plan = {};
+  try { plan = JSON.parse(process.env.FAKE_CODEX_PLAN || '{}') || {}; } catch { plan = {}; }
+  const step = (Array.isArray(plan[call]) && plan[call][callIndex - 1]) || {};
+  const delayMs = Number(step.delay_ms !== undefined ? step.delay_ms : process.env.FAKE_CODEX_DELAY_MS) || 0;
+  if (step.ignore_term) process.on('SIGTERM', () => {});
+  const go = () => respond({ scenario, call, callIndex, outPath, state });
+  if (delayMs > 0) setTimeout(go, delayMs); else go();
+}
+
+function respond({ scenario, call, callIndex, outPath, state }) {
+  if (scenario === 'table') {
+    let table = {};
+    try { table = JSON.parse(process.env.FAKE_CODEX_TABLE || '{}') || {}; } catch { table = {}; }
+    const findings = Array.isArray(table.findings) ? table.findings : [];
+    if (call === 'review') {
+      writeOut(outPath, { verdict: table.model_verdict || 'PASS', summary: 'table', unable_to_review: table.unable_to_review == null ? null : table.unable_to_review, findings });
+      process.exit(0);
+    }
+    if (table.validation_failure === 'error') { process.stderr.write('fake codex: validation call failed\n'); process.exit(1); }
+    const verdicts = table.validation || {};
+    writeOut(outPath, { results: findings.filter((f) => verdicts[f.id]).map((f) => ({ id: f.id, status: verdicts[f.id], evidence: `table: ${f.id}` })) });
+    process.exit(0);
+  }
 
   if (scenario === 'timeout') {
     const sleepMs = 60000;
