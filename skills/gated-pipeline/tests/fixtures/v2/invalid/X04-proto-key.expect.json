@@ -14,5 +14,12 @@
   "paths": [
     "/__proto__"
   ],
+  "diagnostics": [
+    [
+      "E_FORBIDDEN_KEY",
+      null,
+      "/__proto__"
+    ]
+  ],
   "args": {}
 }

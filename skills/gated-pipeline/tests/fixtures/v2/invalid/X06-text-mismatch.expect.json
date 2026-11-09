@@ -16,6 +16,13 @@
   "paths": [
     "/source_request/text"
   ],
+  "diagnostics": [
+    [
+      "E_SOURCE_MISMATCH",
+      "R01",
+      "/source_request/text"
+    ]
+  ],
   "args": {
     "source_request": "valid/S01-minimal.request.txt",
     "source_mode": "text"

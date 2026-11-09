@@ -16,5 +16,12 @@
   "paths": [
     "/title"
   ],
+  "diagnostics": [
+    [
+      "E_SHADOW_ID",
+      "G03",
+      "/title"
+    ]
+  ],
   "args": {}
 }

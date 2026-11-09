@@ -16,5 +16,12 @@
   "paths": [
     "/suite/command"
   ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G20",
+      "/suite/command"
+    ]
+  ],
   "args": {}
 }

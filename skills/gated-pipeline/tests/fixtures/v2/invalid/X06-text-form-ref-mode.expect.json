@@ -16,6 +16,13 @@
   "paths": [
     "/source_request"
   ],
+  "diagnostics": [
+    [
+      "E_SOURCE_FORM",
+      "R03",
+      "/source_request"
+    ]
+  ],
   "args": {
     "source_request": "valid/X06-ref.request.txt",
     "source_mode": "ref"

@@ -16,6 +16,13 @@
   "paths": [
     "/coverage/2/disposition"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REACTIVATED",
+      "P02",
+      "/coverage/2/disposition"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

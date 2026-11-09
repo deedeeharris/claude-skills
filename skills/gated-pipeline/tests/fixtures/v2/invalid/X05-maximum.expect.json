@@ -14,5 +14,12 @@
   "paths": [
     "/limits/proof_timeout_s"
   ],
+  "diagnostics": [
+    [
+      "E_MAXIMUM",
+      null,
+      "/limits/proof_timeout_s"
+    ]
+  ],
   "args": {}
 }

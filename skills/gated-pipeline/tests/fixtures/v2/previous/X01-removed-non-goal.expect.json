@@ -16,6 +16,13 @@
   "paths": [
     "/product/non_goals"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/product/non_goals"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

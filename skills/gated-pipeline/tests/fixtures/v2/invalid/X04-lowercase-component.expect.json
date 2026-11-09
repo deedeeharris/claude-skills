@@ -14,5 +14,12 @@
   "paths": [
     "/architecture/components/0/id"
   ],
+  "diagnostics": [
+    [
+      "E_PATTERN",
+      null,
+      "/architecture/components/0/id"
+    ]
+  ],
   "args": {}
 }

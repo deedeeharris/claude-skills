@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/acceptance/1/retired_rationale"
   ],
+  "diagnostics": [
+    [
+      "E_REASON_MISSING",
+      "G17",
+      "/requirements/0/acceptance/1/retired_rationale"
+    ]
+  ],
   "args": {}
 }

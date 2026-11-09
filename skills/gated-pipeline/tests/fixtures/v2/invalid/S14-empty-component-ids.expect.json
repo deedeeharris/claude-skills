@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/component_ids"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G14",
+      "/requirements/0/component_ids"
+    ]
+  ],
   "args": {}
 }

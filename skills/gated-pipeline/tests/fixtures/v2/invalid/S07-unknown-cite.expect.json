@@ -16,5 +16,12 @@
   "paths": [
     "/architecture/security/accepted_risks/0/cites/0"
   ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G05",
+      "/architecture/security/accepted_risks/0/cites/0"
+    ]
+  ],
   "args": {}
 }

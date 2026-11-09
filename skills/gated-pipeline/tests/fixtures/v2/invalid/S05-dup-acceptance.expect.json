@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/acceptance/1/id"
   ],
+  "diagnostics": [
+    [
+      "E_DUP_ID",
+      "G01",
+      "/requirements/0/acceptance/1/id"
+    ]
+  ],
   "args": {}
 }

@@ -16,6 +16,13 @@
   "paths": [
     "/architecture/invariants"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/architecture/invariants"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

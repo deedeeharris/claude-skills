@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/1/acceptance/0/negative_control/method"
   ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G24",
+      "/requirements/1/acceptance/0/negative_control/method"
+    ]
+  ],
   "args": {}
 }

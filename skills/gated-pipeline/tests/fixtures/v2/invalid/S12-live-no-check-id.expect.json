@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/1/acceptance/0/verification/check_id"
   ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G21",
+      "/requirements/1/acceptance/0/verification/check_id"
+    ]
+  ],
   "args": {}
 }

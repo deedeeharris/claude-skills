@@ -16,6 +16,13 @@
   "paths": [
     "/checks"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/checks"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

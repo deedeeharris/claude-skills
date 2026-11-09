@@ -16,5 +16,12 @@
   "paths": [
     "/scope/state_paths/0"
   ],
+  "diagnostics": [
+    [
+      "E_STATE_OVERLAP",
+      "G34",
+      "/scope/state_paths/0"
+    ]
+  ],
   "args": {}
 }

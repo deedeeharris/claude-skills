@@ -16,5 +16,12 @@
   "paths": [
     "/product/goals/0/source_ids"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G12",
+      "/product/goals/0/source_ids"
+    ]
+  ],
   "args": {}
 }

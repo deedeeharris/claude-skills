@@ -16,5 +16,12 @@
   "paths": [
     "/architecture/invariants/1/retired_rationale"
   ],
+  "diagnostics": [
+    [
+      "E_REASON_MISSING",
+      "G17",
+      "/architecture/invariants/1/retired_rationale"
+    ]
+  ],
   "args": {}
 }

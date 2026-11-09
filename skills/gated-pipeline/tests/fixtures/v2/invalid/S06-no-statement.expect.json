@@ -14,5 +14,12 @@
   "paths": [
     "/requirements/0/statement"
   ],
+  "diagnostics": [
+    [
+      "E_REQUIRED",
+      null,
+      "/requirements/0/statement"
+    ]
+  ],
   "args": {}
 }

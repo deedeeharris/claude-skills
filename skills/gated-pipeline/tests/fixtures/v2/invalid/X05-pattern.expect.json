@@ -14,5 +14,12 @@
   "paths": [
     "/feature_id"
   ],
+  "diagnostics": [
+    [
+      "E_PATTERN",
+      null,
+      "/feature_id"
+    ]
+  ],
   "args": {}
 }

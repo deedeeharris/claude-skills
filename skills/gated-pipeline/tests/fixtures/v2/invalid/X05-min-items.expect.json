@@ -14,5 +14,12 @@
   "paths": [
     "/product/actors"
   ],
+  "diagnostics": [
+    [
+      "E_MIN_ITEMS",
+      null,
+      "/product/actors"
+    ]
+  ],
   "args": {}
 }

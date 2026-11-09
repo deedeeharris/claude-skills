@@ -16,6 +16,13 @@
   "paths": [
     "/architecture/decisions"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/architecture/decisions"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

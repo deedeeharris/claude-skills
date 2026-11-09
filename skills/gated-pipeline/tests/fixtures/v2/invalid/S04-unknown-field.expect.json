@@ -14,5 +14,12 @@
   "paths": [
     "/notes"
   ],
+  "diagnostics": [
+    [
+      "E_UNKNOWN_FIELD",
+      null,
+      "/notes"
+    ]
+  ],
   "args": {}
 }

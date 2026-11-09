@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/acceptance/0/verification/expected"
   ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G18",
+      "/requirements/0/acceptance/0/verification/expected"
+    ]
+  ],
   "args": {}
 }

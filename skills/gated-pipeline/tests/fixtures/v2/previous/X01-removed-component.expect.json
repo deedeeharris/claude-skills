@@ -16,6 +16,13 @@
   "paths": [
     "/architecture/components"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/architecture/components"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

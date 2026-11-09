@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/statement"
   ],
+  "diagnostics": [
+    [
+      "E_MIGRATION_TODO",
+      "G39",
+      "/requirements/0/statement"
+    ]
+  ],
   "args": {}
 }

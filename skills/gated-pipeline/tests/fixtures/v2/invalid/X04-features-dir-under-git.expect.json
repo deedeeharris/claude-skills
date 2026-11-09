@@ -13,6 +13,13 @@
   "paths": [
     ""
   ],
+  "diagnostics": [
+    [
+      "E_SCOPE",
+      "G38",
+      ""
+    ]
+  ],
   "args": {
     "repo_path": ".git/features/greet.feature.json"
   }

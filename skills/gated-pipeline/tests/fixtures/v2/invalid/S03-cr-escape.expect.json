@@ -16,5 +16,12 @@
   "paths": [
     "/title"
   ],
+  "diagnostics": [
+    [
+      "E_CONTROL_CHAR",
+      "G31",
+      "/title"
+    ]
+  ],
   "args": {}
 }

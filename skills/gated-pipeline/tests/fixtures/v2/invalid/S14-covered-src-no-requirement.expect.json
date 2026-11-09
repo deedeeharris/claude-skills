@@ -16,5 +16,12 @@
   "paths": [
     "/coverage/1/requirement_ids"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G09",
+      "/coverage/1/requirement_ids"
+    ]
+  ],
   "args": {}
 }

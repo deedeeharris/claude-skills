@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/acceptance/0/id"
   ],
+  "diagnostics": [
+    [
+      "E_ID_FORMAT",
+      "G02",
+      "/requirements/0/acceptance/0/id"
+    ]
+  ],
   "args": {}
 }

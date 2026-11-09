@@ -3,9 +3,10 @@
 
 // Level 1 fixture matrix for scripts/validate-feature.js (plan 3.2, WP1), plus strict-json unit cases.
 // Every invalid fixture is a minimal text mutation of a valid base; its .expect.json records the base, the
-// mutation and the exit code, error codes, rule ids and paths taken from docs/v2-design.md section 3.
+// mutation and the exit code, error codes, rule ids and paths taken from docs/v2-design.md section 3, plus
+// `diagnostics`: the exact [code, rule, path] triples with their multiplicity.
 // The test proves: the base exits 0, base + mutation reproduces the fixture bytes, and the real CLI (child
-// process) reports exactly the expected exit, codes, rules and paths. Paths are JSON Pointers into the file.
+// process) reports exactly the expected exit, codes, rules, paths and diagnostics. Paths are JSON Pointers.
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -117,6 +118,14 @@ for (const c of CASES) {
     assert.deepEqual(uniqSorted(res.out.errors.map(e => e.code)), uniqSorted(expect.codes), 'codes');
     assert.deepEqual(uniqSorted(res.out.errors.map(e => e.rule).filter(r => r !== null)), uniqSorted(expect.rules), 'rules');
     assert.deepEqual(uniqSorted(res.out.errors.map(e => e.path)), uniqSorted(expect.paths), 'paths');
+    // Exactly these diagnostics: every (code, rule, path) triple with its multiplicity, so a right code at a
+    // wrong path or a duplicated diagnostic fails. The triples must also agree with codes, rules and paths.
+    assert.ok(Array.isArray(expect.diagnostics), 'expect.diagnostics lists [code, rule, path] triples');
+    assert.deepEqual(uniqSorted(expect.diagnostics.map(d => d[0])), uniqSorted(expect.codes), 'diagnostics agree with codes');
+    assert.deepEqual(uniqSorted(expect.diagnostics.map(d => d[1]).filter(r => r !== null)), uniqSorted(expect.rules), 'diagnostics agree with rules');
+    assert.deepEqual(uniqSorted(expect.diagnostics.map(d => d[2])), uniqSorted(expect.paths), 'diagnostics agree with paths');
+    const triples = list => list.map(t => JSON.stringify(t)).sort();
+    assert.deepEqual(triples(res.out.errors.map(e => [e.code, e.rule, e.path])), triples(expect.diagnostics), 'diagnostics (code, rule, path), with count');
     for (const e of res.out.errors) if (!/^R|^G|^P/.test(e.rule || '')) assert.equal(e.rule, null, 'parse, version and schema codes carry rule null');
   });
 }

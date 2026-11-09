@@ -16,6 +16,13 @@
   "paths": [
     "/source_request/sha256"
   ],
+  "diagnostics": [
+    [
+      "E_SOURCE_MISMATCH",
+      "R02",
+      "/source_request/sha256"
+    ]
+  ],
   "args": {
     "source_request": "valid/X06-ref.request.txt",
     "source_mode": "ref"

@@ -16,5 +16,12 @@
   "paths": [
     "/scope/test_paths/0"
   ],
+  "diagnostics": [
+    [
+      "E_OWNERSHIP",
+      "G37",
+      "/scope/test_paths/0"
+    ]
+  ],
   "args": {}
 }

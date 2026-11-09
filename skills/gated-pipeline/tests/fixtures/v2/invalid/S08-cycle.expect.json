@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/depends_on"
   ],
+  "diagnostics": [
+    [
+      "E_CYCLE",
+      "G07",
+      "/requirements/0/depends_on"
+    ]
+  ],
   "args": {}
 }

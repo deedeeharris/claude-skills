@@ -16,5 +16,12 @@
   "paths": [
     "/product/goals/1/id"
   ],
+  "diagnostics": [
+    [
+      "E_DUP_ID",
+      "G01",
+      "/product/goals/1/id"
+    ]
+  ],
   "args": {}
 }

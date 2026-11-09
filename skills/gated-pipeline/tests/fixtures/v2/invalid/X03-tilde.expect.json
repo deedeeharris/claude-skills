@@ -16,5 +16,12 @@
   "paths": [
     "/scope/protected_paths/0"
   ],
+  "diagnostics": [
+    [
+      "E_UNSAFE_PATH",
+      "G32",
+      "/scope/protected_paths/0"
+    ]
+  ],
   "args": {}
 }

@@ -14,5 +14,12 @@
   "paths": [
     "/requirements/0/acceptance/0/verification/expected/exit_code"
   ],
+  "diagnostics": [
+    [
+      "E_CONST",
+      null,
+      "/requirements/0/acceptance/0/verification/expected/exit_code"
+    ]
+  ],
   "args": {}
 }

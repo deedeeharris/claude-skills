@@ -16,5 +16,12 @@
   "paths": [
     "/coverage/2/rationale"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G10",
+      "/coverage/2/rationale"
+    ]
+  ],
   "args": {}
 }

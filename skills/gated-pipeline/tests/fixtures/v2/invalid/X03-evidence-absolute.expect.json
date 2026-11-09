@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/2/acceptance/0/verification/evidence/paths/0"
   ],
+  "diagnostics": [
+    [
+      "E_UNSAFE_PATH",
+      "G32",
+      "/requirements/2/acceptance/0/verification/evidence/paths/0"
+    ]
+  ],
   "args": {}
 }

@@ -16,5 +16,12 @@
   "paths": [
     "/architecture/components/1/owned_paths/0"
   ],
+  "diagnostics": [
+    [
+      "E_OWNERSHIP",
+      "G35",
+      "/architecture/components/1/owned_paths/0"
+    ]
+  ],
   "args": {}
 }

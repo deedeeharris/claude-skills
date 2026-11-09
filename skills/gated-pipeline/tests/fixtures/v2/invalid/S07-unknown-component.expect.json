@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/component_ids/1"
   ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G05",
+      "/requirements/0/component_ids/1"
+    ]
+  ],
   "args": {}
 }

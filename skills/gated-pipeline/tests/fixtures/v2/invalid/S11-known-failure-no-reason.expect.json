@@ -16,5 +16,12 @@
   "paths": [
     "/suite/known_failures/0/reason"
   ],
+  "diagnostics": [
+    [
+      "E_REASON_MISSING",
+      "G29",
+      "/suite/known_failures/0/reason"
+    ]
+  ],
   "args": {}
 }

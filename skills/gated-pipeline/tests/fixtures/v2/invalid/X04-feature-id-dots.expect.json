@@ -1,0 +1,29 @@
+{
+  "case": "X04",
+  "variant": "feature_id made only of dots",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"feature_id\": \"greet\",",
+    "replace": "\"feature_id\": \"..\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_SCOPE"
+  ],
+  "rules": [
+    "G38"
+  ],
+  "paths": [
+    "/feature_id"
+  ],
+  "diagnostics": [
+    [
+      "E_SCOPE",
+      "G38",
+      "/feature_id"
+    ]
+  ],
+  "args": {
+    "repo_path": ".pipeline/features/...feature.json"
+  }
+}

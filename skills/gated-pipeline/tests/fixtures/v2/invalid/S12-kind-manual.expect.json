@@ -14,5 +14,12 @@
   "paths": [
     "/requirements/0/acceptance/0/verification/kind"
   ],
+  "diagnostics": [
+    [
+      "E_ENUM",
+      null,
+      "/requirements/0/acceptance/0/verification/kind"
+    ]
+  ],
   "args": {}
 }

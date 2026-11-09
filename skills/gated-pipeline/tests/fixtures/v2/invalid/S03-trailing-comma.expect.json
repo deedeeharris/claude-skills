@@ -14,5 +14,12 @@
   "paths": [
     ""
   ],
+  "diagnostics": [
+    [
+      "E_PARSE",
+      null,
+      ""
+    ]
+  ],
   "args": {}
 }

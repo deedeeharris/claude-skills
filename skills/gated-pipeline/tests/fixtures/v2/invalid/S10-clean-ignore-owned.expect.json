@@ -16,5 +16,12 @@
   "paths": [
     "/scope/clean_ignore/0"
   ],
+  "diagnostics": [
+    [
+      "E_STATE_OVERLAP",
+      "G34",
+      "/scope/clean_ignore/0"
+    ]
+  ],
   "args": {}
 }

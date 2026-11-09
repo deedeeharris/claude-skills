@@ -16,6 +16,13 @@
   "paths": [
     "/coverage"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/coverage"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

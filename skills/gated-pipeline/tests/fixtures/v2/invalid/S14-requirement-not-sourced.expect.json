@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/2"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G16",
+      "/requirements/2"
+    ]
+  ],
   "args": {}
 }

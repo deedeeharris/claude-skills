@@ -16,5 +16,12 @@
   "paths": [
     "/product/goals/0/source_ids/1"
   ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G05",
+      "/product/goals/0/source_ids/1"
+    ]
+  ],
   "args": {}
 }

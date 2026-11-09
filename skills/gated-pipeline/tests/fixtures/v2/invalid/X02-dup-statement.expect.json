@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/2/statement"
   ],
+  "diagnostics": [
+    [
+      "E_DUP_STATEMENT",
+      "G04",
+      "/requirements/2/statement"
+    ]
+  ],
   "args": {}
 }

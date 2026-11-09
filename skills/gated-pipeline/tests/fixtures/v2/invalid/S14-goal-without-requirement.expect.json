@@ -16,5 +16,12 @@
   "paths": [
     "/product/goals/1"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G11",
+      "/product/goals/1"
+    ]
+  ],
   "args": {}
 }

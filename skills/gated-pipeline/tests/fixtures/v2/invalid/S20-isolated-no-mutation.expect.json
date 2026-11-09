@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/acceptance/0/negative_control/mutation"
   ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G23",
+      "/requirements/0/acceptance/0/negative_control/mutation"
+    ]
+  ],
   "args": {}
 }

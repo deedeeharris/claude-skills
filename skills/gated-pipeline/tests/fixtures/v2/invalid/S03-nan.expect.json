@@ -14,5 +14,12 @@
   "paths": [
     "/suite/timeout_min"
   ],
+  "diagnostics": [
+    [
+      "E_PARSE",
+      null,
+      "/suite/timeout_min"
+    ]
+  ],
   "args": {}
 }

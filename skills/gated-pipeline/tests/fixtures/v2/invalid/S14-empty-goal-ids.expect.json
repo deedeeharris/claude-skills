@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/1/goal_ids"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G13",
+      "/requirements/1/goal_ids"
+    ]
+  ],
   "args": {}
 }

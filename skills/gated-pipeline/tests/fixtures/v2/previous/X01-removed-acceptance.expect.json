@@ -16,6 +16,13 @@
   "paths": [
     "/requirements/0/acceptance"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/requirements/0/acceptance"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

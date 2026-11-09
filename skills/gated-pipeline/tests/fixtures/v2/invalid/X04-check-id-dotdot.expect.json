@@ -14,5 +14,12 @@
   "paths": [
     "/checks/0/id"
   ],
+  "diagnostics": [
+    [
+      "E_PATTERN",
+      null,
+      "/checks/0/id"
+    ]
+  ],
   "args": {}
 }

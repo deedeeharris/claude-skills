@@ -14,5 +14,12 @@
   "paths": [
     "/schema_version"
   ],
+  "diagnostics": [
+    [
+      "E_SCHEMA_VERSION",
+      null,
+      "/schema_version"
+    ]
+  ],
   "args": {}
 }

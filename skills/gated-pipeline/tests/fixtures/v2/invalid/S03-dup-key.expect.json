@@ -14,5 +14,12 @@
   "paths": [
     "/title"
   ],
+  "diagnostics": [
+    [
+      "E_DUP_KEY",
+      null,
+      "/title"
+    ]
+  ],
   "args": {}
 }

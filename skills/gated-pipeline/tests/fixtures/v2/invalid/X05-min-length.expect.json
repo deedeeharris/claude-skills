@@ -14,5 +14,12 @@
   "paths": [
     "/title"
   ],
+  "diagnostics": [
+    [
+      "E_MIN_LENGTH",
+      null,
+      "/title"
+    ]
+  ],
   "args": {}
 }

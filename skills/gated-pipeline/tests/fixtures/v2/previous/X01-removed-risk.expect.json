@@ -16,6 +16,13 @@
   "paths": [
     "/architecture/security/accepted_risks"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/architecture/security/accepted_risks"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

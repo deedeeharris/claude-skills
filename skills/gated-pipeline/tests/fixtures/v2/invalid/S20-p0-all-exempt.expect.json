@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/acceptance/0/negative_control/alternate_evidence"
   ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G25",
+      "/requirements/0/acceptance/0/negative_control/alternate_evidence"
+    ]
+  ],
   "args": {}
 }

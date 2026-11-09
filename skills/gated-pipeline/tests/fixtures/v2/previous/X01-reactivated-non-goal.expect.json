@@ -16,6 +16,13 @@
   "paths": [
     "/product/non_goals/1/status"
   ],
+  "diagnostics": [
+    [
+      "E_ID_REACTIVATED",
+      "P02",
+      "/product/non_goals/1/status"
+    ]
+  ],
   "args": {
     "previous": "valid/medium.feature.json"
   }

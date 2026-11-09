@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/1/acceptance/0/verification/check_id"
   ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G05",
+      "/requirements/1/acceptance/0/verification/check_id"
+    ]
+  ],
   "args": {}
 }

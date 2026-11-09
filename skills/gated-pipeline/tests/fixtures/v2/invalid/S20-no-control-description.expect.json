@@ -14,5 +14,12 @@
   "paths": [
     "/requirements/0/acceptance/0/negative_control/description"
   ],
+  "diagnostics": [
+    [
+      "E_REQUIRED",
+      null,
+      "/requirements/0/acceptance/0/negative_control/description"
+    ]
+  ],
   "args": {}
 }

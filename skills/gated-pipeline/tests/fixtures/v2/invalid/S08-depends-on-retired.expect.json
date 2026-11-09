@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/1/depends_on/0"
   ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G06",
+      "/requirements/1/depends_on/0"
+    ]
+  ],
   "args": {}
 }

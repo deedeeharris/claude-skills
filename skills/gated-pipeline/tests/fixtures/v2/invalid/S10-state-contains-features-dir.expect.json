@@ -16,5 +16,12 @@
   "paths": [
     "/scope/state_paths/0"
   ],
+  "diagnostics": [
+    [
+      "E_PROTECTED_OVERLAP",
+      "G33",
+      "/scope/state_paths/0"
+    ]
+  ],
   "args": {}
 }

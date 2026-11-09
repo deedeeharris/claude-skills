@@ -16,6 +16,13 @@
   "paths": [
     "/coverage/0/excerpt"
   ],
+  "diagnostics": [
+    [
+      "E_SOURCE_LEAK",
+      "R04",
+      "/coverage/0/excerpt"
+    ]
+  ],
   "args": {
     "source_request": "valid/X06-ref.request.txt",
     "source_mode": "ref"

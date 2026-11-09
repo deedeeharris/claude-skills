@@ -16,5 +16,12 @@
   "paths": [
     "/feature_id"
   ],
+  "diagnostics": [
+    [
+      "E_SCOPE",
+      "G38",
+      "/feature_id"
+    ]
+  ],
   "args": {}
 }

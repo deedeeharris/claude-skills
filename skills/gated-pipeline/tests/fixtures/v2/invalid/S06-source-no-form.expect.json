@@ -16,5 +16,12 @@
   "paths": [
     "/source_request"
   ],
+  "diagnostics": [
+    [
+      "E_SOURCE_FORM",
+      "G08",
+      "/source_request"
+    ]
+  ],
   "args": {}
 }

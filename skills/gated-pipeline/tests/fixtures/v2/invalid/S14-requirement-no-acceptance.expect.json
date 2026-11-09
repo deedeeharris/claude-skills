@@ -16,5 +16,12 @@
   "paths": [
     "/requirements/0/acceptance"
   ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G15",
+      "/requirements/0/acceptance"
+    ]
+  ],
   "args": {}
 }

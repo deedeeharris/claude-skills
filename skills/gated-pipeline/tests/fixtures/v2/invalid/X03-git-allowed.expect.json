@@ -1,0 +1,27 @@
+{
+  "case": "X03",
+  "variant": "allowed path under .git/",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"allowed_paths\": [\"src/\", \"test/\"]",
+    "replace": "\"allowed_paths\": [\"src/\", \"test/\", \".git/hooks/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_UNSAFE_PATH"
+  ],
+  "rules": [
+    "G32"
+  ],
+  "paths": [
+    "/scope/allowed_paths/2"
+  ],
+  "diagnostics": [
+    [
+      "E_UNSAFE_PATH",
+      "G32",
+      "/scope/allowed_paths/2"
+    ]
+  ],
+  "args": {}
+}

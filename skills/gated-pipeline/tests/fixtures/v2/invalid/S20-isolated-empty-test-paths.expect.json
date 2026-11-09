@@ -16,5 +16,12 @@
   "paths": [
     "/scope/test_paths"
   ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G26",
+      "/scope/test_paths"
+    ]
+  ],
   "args": {}
 }
