@@ -704,7 +704,9 @@ pathspecs. Push to `claude/charming-pasteur-ncpes9`. No PR unless the user asks.
 - Breaking existing users: none by default (`contract` absent = 1). Deliberate changes, called
   out in SKILL.md and the report: the fallback gate becomes as strict as the codex path (1a; no
   codex-path outcome changes; two existing tests change, section 0), relays refuse an existing
-  out dir and old-shape relay replies (1a, 1b), and a stamped charge-only build is rejected.
+  out dir and old-shape relay replies (1a, 1b), a stamped charge-only build is rejected, and a
+  v1 design call carrying contract-2 design args (`source_request_*`, `seed_feature_path`,
+  `features_dir`, `previous_design`, `recover`) is BLOCKED like build, verify and land.
 
 ## Review log
 
