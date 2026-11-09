@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { test, after } = require('node:test');
 const { run, sourceAt } = require('./helpers/run-workflow');
+const { gitEnv } = require('./helpers/git-env.js');
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const SKILLS = path.resolve(__dirname, '..', '..');
@@ -124,10 +125,10 @@ function runRunner(row) {
   const out = path.join(WORK, `out-${row.id}`);
   const plan = row.run === 'validation-timeout' ? { validate: [{ delay_ms: 60000 }, { delay_ms: 60000 }] }
     : row.run === 'review-timeout' ? { review: [{ delay_ms: 60000 }, { delay_ms: 60000 }] } : {};
-  const env = {
-    ...process.env, PATH: BIN + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'table',
+  const env = gitEnv({
+    PATH: BIN + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'table',
     FAKE_CODEX_TABLE: JSON.stringify(codexTable(row)), FAKE_CODEX_STATE: path.join(WORK, `state-${row.id}`), FAKE_CODEX_PLAN: JSON.stringify(plan),
-  };
+  });
   const timeout = row.run === 'validation-timeout' || row.run === 'review-timeout' ? '1' : '60';
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [RUNNER, '--kind', row.kind, '--files', DOC, '--repo', WORK, '--out-dir', out, '--timeout-seconds', timeout], { env, stdio: 'ignore' });

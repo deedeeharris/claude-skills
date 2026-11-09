@@ -4,8 +4,8 @@
 // Everything runs in a temp dir made at runtime: a git repo with a base commit, a run dir outside it, the real
 // scripts (hash-inputs, feature-snapshot, write-json, compile-feature, check-completion, run-frozen) and, for
 // model steps only, hand-written review files (a codex-review result.json, an Opus fallback reply): those are the
-// mocked parts, labelled as such. Git runs with a sanitized environment (no inherited GIT_DIR/GIT_WORK_TREE/
-// GIT_INDEX_FILE), a fixed commit date, a synthetic identity and no commit signing, so it can never touch the
+// mocked parts, labelled as such. Git runs with a sanitized environment (helpers/git-env.js: no inherited GIT_DIR/
+// GIT_WORK_TREE/GIT_INDEX_FILE/GIT_OBJECT_DIRECTORY/GIT_COMMON_DIR/GIT_CONFIG*), a fixed commit date, a synthetic identity and no commit signing, so it can never touch the
 // checkout the tests live in.
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { gitEnv } = require('./git-env.js');
 
 const SCRIPTS = path.resolve(__dirname, '../../scripts');
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)';
@@ -21,9 +22,8 @@ const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const clone = v => JSON.parse(JSON.stringify(v));
 
 function cleanEnv(extra = {}) {
-  const env = { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z', ...extra };
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES']) delete env[k];
-  for (const [k, v] of Object.entries(extra)) if (v === undefined) delete env[k];
+  const env = gitEnv({ GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z', ...extra });
+  delete env.GIT_CEILING_DIRECTORIES;
   return env;
 }
 

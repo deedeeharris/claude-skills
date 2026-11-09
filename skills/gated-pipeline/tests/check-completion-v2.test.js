@@ -996,7 +996,7 @@ for (const [name, text, pattern] of [
     const c = completeRun(t);
     swapPatch(c, text, ['src/hello.js']);
     // the swapped patch applies to reviewed_sha, so only the path derivation can catch it
-    const check = spawnSync('git', ['apply', '--check', negRecord(c).mutation_patch_path], { cwd: c.repo, encoding: 'utf8' });
+    const check = spawnSync('git', ['apply', '--check', negRecord(c).mutation_patch_path], { cwd: c.repo, encoding: 'utf8', env: cleanEnv() });
     assert.equal(check.status, 0, check.stderr);
     blocked(c.completion(), 'E_NEGATIVE_CONTROL', pattern);
   });

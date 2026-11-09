@@ -46,7 +46,7 @@ function installStub(workDir) {
   return bin;
 }
 
-function git(cwd, args) { return spawnSync('git', args, { cwd, encoding: 'utf8' }); }
+const { gitEnv, git } = require('./git-env.js');
 
 function makeRepo(workDir, name) {
   const repo = path.join(workDir, name);
@@ -58,7 +58,7 @@ function makeRepo(workDir, name) {
 }
 
 function runRunner(bin, scenario, stateDir, args, timeoutMs) {
-  const env = Object.assign({}, process.env, {
+  const env = gitEnv({
     PATH: bin + path.delimiter + process.env.PATH,
     FAKE_CODEX_SCENARIO: scenario,
     FAKE_CODEX_STATE: stateDir,
@@ -700,7 +700,7 @@ function main() {
     const state = nextDir('state');
     const repo = makeRepo(workDir, `repo-${caseIndex}`);
     fs.writeFileSync(path.join(repo, 'a.txt'), 'hi');
-    const env = Object.assign({}, process.env, {
+    const env = gitEnv({
       PATH: bin + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'pass', FAKE_CODEX_STATE: state,
       FAKE_CODEX_PLAN: JSON.stringify({ review: [{ delay_ms: 60000, ignore_term: true }] }),
     });
@@ -772,7 +772,7 @@ function main() {
     const against = path.join(workDir, `prd-view-${caseIndex}.md`);
     fs.writeFileSync(doc, '# spec view\n');
     fs.writeFileSync(against, '# prd view\n');
-    const env = Object.assign({}, process.env, { PATH: bin + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'pass', FAKE_CODEX_STATE: nextDir('state'), FAKE_CODEX_TOUCH: against });
+    const env = gitEnv({ PATH: bin + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'pass', FAKE_CODEX_STATE: nextDir('state'), FAKE_CODEX_TOUCH: against });
     const r = spawnSync(process.execPath, [RUNNER, '--kind', 'spec', '--files', doc, '--against', against, '--repo', workDir, '--out-dir', out], { encoding: 'utf8', timeout: 20000, env });
     const log = readLastLog(out);
     const result = log && readResult(log.run_dir);

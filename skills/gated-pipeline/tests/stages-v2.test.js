@@ -17,6 +17,7 @@ const { test, describe, after } = require('node:test');
 const { run, gpBlocks, pollLimit, STOP } = require('./helpers/run-workflow');
 const { scriptStep, gpExecBlocks } = require('./helpers/script-stub');
 const { makeRepo, baseFeature, cleanEnv, sha256, clone, IMPL_FILES, SCRIPTS, FALLBACK_REVIEWER } = require('./helpers/v2-repo');
+const { gitEnv } = require('./helpers/git-env.js');
 
 const SKILLS = path.resolve(__dirname, '..', '..');
 const RUNNER = path.join(SKILLS, 'codex-review', 'scripts', 'run-review.js');
@@ -1321,10 +1322,10 @@ const implementationRows = src => {
   });
 
   describe('#37 relay waits executed against contract-2 build and verify (real runner, fake codex)', { concurrency: true }, () => {
-    const R = new Function('fs', 'os', 'path', 'crypto', 'assert', 'spawn', 'spawnSync', 'after', 'run', 'gpBlocks', 'pollLimit', 'STOP', '__dirname',
+    const R = new Function('fs', 'os', 'path', 'crypto', 'assert', 'spawn', 'spawnSync', 'after', 'run', 'gpBlocks', 'pollLimit', 'STOP', '__dirname', 'gitEnv',
       sliceOf('relay-wait.test.js', "const SKILLS = path.resolve(__dirname, '..', '..');", '// ---- the deadline premise') +
       '\nreturn { relay, reviewReply, rawReply, assertWaited, envWith, envWithout, resultOf, rawOf, setupHead, setupChanged, quotedTask, worktrees };')(
-      fs, os, path, crypto, assert, spawn, spawnSync, after, run, gpBlocks, pollLimit, STOP, __dirname);
+      fs, os, path, crypto, assert, spawn, spawnSync, after, run, gpBlocks, pollLimit, STOP, __dirname, gitEnv);
     const rawSha = (t, file) => ((t.cleanup.stdout.split('\n').find(l => l.endsWith(' ' + file) || l.endsWith('*' + file)) || '').split(/\s+/)[0]) || null;
 
     test('codex path: the review, security, final review and compliance relays wait in the foreground; build and verify PASS with completion exit 0', async (t) => {

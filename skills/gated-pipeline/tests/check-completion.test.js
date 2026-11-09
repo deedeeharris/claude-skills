@@ -8,12 +8,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
+const { gitEnv } = require('./helpers/git-env.js');
 
 const checker = path.resolve(__dirname, '../scripts/check-completion.js');
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const writeJson = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
 function git(repo, ...args) {
-  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: gitEnv() });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
@@ -97,7 +98,7 @@ function fixture(t) {
       manifest: manifestPath, 'manifest-sha256': f.manifestHash, spec,
       'build-result': buildPath, 'verify-result': verifyPath, out, ...overrides,
     };
-    return spawnSync(process.execPath, [checker, ...Object.entries(flags).flatMap(([k, v]) => ['--' + k, v])], { encoding: 'utf8' });
+    return spawnSync(process.execPath, [checker, ...Object.entries(flags).flatMap(([k, v]) => ['--' + k, v])], { encoding: 'utf8', env: gitEnv() });
   };
   f.save();
   return f;
@@ -293,7 +294,7 @@ test('nonancestor base is refused', t => {
 
 test('missing argument produces explicit BLOCKED, not an unhandled exception', t => {
   const f = fixture(t);
-  const result = spawnSync(process.execPath, [checker, '--repo', f.repo], { encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [checker, '--repo', f.repo], { encoding: 'utf8', env: gitEnv() });
   blocked(f, result, /missing/i);
 });
 
@@ -390,7 +391,7 @@ test('plan mode validates inventory without completion artifacts or output', t =
   fs.unlinkSync(f.verifyPath);
   const result = spawnSync(process.execPath, [checker, '--mode', 'plan', '--repo', f.repo,
     '--feature-id', 'feature-1', '--reviewed-sha', f.head, '--manifest', f.manifestPath,
-    '--manifest-sha256', f.manifestHash, '--spec', f.spec], { encoding: 'utf8' });
+    '--manifest-sha256', f.manifestHash, '--spec', f.spec], { encoding: 'utf8', env: gitEnv() });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).manifest_sha256, f.manifestHash);
   assert.equal(fs.existsSync(f.out), false);

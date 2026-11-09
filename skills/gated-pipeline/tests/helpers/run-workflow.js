@@ -10,14 +10,15 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { compile } = require('../../scripts/lib/schema-lite');
+const { gitEnv } = require('./git-env.js');
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const WORKFLOWS = path.join(__dirname, '..', '..', 'workflows');
-const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: __dirname, encoding: 'utf8' }).trim();
+const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: __dirname, encoding: 'utf8', env: gitEnv() }).trim();
 
 // The text of a workflow at a git revision (for `before` rows run against the old code).
 function sourceAt(rev, name) {
-  return execFileSync('git', ['show', `${rev}:skills/gated-pipeline/workflows/${name}.js`], { cwd: REPO_ROOT, encoding: 'utf8' });
+  return execFileSync('git', ['show', `${rev}:skills/gated-pipeline/workflows/${name}.js`], { cwd: REPO_ROOT, encoding: 'utf8', env: gitEnv() });
 }
 
 // Every reply is validated against the schema its call declares, as the hosted Workflow tool

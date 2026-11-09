@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
 const { test, describe, after } = require('node:test');
 const { run, gpBlocks, pollLimit, STOP } = require('./helpers/run-workflow');
+const { gitEnv } = require('./helpers/git-env.js');
 
 const SKILLS = path.resolve(__dirname, '..', '..');
 const RUNNER = path.join(SKILLS, 'codex-review', 'scripts', 'run-review.js');
@@ -42,13 +43,13 @@ if (hostHasCodex) { // a real codex on this host would answer the probe: shadow 
   fs.writeFileSync(path.join(NOBIN, 'codex'), '#!/bin/sh\necho "codex: command not found" >&2\nexit 127\n');
   fs.chmodSync(path.join(NOBIN, 'codex'), 0o755);
 }
-const envWith = (name, extra = {}) => ({ ...process.env, PATH: BIN + path.delimiter + process.env.PATH,
+const envWith = (name, extra = {}) => gitEnv({ PATH: BIN + path.delimiter + process.env.PATH,
   FAKE_CODEX_SCENARIO: 'pass', FAKE_CODEX_STATE: path.join(WORK, `fake-state-${name}`), ...extra });
-const envWithout = () => ({ ...process.env, PATH: NOBIN + path.delimiter + process.env.PATH });
+const envWithout = () => gitEnv({ PATH: NOBIN + path.delimiter + process.env.PATH });
 
 const GIT_ENV = { GIT_AUTHOR_NAME: 'alice', GIT_AUTHOR_EMAIL: '', GIT_COMMITTER_NAME: 'alice', GIT_COMMITTER_EMAIL: '' };
 function git(cwd, args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...GIT_ENV } });
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitEnv(GIT_ENV) });
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 }
