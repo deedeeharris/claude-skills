@@ -380,6 +380,57 @@ test('a negative control that would start after negative_controls_total_min is N
   assert.equal(record(r).status, 'NOT_RUN');
 });
 
+// --- interrupted: a Bash tool timeout or an interrupted agent ends run-frozen.js with a signal -------------------------
+// The frozen command runs in its own process group, so without a handler it would outlive run-frozen.js as an orphan
+// with no limit and no record. Interrupted: the group is killed, the log gets a footer, no record, exit 1.
+const { spawn } = require('node:child_process');
+const { cleanEnv } = require('./helpers/v2-repo.js');
+async function interrupted(t, signal, { target = 'check:CHECK-LINT', edit, extra = [] } = {}) {
+  const f = baseFeature();
+  const c0 = makeRepo(t, { feature: f });
+  const started = path.join(c0.root, 'started');
+  const marker = path.join(c0.root, 'survived');
+  const cmd = `echo started > ${started}; sleep 4; echo survived > ${marker}`;
+  edit(c0.feature, cmd);
+  c0.writeFeature();
+  c0.freeze();
+  c0.implement();
+  const args = ['--repo', c0.repo, '--frozen-dir', c0.frozenDir, '--manifest-sha256', c0.manifestSha, '--reviewed-sha', c0.reviewedSha,
+    '--target', target, '--out-dir', c0.frozenRuns, ...extra];
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'scripts', 'run-frozen.js'), ...args], { env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', d => { stdout += d; });
+  child.stderr.on('data', d => { stderr += d; });
+  const exited = new Promise(resolve => child.on('exit', (code, sig) => resolve({ code, sig })));
+  for (let i = 0; i < 200 && !fs.existsSync(started); i++) await new Promise(r => setTimeout(r, 25));
+  assert.ok(fs.existsSync(started), 'the frozen command started');
+  child.kill(signal);
+  const { code, sig } = await exited;
+  await new Promise(r => setTimeout(r, 5000));
+  return { c: c0, code, sig, stdout, stderr, marker };
+}
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  test(`run-frozen ended by ${signal} kills the frozen command's group, writes no record, frames the log as interrupted and exits 1`, async t => {
+    const r = await interrupted(t, signal, { edit: (f, cmd) => { f.checks[0].command = cmd; } });
+    assert.equal(r.sig, null, `run-frozen handled ${signal} itself`);
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, new RegExp(`interrupted by ${signal}`));
+    assert.equal(fs.existsSync(r.marker), false, 'the frozen command did not outlive run-frozen.js');
+    assert.equal(fs.existsSync(path.join(r.c.frozenRuns, 'check:CHECK-LINT.record.json')), false, 'no record for an interrupted run');
+    assert.equal(r.stdout, '', 'nothing printed: no record line');
+    const log = framed(fs.readFileSync(path.join(r.c.frozenRuns, 'check:CHECK-LINT.log'), 'utf8'));
+    assert.equal(log.footer.interrupted, signal);
+    assert.equal(log.footer.exit_code, null);
+  });
+}
+test('an interrupted isolated suite also removes its worktree', async t => {
+  const r = await interrupted(t, 'SIGTERM', { target: 'suite', edit: (f, cmd) => { f.suite.command = cmd; f.suite.isolated = true; } });
+  assert.equal(r.code, 1, r.stderr);
+  assert.equal(fs.existsSync(r.marker), false);
+  assert.equal(fs.existsSync(path.join(r.c.frozenRuns, 'suite-wt')), false, 'the worktree is removed');
+  assert.equal(r.c.git('worktree', 'list', '--porcelain').split('\n').filter(l => l.startsWith('worktree ')).length, 1);
+});
+
 test('negative: is refused for an exempt acceptance, without --patch, and --patch elsewhere', t => {
   const c = frozenRepo(t);
   assert.equal(c.runFrozen('negative:HELLO-001-AC2', { patch: c.patchFile('a', c.MUTATION) }).status, 1);

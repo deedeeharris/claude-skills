@@ -50,7 +50,9 @@
 // is the limit applied to the mutated run).
 // Prints { record_path, record_sha256, exit_code, timed_out, setup_exit_code }.
 // Exit 0: ran (or linked) and recorded, whatever the command's own exit code (it is in the record); 1: refused,
-// or the checkout moved or got dirty during the run (the record is still written); 2: usage/setup error.
+// or the checkout moved or got dirty during the run (the record is still written), or interrupted by SIGTERM, SIGINT
+// or SIGHUP (the command's group is killed, its log footer carries `interrupted`, no record, nothing printed);
+// 2: usage/setup error.
 //
 // Test-only hooks (they can only shorten limits): GP_RUN_FROZEN_SECONDS_PER_MINUTE=<1..60> (seconds per frozen
 // minute) and GP_RUN_FROZEN_KILL_GRACE_S=<0..10> (seconds between SIGTERM and SIGKILL). The record's timeout_s
@@ -136,6 +138,43 @@ function singleLine(command, label) {
   return command;
 }
 
+// Interruption (a Bash tool timeout, an interrupted agent, a closed terminal): SIGTERM, SIGINT or SIGHUP to run-frozen.js.
+// The running command's process group gets SIGTERM and, at most 1 s later, SIGKILL; its log gets the footer
+// { exit_code: null, signal: null, elapsed_s, interrupted: <signal> }; a worktree this run made is removed; no record
+// is written and nothing is printed; exit 1. Without this the detached group would outlive run-frozen.js unbounded.
+const ACTIVE = new Set(); // running frozen commands: { group, fd, started }
+const WORKTREES = new Set(); // worktrees this run made and has not removed yet, as `<repo>\0<path>`
+let INTERRUPTED = null;
+function onSignal(signal) {
+  if (INTERRUPTED) return;
+  INTERRUPTED = signal;
+  for (const a of ACTIVE) a.group('SIGTERM');
+  const end = () => {
+    for (const a of ACTIVE) {
+      a.group('SIGKILL');
+      const elapsed = Math.round(Number(process.hrtime.bigint() - a.started) / 1e6) / 1000;
+      try { fs.writeSync(a.fd, '\ngp-run-frozen footer ' + JSON.stringify({ exit_code: null, signal: null, elapsed_s: elapsed, interrupted: signal }) + '\n'); fs.closeSync(a.fd); } catch { /* the log stays unframed */ }
+    }
+    for (const key of WORKTREES) {
+      const [repo, wt] = key.split('\0');
+      spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt]);
+      spawnSync('git', ['-C', repo, 'worktree', 'prune']);
+    }
+    process.stderr.write(`run-frozen: interrupted by ${signal}: the frozen command's process group was killed and no record was written\n`);
+    process.exit(1);
+  };
+  if (ACTIVE.size) setTimeout(end, Math.min(KILL_GRACE_S(), 1) * 1000); else end();
+}
+function addWorktree(repo, wt, sha) {
+  WORKTREES.add(`${repo}\0${wt}`);
+  git(repo, ['worktree', 'add', '--detach', wt, sha]);
+}
+function removeWorktree(repo, wt, opts) {
+  const r = git(repo, ['worktree', 'remove', '--force', wt], opts);
+  WORKTREES.delete(`${repo}\0${wt}`);
+  return r;
+}
+
 // Runs one command under its limit. Returns { exit_code, signal, timed_out, elapsed_s, log_path, log_sha256 }.
 function runFramed({ command, cwd, target, head, logPath, limitS }) {
   fs.writeFileSync(logPath, 'gp-run-frozen header ' + JSON.stringify({ target, command, cwd, head }) + '\n', { flag: 'wx' });
@@ -145,6 +184,8 @@ function runFramed({ command, cwd, target, head, logPath, limitS }) {
     const child = spawn('/bin/sh', ['-c', command], { cwd, detached: true, stdio: ['ignore', fd, fd] });
     let timedOut = false, killTimer = null;
     const group = sig => { try { process.kill(-child.pid, sig); return true; } catch { return false; } };
+    const active = { group, fd, started };
+    ACTIVE.add(active);
     const limit = setTimeout(() => {
       timedOut = true;
       group('SIGTERM');
@@ -152,11 +193,13 @@ function runFramed({ command, cwd, target, head, logPath, limitS }) {
     }, Math.max(1, Math.round(limitS * 1000)));
     let finished = false;
     const finish = (code, signal) => {
-      if (finished) return;
+      if (finished || INTERRUPTED) return; // an interrupted run is ended by onSignal: no footer here, no record
       finished = true;
       clearTimeout(limit);
       const elapsed = Math.round(Number(process.hrtime.bigint() - started) / 1e6) / 1000;
       const done = () => {
+        if (INTERRUPTED) return;
+        ACTIVE.delete(active);
         if (killTimer) clearTimeout(killTimer);
         group('SIGKILL'); // nothing of the command outlives its record
         fs.writeSync(fd, '\ngp-run-frozen footer ' + JSON.stringify({ exit_code: code, signal, elapsed_s: elapsed }) + '\n');
@@ -398,7 +441,7 @@ async function main(argv) {
     let cwd = realRepo, worktree = null;
     if (target.kind === 'suite' && manifest.suite.isolated) {
       worktree = path.join(outDir, 'suite-wt');
-      git(realRepo, ['worktree', 'add', '--detach', worktree, sha]);
+      addWorktree(realRepo, worktree, sha);
       cwd = worktree;
     }
     try {
@@ -428,7 +471,7 @@ async function main(argv) {
       if (after.head !== sha || after.dirty.length) { process.stderr.write(`run-frozen: the checkout moved or got dirty during the run: ${after.head} ${after.dirty.join('; ')}\n`); return 1; }
       return 0;
     } finally {
-      if (worktree) { git(realRepo, ['worktree', 'remove', '--force', worktree], { allowFail: true }); git(realRepo, ['worktree', 'prune'], { allowFail: true }); }
+      if (worktree) { removeWorktree(realRepo, worktree, { allowFail: true }); git(realRepo, ['worktree', 'prune'], { allowFail: true }); }
     }
   } catch (e) {
     if (!(e instanceof Refusal) && !(e instanceof SetupError)) throw e;
@@ -460,7 +503,7 @@ async function negative({ args, target, manifest, manifestSha, sha, realRepo, ou
   if (before.head !== sha) throw new Refusal(`the work checkout is at ${before.head}, not reviewed_sha ${sha}`);
   if (before.dirty.length) throw new Refusal(`the work checkout is not clean outside clean_ignore: ${before.dirty.join('; ')}`);
   const wt = path.join(outDir, 'wt');
-  git(realRepo, ['worktree', 'add', '--detach', wt, sha]);
+  addWorktree(realRepo, wt, sha);
   try {
     const left = () => Math.max(0.001, Math.min(spec.limitS, totalS - phaseElapsed()));
     let setup = null;
@@ -476,7 +519,7 @@ async function negative({ args, target, manifest, manifestSha, sha, realRepo, ou
     git(wt, ['apply'], { input: patchBytes });
     const mutatedLimitS = left();
     const mutated = await runFramed({ command: spec.command, cwd: wt, target: args.target, head: sha, logPath: path.join(outDir, args.target + '.log'), limitS: mutatedLimitS });
-    git(realRepo, ['worktree', 'remove', '--force', wt]);
+    removeWorktree(realRepo, wt);
     const after = checkoutState(realRepo, ignores);
     const rec = { target: args.target, id: target.id, command: spec.command, cwd: wt, head_before: before.head, head_after: after.head,
       status_before: before.status, status_after: after.status, timeout_s: mutatedLimitS, timeout_min: null, budget_min: null,
@@ -490,11 +533,14 @@ async function negative({ args, target, manifest, manifestSha, sha, realRepo, ou
     if (after.head !== sha || after.dirty.length) { process.stderr.write(`run-frozen: the work checkout moved or got dirty: ${after.head} ${after.dirty.join('; ')}\n`); return 1; }
     return 0;
   } finally {
-    git(realRepo, ['worktree', 'remove', '--force', wt], { allowFail: true });
+    removeWorktree(realRepo, wt, { allowFail: true });
     git(realRepo, ['worktree', 'prune'], { allowFail: true });
   }
 }
 
-if (require.main === module) main(process.argv.slice(2)).then(code => { process.exitCode = code; });
+if (require.main === module) {
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => onSignal(signal));
+  main(process.argv.slice(2)).then(code => { if (!INTERRUPTED) process.exitCode = code; });
+}
 
 module.exports = { patchPaths, gitPatchPaths, checkedPatchPaths, CHECK_ID, ACC_ID };
