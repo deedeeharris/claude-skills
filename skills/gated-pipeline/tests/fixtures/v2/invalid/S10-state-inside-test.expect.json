@@ -1,10 +1,10 @@
 {
   "case": "S10",
-  "variant": "state path inside a test path",
+  "variant": "state path inside a test path (the test path is outside allowed_paths)",
   "base": "valid/S01-minimal.feature.json",
   "mutation": {
-    "find": "\"state_paths\": []",
-    "replace": "\"state_paths\": [\"test/tmp/\"]"
+    "find": "\"allowed_paths\": [\"src/\", \"test/\"], \"protected_paths\": [], \"state_paths\": []",
+    "replace": "\"allowed_paths\": [\"src/\"], \"protected_paths\": [], \"state_paths\": [\"test/tmp/\"]"
   },
   "exit": 1,
   "codes": [

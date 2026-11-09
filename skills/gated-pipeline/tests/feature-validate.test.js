@@ -330,6 +330,67 @@ test('rule branches: paths and --repo-path', () => {
   assert.deepEqual(check('medium', f => { f.scope.state_paths = ['docs/']; }), ['G34 E_STATE_OVERLAP /scope/state_paths/0'], 'state paths may not hide alternate evidence');
 });
 
+// Each candidate kind of G33 and G34 on its own (no other kind overlaps the same path), so dropping a kind from
+// either rule fails a case here or in fixture S10-state-inside-test (a state path inside a test path that lies
+// outside allowed_paths).
+test('rule branches: every G33 and G34 candidate kind alone', () => {
+  assert.deepEqual(check('s01', f => { f.scope.protected_paths = ['build/']; f.scope.clean_ignore = ['build/cache/']; }), ['G33 E_PROTECTED_OVERLAP /scope/clean_ignore/0'], 'clean_ignore inside a protected path');
+  assert.deepEqual(check('s01', f => { f.scope.protected_paths = ['spec/']; f.scope.test_paths.push('spec/'); }), ['G33 E_PROTECTED_OVERLAP /scope/test_paths/1'], 'test path equal to a protected path');
+  assert.deepEqual(check('s01', f => { f.scope.test_paths.push('.pipeline/features/fixtures/'); }), ['G33 E_PROTECTED_OVERLAP /scope/test_paths/1'], 'test path inside the features_dir');
+  assert.deepEqual(check('medium', f => { f.requirements[2].acceptance[0].verification.evidence.paths = ['notes/compare.md']; f.scope.state_paths.push('notes/'); }),
+    ['G34 E_STATE_OVERLAP /scope/state_paths/1'], 'state path containing only an evidence path (outside allowed_paths)');
+  assert.deepEqual(check('medium', f => { f.requirements[2].acceptance[0].verification.evidence.paths = ['notes/compare.md']; }), [], 'an evidence path outside allowed_paths is itself valid');
+  assert.deepEqual(check('s01', f => { f.scope.allowed_paths = ['src/']; f.scope.clean_ignore = ['test/out/']; }), ['G34 E_STATE_OVERLAP /scope/clean_ignore/0'], 'clean_ignore inside a test path only');
+  // The owned kind of G34 adds a diagnostic of its own only when G36 also fails (otherwise the owned path lies
+  // inside an allowed path, which G34 already reports).
+  assert.deepEqual(check('s01', f => { f.architecture.components[0].owned_paths = ['lib/']; f.scope.state_paths = ['lib/cache/']; }),
+    ['G36 E_OWNERSHIP /architecture/components/0/owned_paths/0', 'G34 E_STATE_OVERLAP /scope/state_paths/0']);
+});
+
+// Overlap rules (G33, G34, G35, G37) fold ASCII case, so a path that differs only in case from a protected,
+// state or owned path is rejected on a case-insensitive filesystem too (fail closed); G36 (inside) stays exact.
+test('rule branches: overlap rules fold case, G36 compares exactly', () => {
+  assert.deepEqual(check('s01', f => { f.scope.allowed_paths.push('.PIPELINE/Features/'); }), ['G33 E_PROTECTED_OVERLAP /scope/allowed_paths/2'], 'the features_dir in another case');
+  assert.deepEqual(check('s01', f => { f.scope.protected_paths = ['secrets/']; f.scope.allowed_paths.push('Secrets/'); }), ['G33 E_PROTECTED_OVERLAP /scope/allowed_paths/2']);
+  assert.deepEqual(check('s01', f => { f.scope.state_paths = ['SRC/cache/']; }), ['G34 E_STATE_OVERLAP /scope/state_paths/0']);
+  assert.deepEqual(check('s01', f => { f.scope.test_paths.push('Src/x/'); }), ['G37 E_OWNERSHIP /scope/test_paths/1']);
+  assert.deepEqual(check('medium', f => { f.scope.allowed_paths.push('SRC/'); f.architecture.components[1].owned_paths = ['SRC/Auth/']; }),
+    ['G35 E_OWNERSHIP /architecture/components/1/owned_paths/0']);
+  assert.deepEqual(check('s01', f => { f.architecture.components[0].owned_paths = ['SRC/']; }), ['G36 E_OWNERSHIP /architecture/components/0/owned_paths/0'], 'owned "SRC/" is not inside allowed "src/"');
+});
+
+test('rule branches: G13, G14 count active goals and components; G25 needs every active acceptance exempt', () => {
+  assert.deepEqual(check('medium', f => { f.requirements[0].goal_ids = ['GOAL-002']; }), ['G13 E_COVERAGE /requirements/0/goal_ids']);
+  assert.deepEqual(check('medium', f => { f.requirements[0].goal_ids = ['GOAL-002', 'GOAL-001']; }), [], 'one active goal is enough');
+  assert.deepEqual(check('medium', f => { f.requirements[0].component_ids = ['COMP-LEGACY']; }), ['G14 E_COVERAGE /requirements/0/component_ids']);
+  assert.deepEqual(check('medium', f => { f.requirements[0].component_ids = ['COMP-LEGACY', 'COMP-AUTH']; }), [], 'one active component is enough');
+  assert.deepEqual(check('medium', f => { f.requirements[3].goal_ids = ['GOAL-002']; f.requirements[3].component_ids = ['COMP-LEGACY']; }), [], 'a retired requirement may name retired items');
+  const mixed = f => {
+    const r = f.requirements[2];
+    delete r.acceptance[0].negative_control.alternate_evidence;
+    r.acceptance.push(Object.assign(JSON.parse(JSON.stringify(f.requirements[0].acceptance[0])), { id: 'AUTH-003-AC2' }));
+  };
+  assert.deepEqual(check('medium', mixed), [], 'a P0 requirement with one exempt and one isolated_mutation acceptance needs no alternate_evidence');
+  assert.deepEqual(check('medium', f => { mixed(f); f.requirements[2].acceptance[1].status = 'retired'; f.requirements[2].acceptance[1].retired_rationale = 'x'; }),
+    ['G25 E_NEGATIVE_CONTROL /requirements/2/acceptance/0/negative_control/alternate_evidence'], 'retired acceptances do not count');
+});
+
+test('rule branches: R01 trailing CRLF, R04 window at any offset', () => {
+  const text = fs.readFileSync(path.join(FIXTURES, 'valid/S01-minimal.request.txt'));
+  const s = text.toString('utf8');
+  const asReq = (str, mode) => ({ requestBytes: Buffer.from(str), requestText: str, mode });
+  assert.ok(s.endsWith('\n') && !s.endsWith('\r\n'));
+  assert.deepEqual(check('s01', () => {}, { request: asReq(s.slice(0, -1) + '\r\n', 'text') }), [], 'one trailing CRLF is normalized');
+  assert.deepEqual(check('s01', () => {}, { request: asReq(s.slice(0, -1), 'text') }), [], 'no trailing newline');
+  assert.deepEqual(check('s01', () => {}, { request: asReq(s.slice(0, -1) + '\r\n\r\n', 'text') }), ['R01 E_SOURCE_MISMATCH /source_request/text'], 'only one is normalized');
+  assert.deepEqual(check('s01', () => {}, { request: asReq(s.slice(0, -1) + '\r', 'text') }), ['R01 E_SOURCE_MISMATCH /source_request/text'], 'a lone trailing CR is content');
+  const sha = crypto.createHash('sha256').update(text).digest('hex');
+  const ref = excerpt => f => { f.source_request = { ref: 'r', sha256: sha, summary: 's' }; f.coverage[0].excerpt = excerpt; };
+  assert.ok(s.length >= 44);
+  assert.deepEqual(check('s01', ref('Note:' + s.slice(2, 42)), { request: asReq(s, 'ref') }), ['R04 E_SOURCE_LEAK /coverage/0/excerpt'], 'a 40-code-point copy at excerpt offset 5');
+  assert.deepEqual(check('s01', ref('Note:' + s.slice(2, 41)), { request: asReq(s, 'ref') }), [], 'a 39-code-point copy is no leak');
+});
+
 test('rule branches: source request and previous revision', () => {
   const text = fs.readFileSync(path.join(FIXTURES, 'valid/S01-minimal.request.txt'));
   const req = mode => ({ requestBytes: text, requestText: text.toString('utf8'), mode });

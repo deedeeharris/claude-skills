@@ -1,0 +1,27 @@
+{
+  "case": "S14",
+  "variant": "active requirement whose only goal is retired",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"id\": \"AUTH-001\",\n      \"status\": \"active\",\n      \"goal_ids\": [\"GOAL-001\"],",
+    "replace": "\"id\": \"AUTH-001\",\n      \"status\": \"active\",\n      \"goal_ids\": [\"GOAL-002\"],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G13"
+  ],
+  "paths": [
+    "/requirements/0/goal_ids"
+  ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G13",
+      "/requirements/0/goal_ids"
+    ]
+  ],
+  "args": {}
+}

@@ -54,7 +54,7 @@
       ]
     }
   ],
-  "scope": { "allowed_paths": ["src/", "test/"], "protected_paths": [], "state_paths": ["test/tmp/"], "clean_ignore": [], "test_paths": ["test/"] },
+  "scope": { "allowed_paths": ["src/"], "protected_paths": [], "state_paths": ["test/tmp/"], "clean_ignore": [], "test_paths": ["test/"] },
   "suite": { "command": "node --test", "unit_command": "node --test test/hello.test.js", "known_failures": [], "isolated": false, "setup_command": null, "timeout_min": 10, "live_budget_min": 0 },
   "limits": { "proof_timeout_s": 120, "negative_controls_total_min": 10 },
   "checks": [
