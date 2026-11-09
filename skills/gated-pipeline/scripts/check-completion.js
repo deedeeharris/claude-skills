@@ -810,6 +810,7 @@ function modePlanV2(args) {
     status: 'PASS', mode: 'plan', contract: 2, manifest_version: 2, feature_id: m.feature_id, reviewed_sha: sha, design_commit: args.commit,
     manifest_sha256: d.manifestSource.sha256, spec_sha256: m.spec_sha256, approvals_sha256: d.approvals.approvals_sha256,
     state_paths: m.state_paths, clean_ignore: m.clean_ignore, checks,
+    limits: { proof_timeout_s: m.limits.proof_timeout_s, negative_controls_total_min: m.limits.negative_controls_total_min }, suite_setup: m.suite.setup_command !== null,
     runtime_acceptance_ids: m.requirements.filter(r => r.kind === 'runtime' && !r.live).map(r => r.id),
     live_acceptances: m.requirements.filter(r => r.kind === 'runtime' && r.live).map(r => ({ id: r.id, check_id: r.check_id })),
     negative_controls: m.requirements.filter(r => r.negative_control.method === 'isolated_mutation').map(r => ({ id: r.id, mutation_sha256: hash(Buffer.from(r.negative_control.mutation, 'utf8')) })),

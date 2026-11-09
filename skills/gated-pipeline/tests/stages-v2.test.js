@@ -1088,6 +1088,48 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.ok(rec.elapsed_s < 10, `killed at the budget (elapsed ${rec.elapsed_s} s)`);
   });
 
+  // ---- one foreground Bash call (at most 600 s): a frozen step whose limits cannot fit in it BLOCKs before it starts ------------
+  test('a frozen suite whose limit cannot finish inside one 600 s foreground Bash call -> build BLOCKED at preflight, before the implementer', async (t) => {
+    const f = baseFeature();
+    f.suite.timeout_min = 10;
+    const c = frozenRepo(t, { feature: f });
+    const bo = await buildV2(c);
+    assert.equal(bo.result.status, 'BLOCKED', JSON.stringify(bo.result).slice(0, 1500));
+    assert.equal(bo.result.stage, 'preflight');
+    assert.match(bo.result.reason, /suite .*cannot finish inside one foreground Bash call \(600 s\)/);
+    assert.deepEqual(labels(bo.calls), ['design preflight']);
+    assert.match(bo.calls[0].prompt, /Bash timeout 600000 ms/, 'every gp-exec step asks for the Bash maximum');
+  });
+  test('a suite with setup counts both runs: 2 x 5 min -> build BLOCKED at preflight (600 s)', async (t) => {
+    const f = baseFeature();
+    f.suite.timeout_min = 5;
+    f.suite.isolated = true;
+    f.suite.setup_command = 'echo setup';
+    const c = frozenRepo(t, { feature: f });
+    const bo = await buildV2(c);
+    assert.equal(bo.result.status, 'BLOCKED');
+    assert.equal(bo.result.stage, 'preflight');
+    assert.match(bo.result.reason, /suite .*setup.*600 s/);
+  });
+  for (const [name, edit, pattern] of [
+    ['a check with timeout_min 10', f => { f.checks[0].timeout_min = 10; }, /check CHECK-LINT .*600 s/],
+    ['a live check with budget_min 10', f => { f.checks[1].timeout_min = 12; f.checks[1].budget_min = 10; }, /check CHECK-LIVE .*600 s/],
+    ['proof_timeout_s 600', f => { f.limits.proof_timeout_s = 600; }, /acceptance proofs .*600 s/],
+    ['a negative control with proof_timeout_s 300 (baseline + mutated run)', f => { f.limits.proof_timeout_s = 300; f.limits.negative_controls_total_min = 10; }, /negative control HELLO-001-AC1 .*600 s/],
+  ]) {
+    test(`${name} cannot finish inside one 600 s foreground Bash call -> verify BLOCKED at plan preflight, before any check runs`, async (t) => {
+      const f = baseFeature();
+      edit(f);
+      const c = frozenRepo(t, { feature: f });
+      c.implement();
+      const vo = await verifyV2(c, { path: path.join(c.root, 'unused-build-result.json') });
+      assert.equal(vo.result.status, 'BLOCKED', JSON.stringify(vo.result).slice(0, 1500));
+      assert.equal(vo.result.stage, 'plan preflight');
+      assert.match(vo.result.reason, pattern);
+      assert.deepEqual(labels(vo.calls), ['plan preflight']);
+    });
+  }
+
   // ---- L3.9: resume is a new call with a fresh run_dir ------------------------------------------------------------------------
   test('L3.9: after a crashed build and verify, new calls with fresh run_dirs from the persisted design result keep source hash and base; the frozen dir is never recompiled; a partial ledger is never reused', async (t) => {
     const c = frozenRepo(t);

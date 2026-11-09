@@ -498,8 +498,9 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   --approvals --approvals-sha256`) fails when any proof, check, suite, unit or setup command
   contains `realpath(--repo)` or the `--repo` spelling, and returns `manifest_version`, per
   applicable check `id, name, quiet, effort, budget_min, timeout_min`, `runtime_acceptance_ids[]`
-  (non-live), `live_acceptances[] { id, check_id }` and `negative_controls[] { id,
-  mutation_sha256 }`, never a command. The workflow BLOCKS unless the version is 2 and every id
+  (non-live), `live_acceptances[] { id, check_id }`, `negative_controls[] { id,
+  mutation_sha256 }`, `limits { proof_timeout_s, negative_controls_total_min }` and
+  `suite_setup` (boolean), never a command. The workflow BLOCKS unless the version is 2 and every id
   matches its literal pattern (`^CHECK-[A-Z0-9][A-Z0-9-]*$`, `^[A-Z][A-Z0-9]*-[0-9]{3}-AC[0-9]+$`);
   the lists only label agents, set the quiet wait and name budgets. Completion compares the full
   sets with the manifest, so a relay that drops an id is caught.
@@ -522,7 +523,17 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   acceptance ledger (atomic rewrite). `proof:` is refused for a live acceptance: `live:<id>`
   executes nothing and appends `{ id, live: true, check_id, record_path, record_sha256 }` after
   checking that the check's record exists, hashes as printed, has the acceptance's command,
-  exit 0 and no timeout. It never takes a command string.
+  exit 0 and no timeout. It never takes a command string. Interrupted by SIGTERM, SIGINT or
+  SIGHUP (a Bash tool timeout, an interrupted agent), it sends SIGTERM to the running command's
+  group and SIGKILL at most 1 s later, ends the log with a footer carrying `interrupted`,
+  removes a worktree it made, writes no record, prints nothing and exits 1.
+- One foreground Bash call: every frozen step's gp-exec block is one foreground Bash call with
+  the Bash timeout 600000 ms, the tool's maximum. Before a step starts, the stage BLOCKS when
+  its worst case cannot finish inside that call (570 s, each run counted as its limit + 15 s):
+  build at preflight for the suite (setup and suite, each `suite.timeout_min`); verify at the
+  plan preflight for a check (`budget_min` when > 0, else `timeout_min`), the proofs block
+  (every runtime proof x `proof_timeout_s`) and each negative control (setup when set,
+  baseline and mutated run, each `proof_timeout_s`, capped by `negative_controls_total_min`).
 - Checks: each check agent waits for a quiet machine when `quiet`, then runs
   `run-frozen.js --target check:<ID>`; evidence paths use the check `id`; the agent reports
   `record_path`, `record_sha256` and the pinned-state fields. One agent then runs

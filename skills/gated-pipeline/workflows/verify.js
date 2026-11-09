@@ -319,8 +319,13 @@ async function reviewed(step, gate, viaCodex, fallback) {
 // wait and name budgets: completion compares the full sets with the manifest, so a relay that drops an id is caught.
 const EXEC = { type: 'object', properties: { stdout: { type: 'string' }, exit_code: { type: 'integer' }, blocked: { type: 'boolean' }, note: { type: 'string' } }, required: ['stdout', 'exit_code'] }
 const execBlock = body => '```gp-exec\n' + body + '\n```\n'
-const EXEC_NOTE = 'Run the gp-exec block below verbatim with the Bash tool, in the foreground, as one call, and return its whole stdout verbatim in stdout and its exit code in exit_code. ' +
+const EXEC_NOTE = 'Run the gp-exec block below verbatim with the Bash tool, in the foreground, as one call with Bash timeout 600000 ms (the maximum), and return its whole stdout verbatim in stdout and its exit code in exit_code. ' +
   'Do not run anything else, and do not fix, retry or work around a failure.\n'
+// One foreground Bash call ends at 600 s at most; each frozen run inside it may take its limit plus run-frozen.js's 10 s kill
+// grace. A step that cannot finish inside one call BLOCKS before it starts (a killed call would lose its record).
+const ONE_CALL_S = 570
+const RUN_GRACE_S = 15
+const overCall = (label, seconds) => seconds > ONE_CALL_S ? `${label} can take up to ${seconds} s and cannot finish inside one foreground Bash call (600 s); shorten its frozen limit` : ''
 const jsonLines = s => String(s || '').split('\n').map(l => { try { const v = JSON.parse(l); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null } }).filter(Boolean)
 const shaOf = (s, file) => ((String(s || '').split('\n').map(l => /^([0-9a-f]{64}) [ *](.+)$/.exec(l)).find(m => m && m[2] === file)) || [])[1]
 const HEX64 = /^[0-9a-f]{64}$/
@@ -413,6 +418,17 @@ if (C2) {
     : !Array.isArray(p.negative_controls) || !p.negative_controls.every(x => x && ACC_ID.test(x.id) && HEX64.test(x.mutation_sha256 || '')) ? 'a negative control id fails its pattern'
     : !Array.isArray(p.clean_ignore) || !p.clean_ignore.every(relPath) ? 'the frozen clean_ignore is not a list of repo-relative paths' : ''
   if (planBad) return disclose({ status: 'BLOCKED', stage: 'plan preflight', reason: planBad, plan: planRun })
+  const L = p.limits
+  if (!L || !isInt(L.proof_timeout_s, 1) || !isInt(L.negative_controls_total_min, 1) || typeof p.suite_setup !== 'boolean') return disclose({ status: 'BLOCKED', stage: 'plan preflight', reason: 'the plan preflight lacks the frozen limits', plan: planRun })
+  const run1 = s => s + RUN_GRACE_S
+  const negRuns = p.suite_setup ? 3 : 2 // setup (when set), the baseline and the mutated run, each bounded by proof_timeout_s
+  const tooLong = [
+    ...p.checks.map(c => overCall(`check ${c.id} (${c.budget_min > 0 ? `budget_min ${c.budget_min}` : `timeout_min ${c.timeout_min}`})`, run1((c.budget_min > 0 ? c.budget_min : c.timeout_min) * 60))),
+    overCall(`acceptance proofs (${p.runtime_acceptance_ids.length} x proof_timeout_s ${L.proof_timeout_s}, in one block)`, p.runtime_acceptance_ids.length * run1(L.proof_timeout_s)),
+    ...p.negative_controls.map(n => overCall(`negative control ${n.id} (${negRuns} runs x proof_timeout_s ${L.proof_timeout_s}, within negative_controls_total_min ${L.negative_controls_total_min})`,
+      Math.min(negRuns * run1(L.proof_timeout_s), L.negative_controls_total_min * 60 + negRuns * RUN_GRACE_S))),
+  ].filter(Boolean)
+  if (tooLong.length) return disclose({ status: 'BLOCKED', stage: 'plan preflight', reason: tooLong.join('; '), plan: planRun })
   IGNORE = p.clean_ignore.map(x => x.replace(/^\.\//, ''))
   stateNote = stateNoteFor()
 

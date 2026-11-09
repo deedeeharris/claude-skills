@@ -353,8 +353,13 @@ let ciNote = ''
 // everything later (completion), so a relay mistake BLOCKS there at the latest.
 const EXEC = { type: 'object', properties: { stdout: { type: 'string' }, exit_code: { type: 'integer' }, blocked: { type: 'boolean' }, note: { type: 'string' } }, required: ['stdout', 'exit_code'] }
 const execBlock = body => '```gp-exec\n' + body + '\n```\n'
-const EXEC_NOTE = 'Run the gp-exec block below verbatim with the Bash tool, in the foreground, as one call, and return its whole stdout verbatim in stdout and its exit code in exit_code. ' +
+const EXEC_NOTE = 'Run the gp-exec block below verbatim with the Bash tool, in the foreground, as one call with Bash timeout 600000 ms (the maximum), and return its whole stdout verbatim in stdout and its exit code in exit_code. ' +
   'Do not run anything else, and do not fix, retry or work around a failure.\n'
+// One foreground Bash call ends at 600 s at most; each frozen run inside it may take its limit plus run-frozen.js's 10 s kill
+// grace. A step that cannot finish inside one call BLOCKS before it starts (a killed call would lose its record).
+const ONE_CALL_S = 570
+const RUN_GRACE_S = 15
+const overCall = (label, seconds) => seconds > ONE_CALL_S ? `${label} can take up to ${seconds} s and cannot finish inside one foreground Bash call (600 s); shorten its frozen limit` : ''
 const jsonLines = s => String(s || '').split('\n').map(l => { try { const v = JSON.parse(l); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null } }).filter(Boolean)
 const shaOf = (s, file) => ((String(s || '').split('\n').map(l => /^([0-9a-f]{64}) [ *](.+)$/.exec(l)).find(m => m && m[2] === file)) || [])[1]
 const HEX64 = /^[0-9a-f]{64}$/
@@ -442,6 +447,10 @@ if (C2) {
     : !Array.isArray(d.clean_ignore) || typeof d.unit_command !== 'string' || !Number.isInteger(d.live_budget_min) ? 'the preflight lacks the frozen suite configuration'
     : ciLog && !(hi && hi.inputs.length === 1 && hi.inputs[0].path === ciLog && HEX64.test(hi.inputs[0].sha256)) ? 'the CI failure log was not hashed' : ''
   if (bad) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: bad, preflight: pre })
+  const suiteRuns = typeof s.setup_command === 'string' ? 2 : 1
+  const suiteLong = !Number.isInteger(s.timeout_min) || s.timeout_min < 1 ? 'the manifest suite has no timeout_min'
+    : overCall(`the frozen suite (${suiteRuns === 2 ? 'setup and suite, ' : ''}${suiteRuns} x timeout_min ${s.timeout_min})`, suiteRuns * (s.timeout_min * 60 + RUN_GRACE_S))
+  if (suiteLong) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: suiteLong, preflight: pre })
   PRE = d
   SUITE_M = s
   KNOWN = d.known_failure_ids.slice()

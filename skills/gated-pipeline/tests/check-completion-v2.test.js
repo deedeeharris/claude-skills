@@ -601,6 +601,8 @@ test('plan v2 returns ids, labels and budgets, never a command', t => {
     { id: 'CHECK-LIVE', name: 'Live probe', quiet: true, effort: 'low', budget_min: 1, timeout_min: 2 },
   ]);
   assert.deepEqual(p.runtime_acceptance_ids, ['HELLO-001-AC1']);
+  assert.deepEqual(p.limits, { proof_timeout_s: 30, negative_controls_total_min: 5 }, 'the limits, so verify can BLOCK a step that cannot fit in one Bash call');
+  assert.equal(p.suite_setup, false);
   assert.deepEqual(p.live_acceptances, [{ id: 'HELLO-001-AC2', check_id: 'CHECK-LIVE' }]);
   assert.deepEqual(p.negative_controls, [{ id: 'HELLO-001-AC1', mutation_sha256: sha256('Make hello() return goodbye.') }]);
   assert.ok(!/node test|node --check/.test(JSON.stringify(p)), 'no command in the plan output');
