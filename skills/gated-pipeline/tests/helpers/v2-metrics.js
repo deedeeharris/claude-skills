@@ -110,6 +110,7 @@ function recordMismatches(rec, ledger) {
   want('record source_request_sha256', rec.source_request_sha256, ledger.source_request_sha256);
   if (rec.result_path !== undefined) {
     if (!exists(rec.result_path)) out.push('result.json: missing');
+    else want('result.json sha256', hashFile(rec.result_path), rec.result_sha256);
   } else {
     if (!exists(rec.inputs_path || '')) out.push('inputs.json: missing');
     want('fallback-review.json sha256', hashFile(rec.fallback_review_path || ''), rec.fallback_review_sha256);

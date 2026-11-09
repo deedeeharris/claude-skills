@@ -169,6 +169,7 @@ function makeRepo(t, opts = {}) {
         inputs: inputs.map(i => ({ role: i.role, path: i.path, sha256: sha256(fs.readFileSync(i.path)) })), ...(o.result || {}) };
       fs.writeFileSync(path.join(runDir, 'result.json'), JSON.stringify(result, null, 2));
       record.result_path = path.join(runDir, 'result.json');
+      record.result_sha256 = sha256(fs.readFileSync(record.result_path));
     } else {
       record.reviewer = FALLBACK_REVIEWER;
       const inputsPath = path.join(reviewDir, 'inputs.json');

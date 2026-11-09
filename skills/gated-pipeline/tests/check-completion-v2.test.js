@@ -231,6 +231,17 @@ test('approvals: an edited fallback-review.json is exit 1', t => {
   blocked(c.approvals(), 'E_HASH', /fallback-review\.json/);
 });
 
+test('approvals: a codex record pins its result.json by hash; a replaced result.json with the same verdict and inputs is exit 1', t => {
+  const c = ledger(t, HAPPY);
+  assert.match(c.records[1].result_sha256 || '', /^[0-9a-f]{64}$/, 'the codex record carries result_sha256');
+  const file = c.records[1].result_path;
+  const v = JSON.parse(fs.readFileSync(file, 'utf8'));
+  v.summary = 'another review with the same verdict';
+  v.findings = [{ id: 'N-1', severity: 'NIT', confidence: 0.9, iso_property: null, validation: null, claim: 'swapped in', evidence: 'none' }];
+  fs.writeFileSync(file, JSON.stringify(v, null, 2));
+  blocked(c.approvals(), 'E_HASH', /result\.json/);
+});
+
 test('approvals: an approvals-<n+1>.json beside the named ledger is exit 1', t => {
   const c = ledger(t, HAPPY);
   const named = c.approvalsPath;

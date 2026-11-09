@@ -255,7 +255,8 @@ function redesign(c, { tag, feature, rev0 = null, previousDesign = null }) {
     fs.writeFileSync(path.join(resultDir, 'result.json'), JSON.stringify(result, null, 2));
     records.push({ gate, round: n, rev: 1, rev_dir: revDir, verdict: 'PASS', reviewer: 'codex', review_dir: reviewDir, source_sha256: snap.source_sha256,
       prd_projection_sha256: snap.prd_projection_sha256, spec_view_sha256: snap.spec_view_sha256, manifest_sha256: snap.manifest_sha256,
-      source_request_sha256: sha256(fs.readFileSync(request)), schema_version: 2, compiler_version: '1.0.0', result_path: path.join(resultDir, 'result.json') });
+      source_request_sha256: sha256(fs.readFileSync(request)), schema_version: 2, compiler_version: '1.0.0', result_path: path.join(resultDir, 'result.json'),
+      result_sha256: sha256(fs.readFileSync(path.join(resultDir, 'result.json'))) });
     ledger = c.writeJson(path.join(runDir, `approvals-${n}.json`), { run_dir: runDir, start_head: startHead, previous_design: previousDesign, source_request_path: request,
       source_request_sha256: sha256(fs.readFileSync(request)), records });
   }

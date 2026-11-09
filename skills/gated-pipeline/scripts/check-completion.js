@@ -370,7 +370,7 @@ function check(args) {
 // Inputs written by the v2 stages (the shapes this file certifies; build.js/verify.js write them):
 //   approvals-<n>.json  { run_dir, start_head, previous_design: { commit, repo_path } | null, source_request_path,
 //                         source_request_sha256, records: [ { gate: prd|spec, round, rev, rev_dir, verdict, reviewer,
-//                         review_dir, result_path | inputs_path + fallback_review_path + fallback_review_sha256,
+//                         review_dir, result_path + result_sha256 | inputs_path + fallback_review_path + fallback_review_sha256,
 //                         source_sha256, prd_projection_sha256, spec_view_sha256, manifest_sha256,
 //                         source_request_sha256, schema_version, compiler_version } ] }; n records in file n, each
 //                         earlier file holding the first records (immutable, contiguous)
@@ -538,7 +538,7 @@ function checkApprovals(ctx, { approvalsPath, approvalsSha, F, repoPath: knownRe
   for (const [i, r] of records.entries()) {
     const label = `approval record ${i + 1}`;
     const codex = isObj(r) && Object.hasOwn(r, 'result_path');
-    need(keysExactly(r, [...RECORD_KEYS, ...(codex ? ['result_path'] : ['inputs_path', 'fallback_review_path', 'fallback_review_sha256'])]), 'E_APPROVALS', `${label}: unexpected or missing fields`);
+    need(keysExactly(r, [...RECORD_KEYS, ...(codex ? ['result_path', 'result_sha256'] : ['inputs_path', 'fallback_review_path', 'fallback_review_sha256'])]), 'E_APPROVALS', `${label}: unexpected or missing fields`);
     need(['prd', 'spec'].includes(r.gate) && Number.isInteger(r.round) && r.round > 0 && Number.isInteger(r.rev) && r.rev > 0, 'E_APPROVALS', `${label}: gate, round or rev invalid`);
     need(['PASS', 'FAIL', 'NEEDS_HUMAN'].includes(r.verdict), 'E_APPROVALS', `${label}: verdict must be PASS, FAIL or NEEDS_HUMAN`);
     need(path.resolve(String(r.rev_dir)) === path.join(runDir, `rev-${r.rev}`), 'E_APPROVALS', `${label}: rev_dir must be <run_dir>/rev-${r.rev}`);
@@ -584,7 +584,8 @@ function checkApprovals(ctx, { approvalsPath, approvalsSha, F, repoPath: knownRe
     if (Object.hasOwn(r, 'result_path')) {
       need(r.reviewer === 'codex', 'E_APPROVALS', `${label}: a result.json record is a codex review`);
       need(inside(path.resolve(r.result_path), reviewDir), 'E_APPROVALS', `${label}: result_path must lie in review_dir`);
-      const result = jsonV2(ctx, path.resolve(r.result_path), `${label} result.json`).value;
+      const result = strictJson(hashed(ctx, path.resolve(r.result_path), r.result_sha256, `${label} result.json`), `${label} result.json`).value;
+      need(isObj(result), 'E_JSON', `${label} result.json JSON must be an object`);
       need(result.kind === r.gate, 'E_APPROVALS', `${label}: result.json kind ${result.kind} is not the ${r.gate} gate`);
       need(result.outcome === 'ok' && result.unable_to_review === null, 'E_APPROVALS', `${label}: result.json outcome must be ok with unable_to_review null`);
       need(isObj(result.scope) && result.scope.mode === 'files', 'E_APPROVALS', `${label}: result.json scope.mode must be files`);

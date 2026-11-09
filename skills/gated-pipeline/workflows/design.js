@@ -606,17 +606,18 @@ async function designV2() {
   async function record(rv, snap) {
     const { r, gate, round, out, fb } = rv
     const codexRun = r.reviewer === 'codex'
-    if (codexRun && !(typeof r.run_dir === 'string' && r.run_dir.startsWith(`${out}/${gate}-`) && !/[\/\\]|\.\./.test(r.run_dir.slice(out.length + 1)) && HEX.test(r.result_sha256 || ''))) {
+    if (codexRun && !(typeof r.run_dir === 'string' && r.run_dir.startsWith(`${out}/${gate}-`) && /^[A-Za-z0-9._-]+$/.test(r.run_dir.slice(out.length + 1)) && !/\.\./.test(r.run_dir.slice(out.length + 1)) && HEX.test(r.result_sha256 || ''))) {
       return { end: await end({ status: 'BLOCKED', stage: `${gate} review`, round, review: r, reason: 'relay inconsistency: run_dir or result_sha256 is not this review\'s' }) }
     }
     const rec = { gate, round, rev: snap.k, rev_dir: snap.revDir, verdict: gateVerdict(r), reviewer: r.reviewer, review_dir: codexRun ? out : fb,
-      ...(codexRun ? { result_path: `${r.run_dir}/result.json` } : { inputs_path: `${fb}/inputs.json`, fallback_review_path: `${fb}/fallback-review.json`, fallback_review_sha256: FB_HASH }),
+      ...(codexRun ? { result_path: `${r.run_dir}/result.json`, result_sha256: r.result_sha256 } : { inputs_path: `${fb}/inputs.json`, fallback_review_path: `${fb}/fallback-review.json`, fallback_review_sha256: FB_HASH }),
       source_sha256: snap.source_sha256, prd_projection_sha256: snap.prd_projection_sha256, spec_view_sha256: snap.spec_view_sha256,
       manifest_sha256: snap.manifest_sha256, source_request_sha256: reqSha, schema_version: 2, compiler_version: snap.compiler_version }
     const n = records.length + 1
     const file = `${RUN}/approvals-${n}.json`
     const ledger = JSON.stringify({ ...header(), records: [...records, rec] })
-    const body = ['set -e', ...(codexRun ? [] : [
+    // A codex record pins its result.json by the hash cleanup's sha256sum printed; the block re-checks it before writing.
+    const body = ['set -e', ...(codexRun ? [`printf '%s  %s\\n' ${q(rec.result_sha256)} ${q(rec.result_path)} | sha256sum -c --quiet - >/dev/null || { echo GP_RESULT_HASH; exit 3; }`] : [
       `FB=$(${node('write-json.js', `--out ${q(rec.fallback_review_path)}`)} <<'GP_JSON'`, JSON.stringify({ gate_kind: gate, reviewer: FALLBACK_REVIEWER, reply: rv.raw }), 'GP_JSON', ')',
       'printf \'%s\\n\' "$FB"', `H=$(printf '%s' "$FB" | sed -n 's/.*"sha256":"\\([0-9a-f]\\{64\\}\\)".*/\\1/p')`, 'test -n "$H"']),
       `${codexRun ? 'cat' : `sed "s/${FB_HASH}/$H/"`} <<'GP_JSON' | ${node('write-json.js', `--out ${q(file)}`)}`, ledger, 'GP_JSON'].join('\n')
