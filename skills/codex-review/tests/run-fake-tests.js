@@ -694,6 +694,44 @@ function main() {
     check('prompt limits findings to the scoped change/files', prompt.includes('Report findings only about the change or the files listed in scope'));
   }
 
+  console.log('== case 27: SIGTERM to the runner stops codex and records outcome interrupted ==');
+  {
+    const out = nextDir('out');
+    const state = nextDir('state');
+    const repo = makeRepo(workDir, `repo-${caseIndex}`);
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hi');
+    const env = Object.assign({}, process.env, {
+      PATH: bin + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'pass', FAKE_CODEX_STATE: state,
+      FAKE_CODEX_PLAN: JSON.stringify({ review: [{ delay_ms: 60000, ignore_term: true }] }),
+    });
+    // spawnSync's timeout delivers killSignal to the runner while codex is still running.
+    const r = spawnSync(process.execPath, [RUNNER, '--kind', 'implementation', '--out-dir', out, '--uncommitted', '--repo', repo, '--timeout-seconds', '600'],
+      { encoding: 'utf8', timeout: 2500, killSignal: 'SIGTERM', env });
+    check('exit 3 after SIGTERM', r.status === 3, `status=${r.status} signal=${r.signal}`);
+    const log = readLastLog(out);
+    check('one log line, outcome interrupted', log && log.outcome === 'interrupted' && fs.readFileSync(path.join(out, 'codex-review-log.jsonl'), 'utf8').trim().split('\n').length === 1);
+    const result = log && readResult(log.run_dir);
+    check('result.json parses whole with outcome interrupted', result && result.outcome === 'interrupted' && result.verdict === 'NEEDS_HUMAN');
+    check('verdict_reasons name the signal', result && result.verdict_reasons.join(' ').includes('SIGTERM'));
+    const pidFile = path.join(state, 'review-1.pid');
+    let fakeAlive = true;
+    try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 0); } catch { fakeAlive = false; }
+    check('the codex process (ignoring SIGTERM) is gone after the grace', !fakeAlive);
+    check('no temporary result file left', log && !fs.readdirSync(log.run_dir).some((f) => f.includes('.tmp-')));
+  }
+
+  console.log('== case 28: result.json is written atomically ==');
+  {
+    const out = nextDir('out');
+    const repo = makeRepo(workDir, `repo-${caseIndex}`);
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hi');
+    const r = runRunner(bin, 'validation-confirm-refute', nextDir('state'), ['--kind', 'implementation', '--out-dir', out, '--uncommitted', '--repo', repo]);
+    const log = readLastLog(out);
+    check('exit 1', r.status === 1, `exit=${r.status}`);
+    check('result.json parses', log && readResult(log.run_dir) && readResult(log.run_dir).verdict === 'FAIL');
+    check('no temporary result file left', log && !fs.readdirSync(log.run_dir).some((f) => f.includes('.tmp-')));
+  }
+
   console.log(`\n${passCount} passed, ${failCount} failed`);
   process.exitCode = failCount === 0 ? 0 : 1;
 }

@@ -12,6 +12,11 @@
 // - FAKE_CODEX_TABLE (scenario "table"): JSON { findings: [review findings],
 //   model_verdict, unable_to_review, validation: { <id>: "CONFIRMED"|"REFUTED" } (an id
 //   left out is omitted from the validation reply), validation_failure: "error"|null }.
+// `codex --version` prints a version and touches no state. An exec call whose
+// --output-schema is security.schema.json or compliance.schema.json (the gated-pipeline
+// relays' raw `codex exec`) writes a PASS document of that shape (FAKE_CODEX_RAW: JSON to
+// write instead) and is counted apart from review/validate. Every exec call writes its
+// pid to FAKE_CODEX_STATE/<call>-<index>.pid.
 
 const fs = require('fs');
 const path = require('path');
@@ -61,6 +66,8 @@ function main() {
   const scenario = process.env.FAKE_CODEX_SCENARIO || 'pass';
   const state = process.env.FAKE_CODEX_STATE || null;
 
+  if (argv[0] === '--version') { process.stdout.write('codex-cli 0.0.0-fake\n'); process.exit(0); }
+
   if (argv[0] === 'debug' && argv[1] === 'models') {
     appendState(state, { argv, stdin: '', call: 'debug-models' });
     if (scenario === 'catalog-fail') process.exit(1);
@@ -78,14 +85,16 @@ function main() {
   const stdin = readStdin();
   const outPath = getFlag(argv, '-o');
   const schemaPath = getFlag(argv, '--output-schema') || '';
-  const call = schemaPath.includes('validation') ? 'validate' : 'review';
+  const raw = { 'security.schema.json': 'security', 'compliance.schema.json': 'compliance' }[path.basename(schemaPath)];
+  const call = raw || (schemaPath.includes('validation') ? 'validate' : 'review');
   const callCountFile = state ? path.join(state, `${call}-count`) : null;
   let callIndex = 1;
   if (callCountFile) {
     try { callIndex = Number(fs.readFileSync(callCountFile, 'utf8')) + 1; } catch { callIndex = 1; }
     fs.writeFileSync(callCountFile, String(callIndex), 'utf8');
   }
-  appendState(state, { argv, stdin, call, callIndex });
+  appendState(state, { argv, stdin, call, callIndex, pid: process.pid });
+  if (state) fs.writeFileSync(path.join(state, `${call}-${callIndex}.pid`), String(process.pid), 'utf8');
 
   let plan = {};
   try { plan = JSON.parse(process.env.FAKE_CODEX_PLAN || '{}') || {}; } catch { plan = {}; }
@@ -97,6 +106,13 @@ function main() {
 }
 
 function respond({ scenario, call, callIndex, outPath, state }) {
+  if (call === 'security' || call === 'compliance') {
+    const doc = process.env.FAKE_CODEX_RAW ? JSON.parse(process.env.FAKE_CODEX_RAW)
+      : call === 'security' ? { verdict: 'PASS', summary: 'no critical or high finding', findings: [] }
+        : { verdict: 'PASS', summary: 'every requirement traced', findings: [], requirements: [] };
+    writeOut(outPath, doc);
+    process.exit(0);
+  }
   if (scenario === 'table') {
     let table = {};
     try { table = JSON.parse(process.env.FAKE_CODEX_TABLE || '{}') || {}; } catch { table = {}; }

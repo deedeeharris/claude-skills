@@ -164,7 +164,7 @@ function project({ res, file, bytes }) {
       validation_status: x.validation.status, claim: x.claim, evidence: x.evidence, location: x.location })),
   };
 }
-const RELAY = relayV1;
+const RELAY = project;
 
 // --- the stages ---------------------------------------------------------------------------
 const designArgs = {

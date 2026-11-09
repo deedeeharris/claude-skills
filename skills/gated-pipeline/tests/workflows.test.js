@@ -83,7 +83,7 @@ const verifyArgs = {
 };
 const pinned = { head_before: sha, head_after: sha, status_before: [], status_after: [] };
 const preflight = { passed: true, manifest_sha256: digest, spec_sha256: 'd'.repeat(64), reviewed_sha: sha };
-const finalReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha };
+const finalReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, findings: [], model_verdict: 'PASS', outcome: 'ok', unable_to_review: null };
 const compliance = { verdict: 'PASS', blocking: [], requirements: [], ...pinned };
 const proofs = { blocked: false, ledger_path: '/state/verify/acceptance-ledger.json', ...pinned };
 
@@ -139,7 +139,7 @@ test('frozen-plan drift blocks verify before executing any checks or acceptance 
 });
 
 test('design reviews acceptance inventory together with the spec and freezes its identity', async () => {
-  const review = { verdict: 'PASS', confirmed_findings: [], verdict_reasons: [], other_findings: [] };
+  const review = { verdict: 'PASS', confirmed_findings: [], verdict_reasons: [], other_findings: [], findings: [], model_verdict: 'PASS', outcome: 'ok', unable_to_review: null };
   const { result, calls } = await run('design', {
     feature_id: 'feature', repo: '/repo', task: 'Build a feature', run_dir: '/state/design',
     review_runner: '/skill/run-review.js', execution_schema: '/skill/execution-plan.schema.json',
@@ -157,7 +157,7 @@ const designArgs = {
   feature_id: 'feature', repo: '/repo', task: 'Build a feature', run_dir: '/state/design',
   review_runner: '/skill/run-review.js', execution_schema: '/skill/execution-plan.schema.json',
 };
-const docReview = { verdict: 'PASS', confirmed_findings: [], verdict_reasons: [], other_findings: [], codex_available: true };
+const docReview = { verdict: 'PASS', confirmed_findings: [], verdict_reasons: [], other_findings: [], codex_available: true, findings: [], model_verdict: 'PASS', outcome: 'ok', unable_to_review: null };
 const freeze = { blocked: false, spec_sha256: 'd'.repeat(64), manifest_sha256: digest };
 const unavailable = { verdict: 'ERROR', confirmed_findings: [], verdict_reasons: [], other_findings: [], codex_available: false, note: 'codex: command not found' };
 const buildArgs = {
@@ -166,7 +166,7 @@ const buildArgs = {
   spec_path: '/state/spec.md',
 };
 const work = { blocked: false, summary: 'done', files_changed: ['app.js'], commit: sha, base_commit: base };
-const codeReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [], codex_available: true };
+const codeReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [], codex_available: true, findings: [], model_verdict: 'PASS', outcome: 'ok', unable_to_review: null };
 const secPass = { verdict: 'PASS', blocking: [], codex_available: true };
 const suitePass = { passed: true, counts: '3 passed', failures: [], completed: true, other_failures: [], log_path: '/state/build/suite-1.txt', log_sha256: digest, ...pinned };
 const isCodexRelay = c => /^codex /.test(c.options.label);
@@ -335,7 +335,7 @@ test('when a verify final review or compliance relay reports blocked with codex 
 });
 
 test('when codex is unavailable and review_fallback is opus-high, build reviews and security-checks with Opus high', async () => {
-  const opusReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [] };
+  const opusReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [], findings: [], model_verdict: 'PASS', outcome: 'ok', unable_to_review: null };
   const { result, calls } = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
     [work, { ...unavailable, head_sha: '', changed: [] }, opusReview, { verdict: 'ERROR', blocking: [], codex_available: false }, { verdict: 'PASS', blocking: [] }, suitePass]);
   assert.equal(result.status, 'PASS');
@@ -377,11 +377,13 @@ test('fallback parity: an Opus design review with only MINOR/NIT findings passes
   assert.ok(!opus[0].prompt.includes('PASS only when'), 'the model no longer decides the verdict');
 });
 
-test('fallback parity: a design MAJOR blocks only with an ISO property or as the third MAJOR', async () => {
+test('fallback parity: a lone non-ISO design MAJOR goes to a PRD revise round; an ISO property or the third MAJOR triggers', async () => {
   const major = (iso, title) => ({ severity: 'MAJOR', confidence: 0.9, iso_property: iso, location: 'x', title, detail: 'd' });
   const lone = await run('design', { ...designArgs, review_fallback: 'opus-high' },
-    [{ blocked: false }, unavailable, { findings: [major(null, 'one')] }, { blocked: false }, unavailable, { findings: [] }, freeze]);
-  assert.equal(lone.result.status, 'PASS', 'one non-ISO MAJOR does not trigger');
+    [{ blocked: false }, unavailable, { findings: [major(null, 'one')] }, { blocked: false }, unavailable, { findings: [] },
+      { blocked: false }, unavailable, { findings: [] }, freeze]);
+  assert.equal(lone.result.status, 'PASS', 'one non-ISO MAJOR does not trigger, but as a confirmed MAJOR it is revised first');
+  assert.ok(lone.calls.find(c => c.options.label === 'prd revise 1').prompt.includes('one'), 'the revise round carries the finding');
   const three = await run('design', { ...designArgs, review_fallback: 'opus-high', max_rounds: 1 },
     [{ blocked: false }, unavailable, { findings: [major(null, 'a'), major(null, 'b'), major(null, 'c')] }]);
   assert.equal(three.result.status, 'FAIL');
@@ -392,7 +394,7 @@ test('fallback parity: a design MAJOR blocks only with an ISO property or as the
   assert.deepEqual(iso.result.prd.review.confirmed_findings.map(f => f.title), ['no pass/fail']);
 });
 
-test('fallback parity: build blocks on a verified MAJOR, asks a human for a 0.5-0.8 MAJOR, passes MINOR', async () => {
+test('fallback parity: build blocks on a verified MAJOR, sends a 0.5-0.8 MAJOR to a fix round, passes MINOR', async () => {
   const head = { head_sha: sha, changed: [{ status: 'M', path: 'app.js' }] };
   const opusReview = findings => ({ findings, ...head });
   const minor = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
@@ -400,9 +402,10 @@ test('fallback parity: build blocks on a verified MAJOR, asks a human for a 0.5-
   assert.equal(minor.result.status, 'PASS');
   assert.equal(minor.result.review.other_findings.length, 2, 'non-blocking findings stay visible');
   const band = await run('build', { ...buildArgs, review_fallback: 'opus-high' },
-    [work, { ...unavailable, head_sha: '', changed: [] }, opusReview([{ severity: 'MAJOR', confidence: 0.6, iso_property: null, title: 'maybe' }])]);
-  assert.equal(band.result.status, 'BLOCKED');
-  assert.equal(band.result.review.verdict, 'NEEDS_HUMAN');
+    [work, { ...unavailable, head_sha: '', changed: [] }, opusReview([{ severity: 'MAJOR', confidence: 0.6, iso_property: null, title: 'maybe' }]),
+      work, codeReview, secPass, suitePass]);
+  assert.equal(band.result.status, 'PASS');
+  assert.ok(band.calls.find(c => c.options.label === 'fix 1').prompt.includes('maybe'), 'the fix round carries the 0.5-0.8 MAJOR');
 });
 
 test('fallback parity: verify final review passes with MINOR only and fails on BLOCKING', async () => {
@@ -451,7 +454,7 @@ test('build: codex and fallback security prompts name OWASP API Security Top 10 
   const args = { ...buildArgs, security_docs: secDocs, security_checklist: checklist };
   const viaCodex = await run('build', args, [work, codeReview, secPass, suitePass]);
   assert.equal(viaCodex.result.status, 'PASS');
-  const opusReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [] };
+  const opusReview = { verdict: 'PASS', confirmed_findings: [], head_sha: sha, changed: [{ status: 'M', path: 'app.js' }], verdict_reasons: [], other_findings: [], findings: [], model_verdict: 'PASS', outcome: 'ok', unable_to_review: null };
   const viaOpus = await run('build', { ...args, review_fallback: 'opus-high' },
     [work, { ...unavailable, head_sha: '', changed: [] }, opusReview, { verdict: 'ERROR', blocking: [], codex_available: false }, { verdict: 'PASS', blocking: [] }, suitePass]);
   assert.equal(viaOpus.result.status, 'PASS');

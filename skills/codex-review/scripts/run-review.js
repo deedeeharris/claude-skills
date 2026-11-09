@@ -171,12 +171,19 @@ function resolvePathOrThrow(p) {
   return resolved;
 }
 
+// Children still running, so a SIGTERM/SIGINT to the runner can stop their process groups
+// (see installSignalHandlers). Once interrupted, nothing new is started.
+const ACTIVE = new Set();
+let interrupted = false;
+
 function spawnTracked(cmd, args, opts = {}) {
+  if (interrupted) return new Promise(() => {});
   return new Promise((resolve) => {
     const isWin = process.platform === 'win32';
     let child;
     try {
       child = spawn(cmd, args, { cwd: opts.cwd, shell: false, detached: !isWin, windowsHide: true });
+      ACTIVE.add(child);
     } catch (err) {
       resolve({ code: null, stdout: '', stderr: String(err.message || err), timedOut: false, spawnError: err });
       return;
@@ -202,12 +209,14 @@ function spawnTracked(cmd, args, opts = {}) {
     child.stderr.on('data', (d) => { stderrChunks.push(d); });
     const decode = (chunks) => Buffer.concat(chunks).toString('utf8');
     child.on('error', (err) => {
+      ACTIVE.delete(child);
       if (settled) return;
       settled = true; if (timer) clearTimeout(timer); if (killTimer) clearTimeout(killTimer);
       const stdout = decode(stdoutChunks), stderr = decode(stderrChunks);
       resolve({ code: null, stdout, stderr: stderr || String(err.message || err), timedOut, spawnError: err });
     });
     child.on('close', (code) => {
+      ACTIVE.delete(child);
       if (settled) return;
       settled = true; if (timer) clearTimeout(timer); if (killTimer) clearTimeout(killTimer);
       resolve({ code, stdout: decode(stdoutChunks), stderr: decode(stderrChunks), timedOut });
@@ -372,8 +381,47 @@ function writeResultIfPossible(state) {
       model_verdict: state.model_verdict, summary: state.summary, unable_to_review: state.unable_to_review,
       review: state.review, validation: state.validation, findings: state.findings, counts: state.counts,
     };
-    fs.writeFileSync(path.join(state.run_dir, 'result.json'), JSON.stringify(result, null, 2), 'utf8');
+    // Atomic: a reader polling for result.json never sees a partly written file.
+    const file = path.join(state.run_dir, 'result.json');
+    const tmp = `${file}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(result, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
   } catch { /* best effort */ }
+}
+
+const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
+
+// SIGTERM/SIGINT to the runner (a relay's cleanup step, or an operator): stop every tracked
+// codex process group (SIGTERM, then SIGKILL after a 5 s grace), record outcome
+// "interrupted" in result.json and append one log line. A signal that arrives after the
+// final result was written changes nothing.
+function installSignalHandlers(state, getOutDir, startedAt, isFinal) {
+  const onSignal = async (sig) => {
+    if (isFinal()) { process.exit(process.exitCode || 0); }
+    if (interrupted) return;
+    interrupted = true;
+    const kids = [...ACTIVE];
+    const isWin = process.platform === 'win32';
+    for (const c of kids) {
+      try { if (isWin) spawnSync('taskkill', ['/pid', String(c.pid), '/T', '/F']); else process.kill(-c.pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+    const running = (c) => c.exitCode === null && c.signalCode === null;
+    const waitFor = async (ms, busy) => { const end = Date.now() + ms; while (Date.now() < end && busy()) await new Promise((r) => setTimeout(r, 50)); };
+    if (!isWin) {
+      await waitFor(5000, () => kids.some((c) => running(c) || groupAlive(c.pid)));
+      for (const c of kids) { if (groupAlive(c.pid)) { try { process.kill(-c.pid, 'SIGKILL'); } catch { /* already gone */ } } }
+    }
+    // Reap the children before exiting, so none is left behind as a zombie.
+    await waitFor(2000, () => kids.some(running));
+    state.outcome = 'interrupted'; state.verdict = 'NEEDS_HUMAN';
+    state.verdict_reasons = [`review outcome: interrupted (${sig})`]; state.error = `interrupted by ${sig}`;
+    state.duration_ms = Date.now() - startedAt;
+    writeResultIfPossible(state);
+    if (getOutDir()) appendLog(getOutDir(), state, 3);
+    process.exit(3);
+  };
+  process.on('SIGTERM', () => { onSignal('SIGTERM'); });
+  process.on('SIGINT', () => { onSignal('SIGINT'); });
 }
 
 function appendLog(outDir, state, exitCode) {
@@ -397,6 +445,8 @@ async function main() {
   const startedAt = Date.now();
   let code = 2;
   let outDir = null;
+  let final = false;
+  installSignalHandlers(state, () => outDir, startedAt, () => final);
 
   // --help needs no out-dir and appends no log line; parseArgs() itself never throws.
   const args = parseArgs(process.argv.slice(2));
@@ -482,10 +532,14 @@ async function main() {
     console.error(state.error);
     code = 2;
   } finally {
-    state.duration_ms = Date.now() - startedAt;
-    writeResultIfPossible(state);
-    if (outDir) appendLog(outDir, state, code);
-    process.exitCode = code;
+    // An interrupted run is recorded by the signal handler, which also exits.
+    if (!interrupted) {
+      state.duration_ms = Date.now() - startedAt;
+      writeResultIfPossible(state);
+      if (outDir) appendLog(outDir, state, code);
+      process.exitCode = code;
+      final = true;
+    }
   }
 }
 

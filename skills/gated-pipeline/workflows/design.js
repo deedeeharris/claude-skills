@@ -47,29 +47,11 @@ const DOC = {
   properties: { blocked: { type: 'boolean' }, blocked_reason: { type: 'string' }, path: { type: 'string' }, summary: { type: 'string' } },
   required: ['blocked', 'path', 'summary'],
 }
-const REVIEW = {
-  type: 'object',
-  properties: {
-    verdict: { type: 'string', enum: ['PASS', 'FAIL', 'NEEDS_HUMAN', 'ERROR'] },
-    confirmed_findings: { type: 'array', items: { type: 'object', properties: {
-      severity: { type: 'string' }, location: { type: 'string' }, title: { type: 'string' }, detail: { type: 'string' } },
-      required: ['severity', 'title'] } },
-    note: { type: 'string' }, blocked: { type: 'boolean' },
-    verdict_reasons: { type: 'array', items: { type: 'string' } },
-    other_findings: { type: 'array', items: { type: 'object', properties: {
-      severity: { type: 'string' }, location: { type: 'string' }, title: { type: 'string' }, detail: { type: 'string' } },
-      required: ['severity', 'title'] } },
-  },
-  required: ['verdict', 'confirmed_findings', 'verdict_reasons', 'other_findings'],
-}
-// The codex relay also reports whether codex exists here at all; the Opus stand-in uses the plain review schema.
-const RELAY = { ...REVIEW, properties: { ...REVIEW.properties, codex_available: { type: 'boolean' } }, required: [...REVIEW.required, 'codex_available'] }
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
 
 // Opus fallback parity with codex-review: same rubric file, severity scale and verdict rule as run-review.js
 // (computeTriggers/computeVerdict). The reviewer reports findings; the verdict is computed here, never by the model.
 const PARITY_RUBRICS = A.review_runner.replace(/[\/\\][^\/\\]+$/, '').replace(/[\/\\]scripts$/, '') + '/rubrics'
-const PARITY_ISO = new Set(['ambiguous', 'unverifiable', 'missing_acceptance_criteria', 'inconsistent', 'infeasible', 'incomplete'])
 const PARITY_SCHEMA = (extra = {}) => ({
   type: 'object',
   properties: {
@@ -88,43 +70,157 @@ const parityNote = kind => `Apply the codex-review rubric at ${PARITY_RUBRICS}/$
   'Validate every BLOCKING or MAJOR finding yourself before reporting it: re-open the cited location, and drop it if the evidence does not hold. ' +
   (kind === 'implementation' ? 'iso_property is always null. ' : 'iso_property is one of ambiguous|unverifiable|missing_acceptance_criteria|inconsistent|infeasible|incomplete, or null for other gaps. ') +
   'Report every finding in findings with location and detail (quote the evidence). Do NOT decide the verdict: the workflow applies the codex-review rule.'
-function parity(kind, f) {
-  if (!f || f.blocked) return f
-  const all = (f.findings || []).map(x => ({ ...x, confidence: Number(x.confidence) || 0 }))
-  const big = x => x.severity === 'BLOCKING' || x.severity === 'MAJOR'
-  const major = all.filter(x => x.severity === 'MAJOR')
-  const trig = kind === 'implementation'
-    ? all.filter(x => x.severity === 'BLOCKING' || (x.severity === 'MAJOR' && x.confidence >= 0.8))
-    : all.filter(x => x.severity === 'BLOCKING' || (x.severity === 'MAJOR' && (PARITY_ISO.has(x.iso_property) || major.length >= 3)))
-  // codex validates each trigger in a second pass; here the reviewer was told to re-check every BLOCKING/MAJOR and drop
-  // what does not hold, so every reported trigger counts as confirmed (codex's trigger rule, not a confidence filter).
-  const confirmed = trig
-  const rest = all.filter(x => !confirmed.includes(x))
-  const { findings, ...extra } = f
-  const out = (verdict, reasons) => ({ ...extra, verdict, confirmed_findings: confirmed, other_findings: rest, verdict_reasons: reasons })
-  if (confirmed.length) return out('FAIL', confirmed.map(x => `${x.severity} conf ${x.confidence} (${kind}): ${x.title}`))
-  const band = rest.find(x => big(x) && x.confidence >= 0.5 && x.confidence < 0.8)
-  if (band) return out('NEEDS_HUMAN', [`${band.severity} conf ${band.confidence} in 0.5-0.8 band: ${band.title}`])
-  return out('PASS', ['no triggering findings' + (rest.length ? ` (${rest.length} non-blocking reported)` : '')])
+// --- #37 gate rule: this block is the same in design.js, build.js and verify.js. ISO_SET, computeTriggers and
+// computeVerdict are byte-identical copies of codex-review's run-review.js (tests/fallback-parity.test.js checks).
+const ISO_SET = new Set(['ambiguous', 'unverifiable', 'missing_acceptance_criteria', 'inconsistent', 'infeasible', 'incomplete']);
+function computeTriggers(kind, findings) {
+  if (kind === 'implementation') {
+    return findings.filter((f) => f.severity === 'BLOCKING' || (f.severity === 'MAJOR' && f.confidence >= 0.8));
+  }
+  const major = findings.filter((f) => f.severity === 'MAJOR');
+  const byCount = major.length >= 3 ? major : [];
+  const byIso = major.filter((f) => f.iso_property && ISO_SET.has(f.iso_property));
+  const blocking = findings.filter((f) => f.severity === 'BLOCKING');
+  const byId = new Map();
+  for (const f of [...blocking, ...byIso, ...byCount]) byId.set(f.id, f);
+  return [...byId.values()];
 }
-// Wait in the FOREGROUND: a relay that ends its turn while codex runs in the background kills the review.
-const waitNote = (lsTarget, minutes) => `It can run for up to ~${minutes} minutes. Start it with the Bash tool's run_in_background, then WAIT IN THE FOREGROUND: ` +
-  `make repeated foreground Bash calls (Bash timeout 600000 ms), each a bounded loop of at most 9 minutes: ` +
-  `for i in $(seq 1 54); do ls ${lsTarget} >/dev/null 2>&1 && break; sleep 10; done ; repeat until the result exists or that total time has passed. ` +
-  'NEVER return or end your turn while the review process is still running: returning kills it and loses the review. ' +
-  'If the total time passes with no result, report ERROR with what the run folder contains.'
-const availNote = `First check that codex is AVAILABLE in this environment: run codex --version and node ${q(A.review_runner)} --help. ` +
-  'If either cannot run or exits non-zero (not installed, command not found), do NOT start the review: return codex_available=false, verdict ERROR, empty finding lists, and the observed output in note. ' +
-  'Otherwise codex_available=true. A usage cap or quota error is NOT unavailability: it stays codex_available=true with verdict ERROR.\n'
+function computeVerdict(kind, findings, modelVerdict) {
+  const reasons = [];
+  const counted = findings.filter((f) => !f.validation || f.validation.status !== 'refuted');
+  const triggers = computeTriggers(kind, counted);
+  if (triggers.length > 0) {
+    const confirmed = triggers.filter((f) => f.validation && f.validation.status === 'confirmed');
+    if (confirmed.length > 0) {
+      for (const f of confirmed) reasons.push(`${f.id} ${f.severity} conf ${f.confidence} (${kind})`);
+      return { verdict: 'FAIL', reasons };
+    }
+    if (triggers.every((f) => f.validation && f.validation.status === 'unvalidated')) {
+      reasons.push('validation_unavailable: all triggering findings unvalidated');
+      return { verdict: 'NEEDS_HUMAN', reasons };
+    }
+    reasons.push('triggering findings left in an unexpected validation state');
+    return { verdict: 'NEEDS_HUMAN', reasons };
+  }
+  const lowConf = counted.find((f) => (f.severity === 'BLOCKING' || f.severity === 'MAJOR') && f.confidence >= 0.5 && f.confidence < 0.8);
+  if (lowConf) {
+    reasons.push(`${lowConf.id} ${lowConf.severity} conf ${lowConf.confidence} in 0.5-0.8 band`);
+    return { verdict: 'NEEDS_HUMAN', reasons };
+  }
+  // Both computed from `counted` (refuted findings already excluded above), never from
+  // the raw `findings` — a refuted BLOCKING/MAJOR must never affect this comparison, the
+  // same rule every other branch above already applies.
+  const preTriggers = computeTriggers(kind, counted);
+  const preVerdict = preTriggers.length > 0 ? 'FAIL'
+    : counted.some((f) => (f.severity === 'BLOCKING' || f.severity === 'MAJOR') && f.confidence >= 0.5 && f.confidence < 0.8) ? 'NEEDS_HUMAN' : 'PASS';
+  if (modelVerdict !== preVerdict) {
+    reasons.push(`model_rule_disagreement: model said ${modelVerdict}, rule says ${preVerdict}`);
+    return { verdict: 'NEEDS_HUMAN', reasons };
+  }
+  reasons.push('no triggering findings');
+  return { verdict: 'PASS', reasons };
+}
+// Normalized finding for both reviewers: { id, severity, confidence, iso_property, validation_status, title, detail,
+// location } with location a string. The workflow decides the buckets, never the relay: confirmed_findings = every
+// validated-confirmed BLOCKING/MAJOR, other_findings = every other non-refuted finding (#37, design section 9).
+const gateBig = x => x.severity === 'BLOCKING' || x.severity === 'MAJOR'
+const gateStr = v => (v == null ? '' : String(v))
+const gateLoc = l => (l && typeof l === 'object' ? (l.file ? l.file + (l.line != null ? ':' + l.line : '') : gateStr(l.section)) : gateStr(l))
+function gateOf(kind, reply, findings, modelVerdict) {
+  const v = computeVerdict(kind, findings.map(x => ({ ...x, validation: { status: x.validation_status } })), modelVerdict)
+  const confirmed = findings.filter(x => gateBig(x) && x.validation_status === 'confirmed')
+  return { ...reply, findings, verdict: v.verdict, verdict_reasons: v.reasons, confirmed_findings: confirmed,
+    other_findings: findings.filter(x => !confirmed.includes(x) && x.validation_status !== 'refuted') }
+}
+const gateBlocked = (reply, reason) => ({ ...reply, blocked: true, reason })
+// Codex: the relay copied result.json field by field; its verdict must be the one computeVerdict gives for its findings.
+function gateCodex(kind, reply) {
+  if (!reply || reply.blocked) return reply
+  if (!Array.isArray(reply.findings) || !('model_verdict' in reply)) return gateBlocked(reply, 'relay inconsistency: the reply lacks findings or model_verdict')
+  if (reply.outcome !== 'ok' || reply.unable_to_review != null) return gateBlocked(reply, `codex-review outcome ${reply.outcome}` +
+    `${reply.unable_to_review != null ? `, unable_to_review: ${reply.unable_to_review}` : ''}, verdict ${reply.verdict}: ${(reply.verdict_reasons || []).join('; ')}`)
+  const findings = reply.findings.map(x => ({ id: gateStr(x.id), severity: x.severity, confidence: x.confidence, iso_property: x.iso_property ?? null,
+    validation_status: gateStr(x.validation_status), title: gateStr(x.claim), detail: gateStr(x.evidence), location: gateLoc(x.location) }))
+  const g = gateOf(kind, reply, findings, reply.model_verdict)
+  return g.verdict === reply.verdict ? g : gateBlocked(reply, `relay inconsistency: relayed verdict ${reply.verdict}, its findings give ${g.verdict}`)
+}
+// Opus fallback: the reviewer self-validated, so every BLOCKING/MAJOR counts as confirmed; ids F1, F2, ... in reply order.
+// The model verdict passed is the rule's own: when computeVerdict reaches its model comparison, no trigger and no
+// 0.5-0.8 finding is left, so the rule's pre-verdict there is always PASS and the fallback never disagrees with itself.
+function gateFallback(kind, reply) {
+  if (!reply || reply.blocked) return reply
+  if (!Array.isArray(reply.findings)) return gateBlocked(reply, 'relay inconsistency: the fallback reply lacks findings')
+  const findings = reply.findings.map((x, i) => ({ id: `F${i + 1}`, severity: x.severity, confidence: Number(x.confidence) || 0,
+    iso_property: kind === 'implementation' ? null : x.iso_property ?? null, validation_status: gateBig(x) ? 'confirmed' : 'not_required',
+    title: gateStr(x.title), detail: gateStr(x.detail), location: gateLoc(x.location) }))
+  return gateOf(kind, reply, findings, 'PASS')
+}
+// One item format for authors and fixers.
+const gateItem = (reviewer, x) => `[${reviewer} ${x.severity}] ${x.id} ${x.location} ${x.title}: ${x.detail}`
+// --- end of the gate rule block
+// --- review relays (plan 1b, design section 5): this block is the same in design.js, build.js and verify.js. A relay
+// runs fixed role-tagged blocks verbatim, in order: setup (availability probes, a fresh out dir made with plain mkdir,
+// so a glob or fixed name can only match this run's output), start (run_in_background), poll (in the foreground,
+// repeated while it exits 1, at most K times), cleanup (once). The Opus fallback has only setup (its own <out>-opus/)
+// and cleanup. A relay that ends its turn while codex runs in the background kills the review.
+const gpBlock = (role, body) => '```gp-exec ' + role + '\n' + body + '\n```\n'
+const gpProbe = runner => `codex --version${runner ? ` && node ${q(A.review_runner)} --help >/dev/null` : ''} || { echo GP_CODEX_UNAVAILABLE; exit 3; }`
+const gpFresh = dir => `mkdir ${q(dir)} || { echo GP_OUT_DIR_EXISTS; exit 4; }`
+const gpStart = (cmd, out) => `${cmd} & echo $! > ${q(out + '/runner.pid')}; wait $!`
+const gpPoll = target => `for i in $(seq 1 54); do ls ${target} >/dev/null 2>&1 && exit 0; sleep 10; done; exit 1`
+const gpStop = out => `P=$(cat ${q(out + '/runner.pid')} 2>/dev/null || true)\n` +
+  'if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then kill -TERM "$P"; for i in $(seq 1 20); do kill -0 "$P" 2>/dev/null || break; sleep 0.5; done; fi'
+const gpUnwt = wt => `git -C ${q(A.repo)} worktree remove --force ${q(wt)}`
+const gpList = (out, kind) => `ls -la ${q(out)}${kind ? ` ${q(out)}/${kind}-*/` : ''} 2>&1 || true` +
+  (kind ? `\nsha256sum ${q(out)}/${kind}-*/result.json 2>&1 || true` : '')
+function relaySteps({ setup, start, poll, cleanup, minutes }) {
+  const K = Math.ceil(minutes / 9)
+  return 'Run the gp-exec blocks below verbatim with the Bash tool, one Bash call per block, in this order, and read what each prints. ' +
+    'setup: in the foreground. If it exits 3, codex or the runner cannot run here: run no other block and return codex_available=false, verdict ERROR, ' +
+    'empty finding lists, null for every other result field, and the observed output in note. If it fails in any other way (exit 4: the out dir already ' +
+    'exists, so what it holds is not this run\'s), run no other block and return blocked=true with the output in note. ' +
+    `start: with the Bash tool's run_in_background; it can run for up to ~${minutes} minutes. Then WAIT IN THE FOREGROUND: ` +
+    'run the poll block as a foreground Bash call (Bash timeout 600000 ms; one bounded loop of at most 9 minutes, for i in $(seq 1 54) ...), ' +
+    `again each time it exits 1, at most ${K} times in all. NEVER return or end your turn between start and cleanup: returning kills the review process and loses the review. ` +
+    `cleanup: once, after a poll exits 0, or after the ${K}-th poll exits 1 (or when start has ended and a poll still finds no result); ` +
+    'without a poll exit 0, report verdict ERROR with the run-folder listing cleanup printed in note.\n' +
+    gpBlock('setup', setup) + gpBlock('start', start) + gpBlock('poll', poll) + gpBlock('cleanup', cleanup)
+}
+const fallbackSteps = (setup, cleanup) => 'Run the gp-exec setup block below verbatim with the Bash tool before you review (if it fails, return blocked=true ' +
+  'with its output in note), and the cleanup block once when your review is done.\n' + gpBlock('setup', setup) + gpBlock('cleanup', cleanup)
+// The relay copies result.json field by field (design section 9); the workflow, not the relay, applies the gate rule.
+const relayRead = (out, kind) => `After cleanup, read the result.json of the one run folder ${out}/${kind}-*/ and copy it with no judgement: verdict, ` +
+  'verdict_reasons, model_verdict, outcome, unable_to_review, validation_outcome (its validation.outcome; null when validation is null), run_dir (that run folder) ' +
+  'and result_sha256 (from the sha256sum line cleanup printed), and EVERY finding with its id, severity, confidence, iso_property, validation_status ' +
+  '(its validation.status), claim, evidence and location (the object as is). Do not drop, merge, re-grade or sort findings into buckets: the workflow decides. ' +
+  'If codex reports a usage cap or quota error, return verdict ERROR with that text in note (a cap is NOT unavailability: codex_available stays true).'
+const NULLABLE = { type: ['string', 'null'] }
+const RELAY_FINDING = { type: 'object', properties: {
+  id: { type: 'string' }, severity: { type: 'string', enum: ['BLOCKING', 'MAJOR', 'MINOR', 'NIT'] }, confidence: { type: 'number' }, iso_property: NULLABLE,
+  validation_status: { type: 'string', enum: ['confirmed', 'refuted', 'unvalidated', 'not_required'] }, claim: { type: 'string' }, evidence: { type: 'string' },
+  location: { type: 'object', properties: { file: NULLABLE, line: { type: ['integer', 'null'] }, section: NULLABLE } } },
+  required: ['id', 'severity', 'confidence', 'iso_property', 'validation_status', 'claim', 'evidence', 'location'] }
+const RELAY_REVIEW = (extra = {}) => ({
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['PASS', 'FAIL', 'NEEDS_HUMAN', 'ERROR'] }, verdict_reasons: { type: 'array', items: { type: 'string' } },
+    model_verdict: NULLABLE, outcome: NULLABLE, unable_to_review: NULLABLE, validation_outcome: NULLABLE, run_dir: NULLABLE, result_sha256: NULLABLE,
+    findings: { type: 'array', items: RELAY_FINDING }, note: { type: 'string' }, blocked: { type: 'boolean' }, codex_available: { type: 'boolean' }, ...extra,
+  },
+  required: ['verdict', 'verdict_reasons', 'model_verdict', 'outcome', 'unable_to_review', 'validation_outcome', 'run_dir', 'result_sha256', 'findings', 'codex_available', ...Object.keys(extra)],
+})
+// --- end of the review relay block
+// The codex relay copies result.json field by field and also reports whether codex exists here at all.
+const RELAY = RELAY_REVIEW()
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
 // Every review step is recorded, so an earlier Opus fallback round stays visible after a later codex PASS.
 const reviewers = []
 const disclose = o => ({ ...o, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
-async function reviewed(step, relay, fallback) {
+async function reviewed(step, gate, relay, fallback) {
   const r = await relay()
   let res
-  // An explicit relay blocker (refused command, failed setup) always stops the stage; it never falls back.
-  if (!r || r.blocked || r.codex_available !== false) res = r && { ...r, reviewer: 'codex' }
+  // An explicit relay blocker (refused command, failed setup, stale out dir) always stops the stage; it never falls back.
+  if (!r || r.blocked || r.codex_available !== false) res = r && { ...gate(r), reviewer: 'codex' }
   else if ((A.review_fallback || 'none') !== 'opus-high') res = { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
   else {
     const f = await fallback()
@@ -139,23 +235,24 @@ const disagreementOnly = r => r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findin
   r.verdict_reasons.length > 0 && r.verdict_reasons.every(x => /model_rule_disagreement/.test(x))
 
 function codex(kind, file, against, out, label, ph, inventory) {
-  return reviewed(label.replace(/^codex /, ''), () => agent(
-    `Run an independent codex ${kind} review and report its verdict. Do not review the document yourself.\n${availNote}` +
+  const fb = out + '-opus'
+  const cmd = `node ${q(A.review_runner)} --kind ${kind} --files ${q(file)}${inventory ? ' ' + q(inventory) : ''}${against ? ` --against ${q(against)}` : ''} --repo ${q(A.repo)} --out-dir ${q(out)}` +
+    `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}`
+  return reviewed(label.replace(/^codex /, ''), r => gateCodex(kind, r), () => agent(
+    `Run an independent codex ${kind} review and report its verdict. Do not review the document yourself.\n` +
     (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
-    `Command (Bash): node ${q(A.review_runner)} --kind ${kind} --files ${q(file)}${inventory ? ' ' + q(inventory) : ''}${against ? ` --against ${q(against)}` : ''} --repo ${q(A.repo)} --out-dir ${q(out)}` +
-    `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}\n` +
-    `${waitNote(`${q(out)}/*/result.json`, Math.ceil(TIMEOUT_S * 6 / 60) + 5)}\n` +
-    `Exit codes: 0 PASS, 1 FAIL, 3 NEEDS_HUMAN, 2 setup error (report ERROR). Read the result.json of the run folder THIS command created (the newest; ignore older folders). ` +
-    `Put findings whose validation.status is "confirmed" in confirmed_findings, every other non-refuted finding in other_findings, and copy result.json's verdict_reasons verbatim. ` +
-    `If codex reports a usage cap or quota error, return ERROR with that text in note.\n- ${RULES}`,
+    relaySteps({ setup: ['set -e', gpProbe(true), gpFresh(out)].join('\n'), start: gpStart(cmd, out), poll: gpPoll(`${q(out)}/${kind}-*/result.json`),
+      cleanup: gpStop(out) + '\n' + gpList(out, kind), minutes: Math.ceil(TIMEOUT_S * 6 / 60) + 5 }) +
+    `${relayRead(out, kind)}\n- ${RULES}`,
     { label, phase: ph, schema: RELAY, effort: 'low' }),
   () => agent(
     `Codex is not available in this environment, so YOU are the independent ${kind} reviewer in its place (the repo config chose review_fallback: opus-high). ` +
     `Review ${file}${inventory ? ` and the execution inventory ${inventory}` : ''}${against ? ` against ${against}` : ''} for defects: missing or contradicted requirements, ` +
     'claims the repo does not support (read the code), untestable or vague acceptance checks, and gaps in scope.\n' +
     (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
+    fallbackSteps(['set -e', gpFresh(fb)].join('\n'), gpList(fb)) +
     `${parityNote(kind)} Do not edit any file.\n- ${RULES}`,
-    { label: `${label.replace(/^codex /, 'opus ')} (codex unavailable)`, phase: ph, schema: PARITY_SCHEMA(), model: 'opus', effort: 'high' }).then(f => parity(kind, f)))
+    { label: `${label.replace(/^codex /, 'opus ')} (codex unavailable)`, phase: ph, schema: PARITY_SCHEMA(), model: 'opus', effort: 'high' }).then(f => gateFallback(kind, f)))
 }
 
 async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
@@ -166,7 +263,7 @@ async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
     if (!r || r.blocked || r.verdict === 'ERROR' || (r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && !disagreementOnly(r))) return { status: 'BLOCKED', stage: `${kind} review`, round, review: r }
     if (r.verdict === 'PASS' && !r.confirmed_findings.length) return { status: 'PASS', rounds: round, path, reviewer: r.reviewer }
     if (round === MAX) return { status: 'FAIL', stage: `${kind} review`, rounds: round, review: r }
-    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => `[${r.reviewer} ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`).join('\n')
+    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => gateItem(r.reviewer, f)).join('\n')
     doc = await agent(writePrompt(items), { label: `${kind} revise ${round}`, phase: ph, schema: DOC, effort: EFFORT })
     if (!doc || doc.blocked) return { status: 'BLOCKED', stage: kind, reason: doc ? doc.blocked_reason : 'author died' }
   }
