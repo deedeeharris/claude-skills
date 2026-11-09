@@ -29,6 +29,7 @@
 //               file only with mode 100644; every line must lie in a header's section, its ---/+++ names must be
 //               the header's, and `git apply --numstat` must list exactly those paths), creates a throwaway worktree of reviewed_sha at <out-dir>/wt, runs
 //               setup if set, the unmodified proof (baseline), `git apply --check` + `git apply`, the proof again,
+//               (git reads the patch bytes hashed into the record on stdin; --patch is read once),
 //               and removes the worktree. Each run is bounded by min(limits.proof_timeout_s, the phase time left).
 //               Phase time starts at the first negative control: <dirname(out-dir)>/phase-start.json is created
 //               once (O_EXCL); a control that would start after limits.negative_controls_total_min of phase time
@@ -95,7 +96,7 @@ function parseArgs(argv) {
 }
 
 function git(cwd, args, opts = {}) {
-  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: opts.encoding === null ? null : 'utf8', maxBuffer: 64 * 1024 * 1024, env: opts.env });
+  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: opts.encoding === null ? null : 'utf8', maxBuffer: 64 * 1024 * 1024, env: opts.env, input: opts.input });
   if (r.status !== 0 && !opts.allowFail) throw new Refusal(`git ${args.join(' ')} failed: ${(r.stderr || '').toString().trim()}`);
   return r;
 }
@@ -189,7 +190,8 @@ function readManifest(frozenDir, expected) {
 // `diff --git` section and its hunks, so git apply cannot touch a path the headers do not name: a non-blank line
 // before the first header, a `---`/`+++` pair whose names differ from the header, text after a hunk's counted
 // lines (a plain `---`/`+++` patch git would also apply) and a malformed hunk are refused. Renames, copies,
-// deletions, mode changes and binary hunks are refused; a new file only with mode 100644.
+// deletions, mode changes, binary hunks and symlink or submodule edits are refused; an `index` line may carry
+// the unchanged mode 100644 or 100755; a new file only with mode 100644.
 function patchPaths(bytes) {
   const text = bytes.toString('utf8');
   if (!text.trim()) throw new Refusal('the mutation patch is empty');
@@ -239,7 +241,9 @@ function patchPaths(bytes) {
         isNew = true;
         continue;
       }
-      if (/^index [0-9a-f]+\.\.[0-9a-f]+( 100644)?$/.test(line)) continue;
+      // An unchanged mode on the index line: a regular or executable file (a mode change has old/new mode lines).
+      if (/^index [0-9a-f]+\.\.[0-9a-f]+( 100644| 100755)?$/.test(line)) continue;
+      if (/^index [0-9a-f]+\.\.[0-9a-f]+ (120000|160000)$/.test(line)) throw new Refusal(`the patch edits ${current}, a symlink or submodule`);
       if (line.startsWith('--- ')) {
         if (line !== `--- a/${current}` && !(isNew && line === '--- /dev/null')) throw new Refusal(`the patch's "${line}" does not name ${current} of its diff --git header`);
         state = 'minus';
@@ -268,9 +272,11 @@ function patchPaths(bytes) {
 }
 
 // The paths git itself would touch (`git apply --numstat -z`, which applies nothing); they must be exactly the
-// header-derived ones, so a patch construct the parser above misreads is refused rather than trusted.
-function gitPatchPaths(cwd, patchFile, env) {
-  const r = spawnSync('git', ['apply', '--numstat', '-z', patchFile], { cwd, env: env || process.env, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 });
+// header-derived ones, so a patch construct the parser above misreads is refused rather than trusted. `patch` is
+// the patch bytes (fed on stdin, so git reads exactly what was hashed) or a patch file path.
+function gitPatchPaths(cwd, patch, env) {
+  const bytes = Buffer.isBuffer(patch);
+  const r = spawnSync('git', ['apply', '--numstat', '-z', ...(bytes ? [] : [patch])], { cwd, env: env || process.env, input: bytes ? patch : undefined, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 });
   if (r.error || r.status !== 0) throw new Refusal(`git apply --numstat cannot read the mutation patch: ${r.error ? r.error.message : r.stderr.toString().trim()}`);
   const out = [];
   for (const rec of r.stdout.toString('utf8').split('\0')) {
@@ -281,9 +287,10 @@ function gitPatchPaths(cwd, patchFile, env) {
   }
   return out;
 }
+// `patchFile` names where the bytes came from; git reads `bytes` themselves.
 function checkedPatchPaths(cwd, patchFile, bytes, env) {
   const paths = patchPaths(bytes);
-  const touched = gitPatchPaths(cwd, patchFile, env);
+  const touched = gitPatchPaths(cwd, bytes, env);
   if (JSON.stringify([...touched].sort()) !== JSON.stringify([...paths].sort())) throw new Refusal(`git apply would touch ${JSON.stringify(touched)}, not the patch headers' ${JSON.stringify(paths)}`);
   return paths;
 }
@@ -463,9 +470,10 @@ async function negative({ args, target, manifest, manifestSha, sha, realRepo, ou
       setup = { exit_code: s.exit_code, log_path: s.log_path, log_sha256: s.log_sha256, timed_out: s.timed_out };
     }
     const baseline = await runFramed({ command: spec.command, cwd: wt, target: args.target + '.baseline', head: sha, logPath: path.join(outDir, args.target + '.baseline.log'), limitS: left() });
-    const check = git(wt, ['apply', '--check', patch], { allowFail: true });
+    // The bytes read and hashed before the baseline go to git on stdin; the --patch file is not read again.
+    const check = git(wt, ['apply', '--check'], { allowFail: true, input: patchBytes });
     if (check.status !== 0) throw new Refusal(`the mutation patch does not apply to ${sha}: ${check.stderr.trim()}`);
-    git(wt, ['apply', patch]);
+    git(wt, ['apply'], { input: patchBytes });
     const mutatedLimitS = left();
     const mutated = await runFramed({ command: spec.command, cwd: wt, target: args.target, head: sha, logPath: path.join(outDir, args.target + '.log'), limitS: mutatedLimitS });
     git(realRepo, ['worktree', 'remove', '--force', wt]);

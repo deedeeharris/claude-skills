@@ -445,8 +445,8 @@ function parseArgsV2(argv) {
   return args;
 }
 
-function gitBuf(repo, args, env) {
-  const r = spawnSync('git', ['-C', repo, ...args], { maxBuffer: 64 * 1024 * 1024, env: env || process.env });
+function gitBuf(repo, args, env, input) {
+  const r = spawnSync('git', ['-C', repo, ...args], { maxBuffer: 64 * 1024 * 1024, env: env || process.env, input });
   return { ok: r.status === 0, stdout: r.stdout || Buffer.alloc(0), stderr: (r.stderr || '').toString() };
 }
 function blobAt(repo, commit, file) {
@@ -880,8 +880,10 @@ function reviewFiles(ctx, stage, entries, steps, stageVerdicts, manifest) {
       reviewer = wrapped ? FALLBACK_REVIEWER : 'codex';
       const body = wrapped ? raw.reply : raw;
       if (e.step === 'security') {
-        const findings = Array.isArray(body.findings) ? body.findings : body.blocking;
-        need(Array.isArray(findings), 'E_REVIEW', `${label}: the security file has no findings`);
+        // Every list the file carries counts: codex security.json uses findings, the fallback reply blocking.
+        const lists = [body.findings, body.blocking].filter(Array.isArray);
+        need(lists.length > 0, 'E_REVIEW', `${label}: the security file has no findings`);
+        const findings = lists.flat();
         verdict = findings.some(x => isObj(x) && ['critical', 'high'].includes(x.severity)) ? 'FAIL' : 'PASS';
       } else {
         const reqs = body.requirements;
@@ -1128,7 +1130,7 @@ function completionV2(args) {
     try {
       const env = { ...process.env, GIT_INDEX_FILE: index };
       need(gitBuf(repo, ['read-tree', sha], env).ok, 'E_NEGATIVE_CONTROL', `${label}: cannot read the reviewed tree`);
-      const applies = gitBuf(repo, ['apply', '--cached', '--check', patch.path], env);
+      const applies = gitBuf(repo, ['apply', '--cached', '--check'], env, patch.data); // the hashed bytes, on stdin
       need(applies.ok, 'E_NEGATIVE_CONTROL', `${label}: the patch does not apply to the reviewed SHA: ${applies.stderr.trim()}`);
     } finally { fs.rmSync(index, { force: true }); }
     const owned = manifest.components.filter(cmp => acc.component_ids.includes(cmp.id)).flatMap(cmp => cmp.owned_paths);
