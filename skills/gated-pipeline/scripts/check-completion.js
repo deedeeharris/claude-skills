@@ -369,7 +369,8 @@ function check(args) {
 //
 // Inputs written by the v2 stages (the shapes this file certifies; build.js/verify.js write them):
 //   approvals-<n>.json  { run_dir, start_head, previous_design: { commit, repo_path } | null, source_request_path,
-//                         source_request_sha256, records: [ { gate: prd|spec, round, rev, rev_dir, verdict, reviewer,
+//                         source_request_sha256, source_request_mode: text|ref, source_request_ref: <label> | null,
+//                         records: [ { gate: prd|spec, round, rev, rev_dir, verdict, reviewer,
 //                         review_dir, result_path + result_sha256 | inputs_path + fallback_review_path + fallback_review_sha256,
 //                         source_sha256, prd_projection_sha256, spec_view_sha256, manifest_sha256,
 //                         source_request_sha256, schema_version, compiler_version } ] }; n records in file n, each
@@ -483,7 +484,9 @@ const lib = () => ({ ...require('./compile-feature.js'), ...require('./validate-
 // ---- approvals (design section 5) --------------------------------------------------------------------------------
 const RECORD_KEYS = ['gate', 'round', 'rev', 'rev_dir', 'verdict', 'reviewer', 'review_dir', 'source_sha256', 'prd_projection_sha256',
   'spec_view_sha256', 'manifest_sha256', 'source_request_sha256', 'schema_version', 'compiler_version'];
-const LEDGER_KEYS = ['run_dir', 'start_head', 'previous_design', 'source_request_path', 'source_request_sha256', 'records'];
+const LEDGER_KEYS = ['run_dir', 'start_head', 'previous_design', 'source_request_path', 'source_request_sha256', 'source_request_mode', 'source_request_ref', 'records'];
+const LEDGER_HEADER = LEDGER_KEYS.filter(k => k !== 'records');
+const SOURCE_REF = /^[A-Za-z0-9._\/:+@# -]+$/;
 function gateInputs(gate, revDir, requestPath) {
   const out = path.join(revDir, 'out');
   return gate === 'prd'
@@ -518,10 +521,15 @@ function checkApprovals(ctx, { approvalsPath, approvalsSha, F, repoPath: knownRe
     typeof ledger.previous_design.repo_path === 'string'), 'E_APPROVALS', 'previous_design must be null or { commit, repo_path }');
   need(!fs.existsSync(path.join(runDir, `approvals-${n + 1}.json`)), 'E_APPROVALS', `approvals-${n + 1}.json exists beside the named ledger: a later review is not in it`);
   need(Array.isArray(ledger.records) && ledger.records.length === n, 'E_APPROVALS', `approvals-${n}.json must hold exactly ${n} records`);
-  const header = JSON.stringify(LEDGER_KEYS.slice(0, 5).map(k => ledger[k]));
+  // The design run's request mode is recorded, never inferred from a revision: R03 (form = mode) and R04 (no verbatim
+  // request in a ref-mode file) hold for every revision and F.
+  need(['text', 'ref'].includes(ledger.source_request_mode), 'E_APPROVALS', 'the ledger source_request_mode must be text or ref');
+  need(ledger.source_request_mode === 'text' ? ledger.source_request_ref === null : typeof ledger.source_request_ref === 'string' && SOURCE_REF.test(ledger.source_request_ref),
+    'E_APPROVALS', 'the ledger source_request_ref must be null in text mode and a label of [A-Za-z0-9._/:+@# -] in ref mode');
+  const header = JSON.stringify(LEDGER_HEADER.map(k => ledger[k]));
   for (let i = 1; i < n; i++) {
     const earlier = jsonV2(ctx, path.join(runDir, `approvals-${i}.json`), `approvals-${i}.json`).value;
-    need(keysExactly(earlier, LEDGER_KEYS) && JSON.stringify(LEDGER_KEYS.slice(0, 5).map(k => earlier[k])) === header &&
+    need(keysExactly(earlier, LEDGER_KEYS) && JSON.stringify(LEDGER_HEADER.map(k => earlier[k])) === header &&
       isDeepStrictEqual(JSON.parse(JSON.stringify(earlier.records)), JSON.parse(JSON.stringify(ledger.records.slice(0, i)))), 'E_APPROVALS', `approvals-${i}.json is not the first ${i} records of approvals-${n}.json`);
   }
   const requestPath = path.join(runDir, 'source-request.txt');
@@ -622,9 +630,10 @@ function checkApprovals(ctx, { approvalsPath, approvalsSha, F, repoPath: knownRe
     prev = shaped.value;
   }
   for (const rev of chain) {
-    const mode = isObj(rev.value.source_request) && Object.hasOwn(rev.value.source_request, 'text') ? 'text' : 'ref';
+    const mode = ledger.source_request_mode;
     const v = L.validateFeature({ bytes: rev.bytes, repoPath, validateSchema: S.feature, request: { requestBytes: request.data, requestText, mode }, previous: prev });
     need(v.valid, 'E_APPROVALS', `rev-${rev.k} fails the --source-request/--previous rules: ${v.errors.map(e => e.code + ' ' + (e.rule || '') + ' ' + e.path).join('; ')}`);
+    need(mode === 'text' || rev.value.source_request.ref === ledger.source_request_ref, 'E_APPROVALS', `rev-${rev.k}: source_request.ref is not the ledger's source_request_ref`);
     prev = rev.value;
   }
   // Freeze rule on F.

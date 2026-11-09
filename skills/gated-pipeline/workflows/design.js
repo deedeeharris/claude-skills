@@ -382,7 +382,9 @@ async function designV2() {
   const records = []
   let approvals = null
   const echo = () => records.map(r => ({ gate: r.gate, round: r.round, rev: r.rev, verdict: r.verdict }))
-  const header = () => ({ run_dir: RUN, start_head: startHead, previous_design: PD, source_request_path: REQ, source_request_sha256: reqSha })
+  // The request mode is part of the ledger, so --mode approvals applies R03/R04 with it rather than inferring it.
+  const header = () => ({ run_dir: RUN, start_head: startHead, previous_design: PD, source_request_path: REQ, source_request_sha256: reqSha,
+    source_request_mode: MODE, source_request_ref: MODE === 'ref' ? REF : null })
   const FB_HASH = 'GP_FALLBACK_REVIEW_SHA256'
   // gp-exec freeze block: blob save, compile into frozen/, --mode design; on exit 0 it removes the lock.
   function freezeBody(commit, recover, revF) {
@@ -473,7 +475,7 @@ async function designV2() {
       : [`B0=$(blob "$SH:${P}") || B0=`]),
     `R0=false; if [ -n "$B0" ]; then mkdir ${q(RUN + '/rev-0')}; git cat-file blob "$B0" > ${q(RUN + '/rev-0/feature.json')}; R0=true; fi`,
     ...(SEED ? [`mkdir -p ${q(REPO + '/' + FD)}`, `cp ${q(SEED)} ${q(FEATURE)}`] : []),
-    `printf '%s\\n' '${JSON.stringify({ start_head: 'GP_START_HEAD', previous_design: PD })}' | sed "s/GP_START_HEAD/$SH/" | ${node('write-json.js', `--out ${q(RUN + '/start-head.json')}`)}`,
+    `printf '%s\\n' '${JSON.stringify({ start_head: 'GP_START_HEAD', previous_design: PD, source_request_mode: MODE, source_request_ref: MODE === 'ref' ? REF : null })}' | sed "s/GP_START_HEAD/$SH/" | ${node('write-json.js', `--out ${q(RUN + '/start-head.json')}`)}`,
     'echo "{\\"start_head\\":\\"$SH\\",\\"rev0\\":$R0}"',
     'trap - EXIT'].join('\n')
   const st = await step('start', 'PRD', startBody)

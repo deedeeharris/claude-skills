@@ -326,14 +326,18 @@ Diagnostics are sorted (path, code, rule) so output is deterministic.
 - Approval ledger: after every review the workflow writes the next immutable file
   `<run_dir>/approvals-<n>.json` (n = 1, 2, ... contiguous; each holds the full record list)
   with `write-json.js`: `{ run_dir, start_head, previous_design, source_request_path,
-  source_request_sha256, records: [ { gate, round, rev, rev_dir, verdict, reviewer,
+  source_request_sha256, source_request_mode, source_request_ref, records: [ { gate, round, rev, rev_dir, verdict, reviewer,
   review_dir, result_path + result_sha256 | inputs_path + fallback_review_path + fallback_review_sha256, source_sha256,
   prd_projection_sha256, spec_view_sha256, manifest_sha256, source_request_sha256,
   schema_version, compiler_version } ] }`. `approvals_path`/`approvals_sha256` name the last
   one. The workflow computes each verdict with the section 9 rule. A codex record's
   `result_sha256` is the hash the relay's cleanup printed with `sha256sum`; the record block
   re-checks it (`sha256sum -c`) before writing, so the codex evidence behind an approval is as
-  immutable as a fallback's.
+  immutable as a fallback's. `source_request_mode` is the run's `text` or `ref` and
+  `source_request_ref` its label (null in text mode); `start-head.json` carries both too.
+  `--mode approvals` validates every revision and F with that recorded mode (R03, R04) and, in
+  ref mode, requires each revision's `source_request.ref` to equal it; nothing infers the mode
+  from the form a revision carries.
 - `check-completion.js --mode approvals --repo <abs> --approvals <file> --source <run_dir>/rev-k/feature.json`
   (read-only, no git; every path absolute and outside `realpath(--repo)`; `--source` must be a
   rev snapshot named by a ledger record) re-derives every record:

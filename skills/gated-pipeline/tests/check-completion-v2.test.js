@@ -242,6 +242,29 @@ test('approvals: a codex record pins its result.json by hash; a replaced result.
   blocked(c.approvals(), 'E_HASH', /result\.json/);
 });
 
+// The ledger records the design run's source_request_mode (and ref), so R03/R04 hold for every revision and F: the
+// form is never inferred from the revision itself.
+test('approvals: a ref-mode (confidential) ledger whose revisions use the text form is exit 1 (R03)', t => {
+  const c = ledger(t, HAPPY, { sourceMode: 'ref', sourceRef: 'TICKET-7' });
+  blocked(c.approvals(), 'E_APPROVALS', /R03/);
+});
+test('approvals: a text-mode ledger whose revisions use the ref form is exit 1 (R03); the same revisions under a ref-mode ledger pass', t => {
+  const toRef = c => f => { f.source_request = { ref: 'TICKET-7', sha256: c.requestSha, summary: 'Make the greeting say hello.' }; return f; };
+  const plan = c => [{ feature: toRef(c), snap: 1, snapOpts: { sourceMode: 'ref' } }, { gate: 'prd', rev: 1 }, { gate: 'spec', rev: 1 }];
+  const text = makeRepo(t);
+  for (const step of plan(text)) { if (step.feature) text.writeFeature(step.feature(clone(text.feature))); if (step.snap) text.snap(step.snap, step.snapOpts); if (step.gate) text.addRecord(text.review(step.gate, step.rev)); }
+  blocked(text.approvals(), 'E_APPROVALS', /R03/);
+  const ref = makeRepo(t, { sourceMode: 'ref', sourceRef: 'TICKET-7' });
+  for (const step of plan(ref)) { if (step.feature) ref.writeFeature(step.feature(clone(ref.feature))); if (step.snap) ref.snap(step.snap, step.snapOpts); if (step.gate) ref.addRecord(ref.review(step.gate, step.rev)); }
+  passed(ref.approvals());
+});
+test('approvals: the ledger source_request_mode and source_request_ref must be a known mode and its label', t => {
+  for (const [mode, ref] of [['other', null], ['text', 'TICKET-7'], ['ref', null], ['ref', "it's"]]) {
+    const c = ledger(t, HAPPY, { sourceMode: mode, sourceRef: ref });
+    blocked(c.approvals(), 'E_APPROVALS', /source_request_mode|source_request_ref/);
+  }
+});
+
 test('approvals: an approvals-<n+1>.json beside the named ledger is exit 1', t => {
   const c = ledger(t, HAPPY);
   const named = c.approvalsPath;

@@ -258,7 +258,7 @@ function redesign(c, { tag, feature, rev0 = null, previousDesign = null }) {
       source_request_sha256: sha256(fs.readFileSync(request)), schema_version: 2, compiler_version: '1.0.0', result_path: path.join(resultDir, 'result.json'),
       result_sha256: sha256(fs.readFileSync(path.join(resultDir, 'result.json'))) });
     ledger = c.writeJson(path.join(runDir, `approvals-${n}.json`), { run_dir: runDir, start_head: startHead, previous_design: previousDesign, source_request_path: request,
-      source_request_sha256: sha256(fs.readFileSync(request)), records });
+      source_request_sha256: sha256(fs.readFileSync(request)), source_request_mode: 'text', source_request_ref: null, records });
   }
   const r = c.sh([
     'set -e',

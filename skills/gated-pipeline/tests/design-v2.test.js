@@ -247,6 +247,8 @@ test(`${MOCKED}: codex happy path: the real runner reviews the rev-1 views with 
   assert.deepEqual(spec.inputs.map(i => [i.role, i.path]), [['files', path.join(rev, 'spec.view.md')], ['files', path.join(rev, 'execution-plan.json')], ['against', path.join(rev, 'prd.view.md')]]);
   for (const i of [...prd.inputs, ...spec.inputs]) assert.equal(i.sha256, sha256(fs.readFileSync(i.path)));
   assert.deepEqual(ledger.records.map(r => r.reviewer), ['codex', 'codex']);
+  assert.equal(ledger.source_request_mode, 'text');
+  assert.equal(ledger.source_request_ref, null);
 });
 
 // ---- prompt text (L2.7) ------------------------------------------------------------------------------------------
@@ -545,6 +547,12 @@ test(`${MOCKED}: ref mode: the committed blob carries only the ref, hash, summar
   const chars = [...requestText];
   for (let i = 0; i + 40 <= chars.length; i++) assert.ok(!blob.includes(chars.slice(i, i + 40).join('')), 'no 40-character substring of the request at ' + i);
   assert.deepEqual(JSON.parse(blob).source_request, feature.source_request);
+  const ledger = c.ledger(result.approvals_path);
+  assert.equal(ledger.source_request_mode, 'ref', 'the ledger records the run\'s request mode for --mode approvals');
+  assert.equal(ledger.source_request_ref, 'TICKET-7');
+  const start = JSON.parse(fs.readFileSync(path.join(c.designRun, 'start-head.json'), 'utf8'));
+  assert.equal(start.source_request_mode, 'ref');
+  assert.equal(start.source_request_ref, 'TICKET-7');
 });
 
 // ---- #37 parity table, rerun against contract-2 design (plan 1a, "after WP4") ------------------------------------

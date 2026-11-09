@@ -131,7 +131,7 @@ function makeRepo(t, opts = {}) {
   // rev-k snapshot of the working file (feature-snapshot.js).
   c.revDir = k => path.join(run, `rev-${k}`);
   c.snapshot = (k, o = {}) => {
-    const args = ['--repo', repo, '--from', c.featureFile, '--repo-path', REPO_PATH, '--rev-dir', c.revDir(k), '--source-request', c.request, '--source-mode', 'text'];
+    const args = ['--repo', repo, '--from', c.featureFile, '--repo-path', REPO_PATH, '--rev-dir', c.revDir(k), '--source-request', c.request, '--source-mode', o.sourceMode || 'text'];
     const prev = o.previous !== undefined ? o.previous : (k > 1 || fs.existsSync(c.revDir(0)) ? path.join(c.revDir(k - 1), 'feature.json') : null);
     if (prev) args.push('--previous', prev);
     const r = c.node('feature-snapshot.js', args);
@@ -186,7 +186,11 @@ function makeRepo(t, opts = {}) {
     assert.equal(r.status, 0, r.stderr);
     return r.json();
   };
-  c.ledgerHeader = () => ({ run_dir: run, start_head: c.startHead, previous_design: c.previous_design, source_request_path: c.request, source_request_sha256: c.requestSha });
+  // The design run's request mode (text unless opts.sourceMode says ref) and, in ref mode, its label.
+  c.sourceMode = opts.sourceMode || 'text';
+  c.sourceRef = opts.sourceRef !== undefined ? opts.sourceRef : null;
+  c.ledgerHeader = () => ({ run_dir: run, start_head: c.startHead, previous_design: c.previous_design, source_request_path: c.request, source_request_sha256: c.requestSha,
+    source_request_mode: c.sourceMode, source_request_ref: c.sourceRef });
   c.addRecord = record => {
     c.records.push(record);
     const file = path.join(run, `approvals-${c.records.length}.json`);
