@@ -1110,14 +1110,19 @@ function completionV2(args) {
     need(Number.isInteger(r.exit_code), 'E_NEGATIVE_CONTROL', `${label}: exit codes must be integers (baseline ${r.baseline_exit_code}, mutated ${r.exit_code})`);
     need(r.exit_code !== 0, 'E_NEGATIVE_CONTROL', `${label}: the mutated proof still passes (weak control)`);
     need(!crashCode(r.exit_code), 'E_NEGATIVE_CONTROL', `${label}: the mutated proof crashed (exit ${r.exit_code}), which proves nothing`);
-    if (ms.setup_command !== null) need(isObj(r.setup) && r.setup.exit_code === 0 && r.setup.timed_out === false, 'E_NEGATIVE_CONTROL', `${label}: setup did not exit 0`);
+    need(typeof r.timeout_s === 'number' && r.timeout_s > 0 && r.timeout_s <= manifest.limits.proof_timeout_s, 'E_NEGATIVE_CONTROL', `${label}: run under a limit above proof_timeout_s`);
+    if (ms.setup_command !== null) {
+      need(isObj(r.setup) && r.setup.exit_code === 0 && r.setup.timed_out === false, 'E_NEGATIVE_CONTROL', `${label}: setup did not exit 0`);
+      const sf = readFooter(r.setup.log_path);
+      framedLog(ctx, r.setup.log_path, r.setup.log_sha256, label + ' setup', { target: r.target + '.setup', command: ms.setup_command, cwd: r.cwd, head: sha }, { exit_code: r.setup.exit_code, signal: sf.signal, elapsed_s: sf.elapsed_s });
+    } else need(r.setup === null, 'E_NEGATIVE_CONTROL', `${label}: a control without setup_command must have setup null`);
     const bf = readFooter(r.baseline_log_path);
     framedLog(ctx, r.baseline_log_path, r.baseline_log_sha256, label + ' baseline', { target: r.target + '.baseline', command: r.command, cwd: r.cwd, head: sha }, { exit_code: r.baseline_exit_code, signal: bf.signal, elapsed_s: bf.elapsed_s });
     framedLog(ctx, r.log_path, r.log_sha256, label, { target: r.target, command: r.command, cwd: r.cwd, head: sha }, r);
     const patch = hashed(ctx, r.mutation_patch_path, r.mutation_patch_sha256, label + ' patch');
     need(patch.data.length > 0, 'E_NEGATIVE_CONTROL', `${label}: the patch is empty`);
     let derivedPaths;
-    try { derivedPaths = require('./run-frozen.js').patchPaths(patch.data); } catch (err) { throw new GateError('E_NEGATIVE_CONTROL', `${label}: ${err.message}`); }
+    try { derivedPaths = require('./run-frozen.js').checkedPatchPaths(repo, patch.path, patch.data); } catch (err) { throw new GateError('E_NEGATIVE_CONTROL', `${label}: ${err.message}`); }
     need(isDeepStrictEqual(derivedPaths, r.mutated_paths), 'E_NEGATIVE_CONTROL', `${label}: recorded mutated_paths ${JSON.stringify(r.mutated_paths)} are not the patch's ${JSON.stringify(derivedPaths)}`);
     const index = path.join(os.tmpdir(), `gp-completion-index-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
     try {

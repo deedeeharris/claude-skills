@@ -26,7 +26,8 @@
 //               set"); a failed setup skips the suite (exit_code null).
 // - negative:<ID> an isolated_mutation acceptance; needs --patch. Derives mutated_paths from the patch's
 //               `diff --git` headers (renames, copies, deletions, mode changes and binary hunks are refused; a new
-//               file only with mode 100644), creates a throwaway worktree of reviewed_sha at <out-dir>/wt, runs
+//               file only with mode 100644; every line must lie in a header's section, its ---/+++ names must be
+//               the header's, and `git apply --numstat` must list exactly those paths), creates a throwaway worktree of reviewed_sha at <out-dir>/wt, runs
 //               setup if set, the unmodified proof (baseline), `git apply --check` + `git apply`, the proof again,
 //               and removes the worktree. Each run is bounded by min(limits.proof_timeout_s, the phase time left).
 //               Phase time starts at the first negative control: <dirname(out-dir)>/phase-start.json is created
@@ -43,8 +44,9 @@
 //   { target, command, cwd, head_before, head_after, status_before, status_after, timeout_s, timeout_min,
 //     budget_min, elapsed_s, exit_code, signal, timed_out, log_path, log_sha256, manifest_sha256,
 //     setup: { exit_code, log_path, log_sha256, timed_out } | null }
-// (negative adds id, baseline_*, mutation_patch_*, mutated_paths, phase_elapsed_s; head/status there are the work
-// checkout's, pinned and unchanged around the whole control). For negative records head/status describe the repo.
+// (negative adds id, baseline_*, mutation_patch_*, mutated_paths, phase_elapsed_s; its cwd is the throwaway worktree,
+// its head/status describe the repo's work checkout, pinned and unchanged around the whole control, and its timeout_s
+// is the limit applied to the mutated run).
 // Prints { record_path, record_sha256, exit_code, timed_out, setup_exit_code }.
 // Exit 0: ran (or linked) and recorded, whatever the command's own exit code (it is in the record); 1: refused,
 // or the checkout moved or got dirty during the run (the record is still written); 2: usage/setup error.
@@ -183,32 +185,106 @@ function readManifest(frozenDir, expected) {
   return { manifest: m, sha: expected };
 }
 
-// mutated paths of a unified git patch; refuses renames, copies, deletions, mode changes and binary hunks.
+// mutated paths of a unified git patch (design 6.4: from its `diff --git` headers). Every line must lie inside a
+// `diff --git` section and its hunks, so git apply cannot touch a path the headers do not name: a non-blank line
+// before the first header, a `---`/`+++` pair whose names differ from the header, text after a hunk's counted
+// lines (a plain `---`/`+++` patch git would also apply) and a malformed hunk are refused. Renames, copies,
+// deletions, mode changes and binary hunks are refused; a new file only with mode 100644.
 function patchPaths(bytes) {
   const text = bytes.toString('utf8');
   if (!text.trim()) throw new Refusal('the mutation patch is empty');
   const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
   const paths = [];
   let current = null;
+  let state = 'preamble'; // preamble | header | hunks | body
+  let isNew = false, hunks = 0, oldLeft = 0, newLeft = 0;
+  const closeSection = () => {
+    if (current === null) return;
+    if (state === 'header' && !(isNew && hunks === 0)) throw new Refusal(`the patch section for ${current} has no ---/+++ hunk`);
+    if (state === 'body' && (oldLeft || newLeft)) throw new Refusal(`a hunk for ${current} ends early`);
+  };
   for (const line of lines) {
+    if (state === 'body' && (oldLeft > 0 || newLeft > 0)) {
+      const c = line[0];
+      if (line === '' || c === ' ') { oldLeft--; newLeft--; } else if (c === '-') oldLeft--; else if (c === '+') newLeft--;
+      else if (c === '\\') continue;
+      else throw new Refusal(`a hunk for ${current} ends early: ${line}`);
+      if (oldLeft < 0 || newLeft < 0) throw new Refusal(`a hunk for ${current} has more lines than its @@ counts`);
+      continue;
+    }
     if (line.startsWith('diff --git ')) {
+      closeSection();
       const m = /^diff --git a\/(\S+) b\/(\S+)$/.exec(line);
       if (!m) throw new Refusal(`unsupported diff header: ${line}`);
       if (m[1] !== m[2]) throw new Refusal(`the patch renames or copies ${m[1]} to ${m[2]}`);
       if (!SAFE_PATH.test(m[1]) || m[1].split('/').some(s => s === '' || s === '.' || s === '..') || m[1].split('/').some(s => s.toLowerCase() === '.git')) throw new Refusal(`unsafe patch path ${m[1]}`);
       current = m[1];
-      if (!paths.includes(current)) paths.push(current);
+      if (paths.includes(current)) throw new Refusal(`the patch has two sections for ${current}`);
+      paths.push(current);
+      state = 'header'; isNew = false; hunks = 0;
       continue;
     }
-    if (current === null) continue;
-    if (/^(rename from|rename to|copy from|copy to|similarity index|dissimilarity index) /.test(line)) throw new Refusal(`the patch renames or copies ${current}`);
-    if (/^deleted file mode /.test(line)) throw new Refusal(`the patch deletes ${current}`);
-    if (/^(old mode|new mode) /.test(line)) throw new Refusal(`the patch changes the mode of ${current}`);
-    if (/^new file mode /.test(line) && line !== 'new file mode 100644') throw new Refusal(`the patch creates ${current} with ${line.slice(14)}`);
-    if (/^GIT binary patch$/.test(line) || /^Binary files .* differ$/.test(line)) throw new Refusal(`the patch has a binary hunk for ${current}`);
-    if (line === '+++ /dev/null') throw new Refusal(`the patch deletes ${current}`);
+    if (state === 'preamble') {
+      if (line.trim() !== '') throw new Refusal(`the patch has text before its first diff --git header: ${line}`);
+      continue;
+    }
+    if (state === 'header') {
+      if (/^(rename from|rename to|copy from|copy to|similarity index|dissimilarity index) /.test(line)) throw new Refusal(`the patch renames or copies ${current}`);
+      if (/^deleted file mode /.test(line)) throw new Refusal(`the patch deletes ${current}`);
+      if (/^(old mode|new mode) /.test(line)) throw new Refusal(`the patch changes the mode of ${current}`);
+      if (/^GIT binary patch$/.test(line) || /^Binary files .* differ$/.test(line)) throw new Refusal(`the patch has a binary hunk for ${current}`);
+      if (/^new file mode /.test(line)) {
+        if (line !== 'new file mode 100644') throw new Refusal(`the patch creates ${current} with ${line.slice(14)}`);
+        isNew = true;
+        continue;
+      }
+      if (/^index [0-9a-f]+\.\.[0-9a-f]+( 100644)?$/.test(line)) continue;
+      if (line.startsWith('--- ')) {
+        if (line !== `--- a/${current}` && !(isNew && line === '--- /dev/null')) throw new Refusal(`the patch's "${line}" does not name ${current} of its diff --git header`);
+        state = 'minus';
+        continue;
+      }
+      throw new Refusal(`unsupported line in the patch header for ${current}: ${line}`);
+    }
+    if (state === 'minus') {
+      if (line === '+++ /dev/null') throw new Refusal(`the patch deletes ${current}`);
+      if (line !== `+++ b/${current}`) throw new Refusal(`the patch's "${line}" does not name ${current} of its diff --git header`);
+      state = 'hunks';
+      continue;
+    }
+    // hunks, or body with its counted lines used up
+    const h = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+    if (h) { oldLeft = h[1] === undefined ? 1 : Number(h[1]); newLeft = h[2] === undefined ? 1 : Number(h[2]); hunks++; state = 'body'; continue; }
+    if (state === 'body' && line.startsWith('\\')) continue;
+    if (state === 'hunks') throw new Refusal(`the patch section for ${current} has no @@ hunk: ${line}`);
+    if (line.trim() === '') continue;
+    throw new Refusal(`the patch has text outside a diff --git section's hunks (git apply would read it as another patch): ${line}`);
   }
   if (!paths.length) throw new Refusal('the mutation patch has no diff --git header');
+  if (state === 'minus' || state === 'hunks') throw new Refusal(`the patch section for ${current} has no @@ hunk`);
+  closeSection();
+  return paths;
+}
+
+// The paths git itself would touch (`git apply --numstat -z`, which applies nothing); they must be exactly the
+// header-derived ones, so a patch construct the parser above misreads is refused rather than trusted.
+function gitPatchPaths(cwd, patchFile, env) {
+  const r = spawnSync('git', ['apply', '--numstat', '-z', patchFile], { cwd, env: env || process.env, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 });
+  if (r.error || r.status !== 0) throw new Refusal(`git apply --numstat cannot read the mutation patch: ${r.error ? r.error.message : r.stderr.toString().trim()}`);
+  const out = [];
+  for (const rec of r.stdout.toString('utf8').split('\0')) {
+    if (!rec) continue;
+    const m = /^(?:\d+|-)\t(?:\d+|-)\t(.+)$/s.exec(rec);
+    if (!m) throw new Refusal(`unexpected git apply --numstat entry: ${JSON.stringify(rec)}`);
+    out.push(m[1]);
+  }
+  return out;
+}
+function checkedPatchPaths(cwd, patchFile, bytes, env) {
+  const paths = patchPaths(bytes);
+  const touched = gitPatchPaths(cwd, patchFile, env);
+  if (JSON.stringify([...touched].sort()) !== JSON.stringify([...paths].sort())) throw new Refusal(`git apply would touch ${JSON.stringify(touched)}, not the patch headers' ${JSON.stringify(paths)}`);
   return paths;
 }
 
@@ -356,7 +432,7 @@ async function main(argv) {
 
 async function negative({ args, target, manifest, manifestSha, sha, realRepo, outDir, patch, ignores, spec, recordPath, write, printed }) {
   const patchBytes = (() => { try { return fs.readFileSync(patch); } catch (e) { throw new Refusal(`--patch ${patch}: ${e.code || e.message}`); } })();
-  const mutatedPaths = patchPaths(patchBytes);
+  const mutatedPaths = checkedPatchPaths(realRepo, patch, patchBytes);
   const spm = SECONDS_PER_MINUTE();
   const totalS = manifest.limits.negative_controls_total_min * spm;
   const phaseFile = path.join(path.dirname(outDir), 'phase-start.json');
@@ -390,11 +466,12 @@ async function negative({ args, target, manifest, manifestSha, sha, realRepo, ou
     const check = git(wt, ['apply', '--check', patch], { allowFail: true });
     if (check.status !== 0) throw new Refusal(`the mutation patch does not apply to ${sha}: ${check.stderr.trim()}`);
     git(wt, ['apply', patch]);
-    const mutated = await runFramed({ command: spec.command, cwd: wt, target: args.target, head: sha, logPath: path.join(outDir, args.target + '.log'), limitS: left() });
+    const mutatedLimitS = left();
+    const mutated = await runFramed({ command: spec.command, cwd: wt, target: args.target, head: sha, logPath: path.join(outDir, args.target + '.log'), limitS: mutatedLimitS });
     git(realRepo, ['worktree', 'remove', '--force', wt]);
     const after = checkoutState(realRepo, ignores);
     const rec = { target: args.target, id: target.id, command: spec.command, cwd: wt, head_before: before.head, head_after: after.head,
-      status_before: before.status, status_after: after.status, timeout_s: spec.limitS, timeout_min: null, budget_min: null,
+      status_before: before.status, status_after: after.status, timeout_s: mutatedLimitS, timeout_min: null, budget_min: null,
       elapsed_s: mutated.elapsed_s, exit_code: mutated.exit_code, signal: mutated.signal, timed_out: mutated.timed_out,
       log_path: mutated.log_path, log_sha256: mutated.log_sha256, manifest_sha256: manifestSha, setup,
       baseline_exit_code: baseline.exit_code, baseline_log_path: baseline.log_path, baseline_log_sha256: baseline.log_sha256,
@@ -412,4 +489,4 @@ async function negative({ args, target, manifest, manifestSha, sha, realRepo, ou
 
 if (require.main === module) main(process.argv.slice(2)).then(code => { process.exitCode = code; });
 
-module.exports = { patchPaths, CHECK_ID, ACC_ID };
+module.exports = { patchPaths, gitPatchPaths, checkedPatchPaths, CHECK_ID, ACC_ID };
