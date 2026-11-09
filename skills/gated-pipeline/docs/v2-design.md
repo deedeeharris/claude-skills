@@ -128,8 +128,9 @@ repo owner's list in `.claude/pipeline.yaml` (`state.paths`, `tests.clean_ignore
 design commit touches only the canonical file, so this is the pre-design config). Under
 `contract: 2` each of the three keys is written as a one-line JSON array
 (`clean_ignore: ["tmp/"]`); `--mode design` extracts it with a fixed line rule (the key line
-inside its parent block, strict-json on the value). An absent file or key is the empty list;
-any other form is a setup error (exit 2); an entry outside the bound is `E_CONFIG_BOUND`. The
+at the indent of the first key of its one parent block, strict-json on the value). An absent
+file or key is the empty list; any other form is a setup error (exit 2), including the key at
+any other indent in that block (a nested key, text in a block scalar) and a second parent block; an entry outside the bound is `E_CONFIG_BOUND`. The
 bound and the config blob's sha256 are part of the `--mode design` output.
 
 Repo-level, non-certifying configuration stays in `.claude/pipeline.yaml` and stage args:

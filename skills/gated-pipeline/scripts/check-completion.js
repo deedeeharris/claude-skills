@@ -652,14 +652,21 @@ function modeApprovals(args) {
 function boundList(text, parent, key) {
   if (text === null) return [];
   const lines = text.split('\n').map(l => l.replace(/\r$/, ''));
-  const start = lines.findIndex(l => new RegExp(`^${parent}:\\s*(#.*)?$`).test(l));
-  if (start < 0) return [];
+  const parentRe = new RegExp(`^${parent}:\\s*(#.*)?$`);
+  const starts = lines.flatMap((l, i) => (parentRe.test(l) ? [i] : []));
+  if (!starts.length) return [];
+  if (starts.length > 1) throw new UsageError('E_CONFIG_FORM', `.claude/pipeline.yaml has more than one ${parent}: block`);
   const block = [];
-  for (const l of lines.slice(start + 1)) { if (/^\S/.test(l) && !/^#/.test(l)) break; block.push(l); }
+  for (const l of lines.slice(starts[0] + 1)) { if (/^\S/.test(l) && !/^#/.test(l)) break; block.push(l); }
+  // The direct children sit at the indent of the block's first key line; only a match at exactly that indent is the
+  // owner's key. A match at any other indent (a nested key, text inside a block scalar) is refused, never read.
+  const first = block.find(l => l.trim() !== '' && !/^\s*#/.test(l));
+  if (first === undefined) return [];
+  const indent = first.length - first.trimStart().length;
   const hits = block.map(l => new RegExp(`^(\\s+)${key}:(.*)$`).exec(l)).filter(Boolean);
+  if (hits.some(h => h[1].length !== indent)) throw new UsageError('E_CONFIG_FORM', `.claude/pipeline.yaml ${parent}.${key} appears at a nested level or inside a block scalar; under contract 2 it must be a direct child of ${parent}:`);
   if (!hits.length) return [];
-  const indent = Math.min(...hits.map(h => h[1].length));
-  const direct = hits.filter(h => h[1].length === indent);
+  const direct = hits;
   if (direct.length !== 1) throw new UsageError('E_CONFIG_FORM', `.claude/pipeline.yaml ${parent}.${key} appears more than once`);
   const m = /^\s*(\[.*\])\s*(#.*)?$/.exec(direct[0][2]);
   let value;

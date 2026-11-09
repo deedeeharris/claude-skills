@@ -567,6 +567,20 @@ for (const yaml of ['state:\n  paths: state/\n', 'state:\n  paths:\n    - state/
   });
 }
 
+// boundList reads only the direct child key of the parent block: a nested key or text inside a block scalar is never
+// the owner's bound, and a match at any other indent is refused (E_CONFIG_FORM) rather than guessed.
+test('config bound: only the direct child key is the bound; nested or block-scalar matches are E_CONFIG_FORM', () => {
+  const { boundList } = require('../scripts/check-completion.js');
+  const code = fn => { try { fn(); return null; } catch (e) { return e.code; } };
+  assert.deepEqual(boundList('tests:\n  known_failures: []\n  clean_ignore: ["tmp/"]  # owner\n', 'tests', 'clean_ignore'), ['tmp/']);
+  assert.deepEqual(boundList('tests:\n  # clean_ignore: ["src/"]\n  known_failures: []\n', 'tests', 'clean_ignore'), [], 'a comment is not a key');
+  assert.deepEqual(boundList('tests:\n  known_failures: []\nother:\n  clean_ignore: ["src/"]\n', 'tests', 'clean_ignore'), [], 'another block is not this one');
+  assert.equal(code(() => boundList('tests:\n  matrix:\n    clean_ignore: ["dist/"]\n  known_failures: []\n', 'tests', 'clean_ignore')), 'E_CONFIG_FORM', 'a nested key is never the direct one');
+  assert.equal(code(() => boundList('tests:\n  note: |\n    clean_ignore: ["src/"]\n', 'tests', 'clean_ignore')), 'E_CONFIG_FORM', 'text in a block scalar is never the key');
+  assert.equal(code(() => boundList('tests:\n  matrix:\n    clean_ignore: ["dist/"]\n  clean_ignore: []\n', 'tests', 'clean_ignore')), 'E_CONFIG_FORM');
+  assert.equal(code(() => boundList('tests:\n  clean_ignore: []\ntests:\n  clean_ignore: ["src/"]\n', 'tests', 'clean_ignore')), 'E_CONFIG_FORM', 'the parent block appears once');
+});
+
 test('design: --spec must be the canonical file in the repo, not a copy outside it', t => {
   const c = makeRepo(t).freeze();
   const copy = path.join(c.run, 'copy.feature.json');
