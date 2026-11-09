@@ -35,6 +35,11 @@ below, which is the one rule for them and always maps to `incomplete`.
   it. A premise that is impossible or self-contradictory on its own is `infeasible`. A
   premise that contradicts a specific statement elsewhere in the document is
   `inconsistent` — cite both locations as evidence.
+- **Exemptions and known failures are judged, never taken on trust.** Every
+  negative-control exemption (an acceptance whose negative control is `exempt`, with its
+  exemption reason and any alternate evidence) and every known suite failure (with its
+  reason) is judged on its own. An unjustified one is a MAJOR with `iso_property`
+  `unverifiable`: it lets a proof certify without showing that it can fail.
 - **A ranked cut list.** Its absence is a MINOR finding, not a blocking one.
 
 `location.section` is the work item id or heading. `evidence` is the exact quoted

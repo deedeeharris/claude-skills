@@ -17,6 +17,8 @@
 // relays' raw `codex exec`) writes a PASS document of that shape (FAKE_CODEX_RAW: JSON to
 // write instead) and is counted apart from review/validate. Every exec call writes its
 // pid to FAKE_CODEX_STATE/<call>-<index>.pid.
+// - FAKE_CODEX_TOUCH: a file the review call appends one line to before answering (a review
+//   input that changes while the run is in flight).
 
 const fs = require('fs');
 const path = require('path');
@@ -94,6 +96,7 @@ function main() {
     fs.writeFileSync(callCountFile, String(callIndex), 'utf8');
   }
   appendState(state, { argv, stdin, call, callIndex, pid: process.pid });
+  if (process.env.FAKE_CODEX_TOUCH && call === 'review') fs.appendFileSync(process.env.FAKE_CODEX_TOUCH, 'changed during the review\n', 'utf8');
   if (state) fs.writeFileSync(path.join(state, `${call}-${callIndex}.pid`), String(process.pid), 'utf8');
 
   let plan = {};

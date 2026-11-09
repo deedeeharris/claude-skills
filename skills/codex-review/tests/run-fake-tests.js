@@ -732,6 +732,56 @@ function main() {
     check('no temporary result file left', log && !fs.readdirSync(log.run_dir).some((f) => f.includes('.tmp-')));
   }
 
+  console.log('== case 29: --against is accepted for prd; result.json records the review inputs ==');
+  {
+    const out = nextDir('out');
+    const doc = path.join(workDir, `prd-view-${caseIndex}.md`);
+    const request = path.join(workDir, `request-${caseIndex}.txt`);
+    fs.writeFileSync(doc, '# PRD view\n');
+    fs.writeFileSync(request, 'the original request\n');
+    const r = runRunner(bin, 'pass', nextDir('state'), ['--kind', 'prd', '--files', doc, '--against', request, '--repo', workDir, '--out-dir', out]);
+    check('exit 0', r.status === 0, `exit=${r.status} ${r.stderr}`);
+    const log = readLastLog(out);
+    const result = log && readResult(log.run_dir);
+    const sha = (p) => require('crypto').createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+    check('scope.against is the request', result && result.scope.against === request);
+    check('inputs list the files and the against input with their sha256', result && JSON.stringify(result.inputs) === JSON.stringify([
+      { role: 'files', path: doc, sha256: sha(doc) }, { role: 'against', path: request, sha256: sha(request) }]), result && JSON.stringify(result.inputs));
+    const prompt = log && fs.readFileSync(path.join(log.run_dir, 'review-1.prompt.md'), 'utf8');
+    check('the review prompt names the reference to trace against', prompt && prompt.includes('Reference document to trace against') && prompt.includes(request));
+  }
+
+  console.log('== case 30: --against stays rejected for implementation; --uncommitted records inputs null ==');
+  {
+    const out = nextDir('out');
+    const repo = makeRepo(workDir, `repo-${caseIndex}`);
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hi');
+    const r = runRunner(bin, 'pass', nextDir('state'), ['--kind', 'implementation', '--files', path.join(repo, 'a.txt'), '--against', path.join(repo, 'a.txt'), '--repo', repo, '--out-dir', out]);
+    const log = readLastLog(out);
+    check('exit 2 usage_error', r.status === 2 && log && log.outcome === 'usage_error', `exit=${r.status} outcome=${log && log.outcome}`);
+    const out2 = nextDir('out');
+    const r2 = runRunner(bin, 'pass', nextDir('state'), ['--kind', 'implementation', '--uncommitted', '--repo', repo, '--out-dir', out2]);
+    const result = readResult(readLastLog(out2).run_dir);
+    check('uncommitted: exit 0 and inputs null', r2.status === 0 && result.inputs === null, `exit=${r2.status} inputs=${result && JSON.stringify(result.inputs)}`);
+  }
+
+  console.log('== case 31: a review input that changes during the run is a setup error ==');
+  {
+    const out = nextDir('out');
+    const doc = path.join(workDir, `spec-view-${caseIndex}.md`);
+    const against = path.join(workDir, `prd-view-${caseIndex}.md`);
+    fs.writeFileSync(doc, '# spec view\n');
+    fs.writeFileSync(against, '# prd view\n');
+    const env = Object.assign({}, process.env, { PATH: bin + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'pass', FAKE_CODEX_STATE: nextDir('state'), FAKE_CODEX_TOUCH: against });
+    const r = spawnSync(process.execPath, [RUNNER, '--kind', 'spec', '--files', doc, '--against', against, '--repo', workDir, '--out-dir', out], { encoding: 'utf8', timeout: 20000, env });
+    const log = readLastLog(out);
+    const result = log && readResult(log.run_dir);
+    check('exit 2', r.status === 2, `exit=${r.status}`);
+    check('outcome input_changed, never PASS', result && result.outcome === 'input_changed' && result.verdict !== 'PASS', result && `${result.outcome} ${result.verdict}`);
+    check('the error names the changed input', log && String(log.error).includes(against));
+    check('one log line', fs.readFileSync(path.join(out, 'codex-review-log.jsonl'), 'utf8').trim().split('\n').length === 1);
+  }
+
   console.log(`\n${passCount} passed, ${failCount} failed`);
   process.exitCode = failCount === 0 ? 0 : 1;
 }

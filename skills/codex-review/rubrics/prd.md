@@ -20,6 +20,15 @@ Not singular (a requirement bundling more than one need), not traceable, no
 out-of-scope section, an unnamed dependency. These are real findings; they are just
 outside the six-value ISO mapping above.
 
+## Checks
+
+- **Coverage of the reference request** named by `--against` (the original request the
+  PRD was written from), when one is given: every item of the reference request is
+  covered by a requirement or explicitly excluded with a reason, and every derived
+  requirement's rationale holds. A request item that is neither covered nor excluded
+  with a reason -> `incomplete`. A derived requirement (no request item behind it)
+  whose stated rationale does not hold is not necessary -> `iso_property: null`.
+
 ## Location and evidence
 
 `location.section` is the heading and requirement number the finding belongs to.

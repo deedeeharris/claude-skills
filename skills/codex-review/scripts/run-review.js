@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
 const SKILL_DIR = path.resolve(__dirname, '..');
@@ -144,7 +145,7 @@ function printHelp() {
   console.log([
     'node run-review.js --kind <implementation|prd|spec> --out-dir <dir>',
     '       ( --uncommitted | --files <path...> )',
-    '       [--repo <dir>] [--against <prd-path>] [--model <slug>] [--effort <level>]',
+    '       [--repo <dir>] [--against <reference-path>] [--model <slug>] [--effort <level>]',
     '       [--timeout-seconds <n, default 300>] [--help]',
     '',
     'Exit codes: 0 PASS, 1 FAIL, 3 NEEDS_HUMAN, 2 usage/setup/scope error.',
@@ -162,7 +163,7 @@ function validateArgsShape(args) {
     if (!args.filesMode) throw new SetupError('usage_error', `${args.kind} requires --files`);
     if (args.uncommitted) throw new SetupError('usage_error', `${args.kind} only supports --files`);
   }
-  if (args.against && args.kind !== 'spec') throw new SetupError('usage_error', '--against is only allowed for spec');
+  if (args.against && args.kind !== 'spec' && args.kind !== 'prd') throw new SetupError('usage_error', '--against is only allowed for prd and spec');
 }
 
 function resolvePathOrThrow(p) {
@@ -274,7 +275,9 @@ async function buildScope(args) {
     const against = args.against ? resolvePathOrThrow(args.against) : null;
     const lines = [`Review kind: ${args.kind}`, 'Scope: explicit file list', '', 'Files (read each from disk):', ...files];
     if (against) lines.push('', 'Reference document to trace against (read from disk):', against);
-    return { mode: 'files', repo, files, against, scopeText: lines.join('\n') };
+    const inputs = [...files.map((p) => ({ role: 'files', path: p })), ...(against ? [{ role: 'against', path: against }] : [])]
+      .map((i) => ({ ...i, sha256: hashFile(i.path) }));
+    return { mode: 'files', repo, files, against, inputs, scopeText: lines.join('\n') };
   }
   const staged = await runGit(repo, ['diff', '--staged']);
   if (staged.code !== 0) throw new SetupError('scope_error', staged.stderr);
@@ -294,7 +297,19 @@ async function buildScope(args) {
     'Unstaged diff:', unstaged.stdout.trim() || '(none)', '',
     'New files (read from disk):', untracked.length ? untracked.join('\n') : '(none)',
   ];
-  return { mode: 'uncommitted', repo, files: untracked, against: null, scopeText: lines.join('\n') };
+  return { mode: 'uncommitted', repo, files: untracked, against: null, inputs: null, scopeText: lines.join('\n') };
+}
+
+// Review inputs (files mode): the sha256 of every --files/--against file, taken when the scope is built and
+// rechecked when the run ends, so result.json names the exact bytes codex was pointed at. A change in between
+// is a setup error (outcome input_changed, exit 2). The --uncommitted scope records inputs: null.
+const hashFile = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+function recheckInputs(inputs) {
+  for (const i of inputs || []) {
+    let now = null;
+    try { now = hashFile(i.path); } catch { /* unreadable counts as changed */ }
+    if (now !== i.sha256) throw new SetupError('input_changed', `review input changed during the run: ${i.path}`);
+  }
 }
 
 // Shared by both shapes: every item needs a unique, non-empty string id, plus checkItem.
@@ -377,7 +392,7 @@ function writeResultIfPossible(state) {
   try {
     const result = {
       run_id: state.run_id, kind: state.kind, model: state.model, effort: state.effort, catalog_status: state.catalog_status,
-      scope: state.scope, outcome: state.outcome, verdict: state.verdict, verdict_reasons: state.verdict_reasons,
+      scope: state.scope, inputs: state.inputs, outcome: state.outcome, verdict: state.verdict, verdict_reasons: state.verdict_reasons,
       model_verdict: state.model_verdict, summary: state.summary, unable_to_review: state.unable_to_review,
       review: state.review, validation: state.validation, findings: state.findings, counts: state.counts,
     };
@@ -439,7 +454,7 @@ function appendLog(outDir, state, exitCode) {
 async function main() {
   const state = {
     run_id: null, run_dir: null, kind: null, model: null, effort: null, catalog_status: null, scope: null,
-    outcome: null, verdict: null, verdict_reasons: [], model_verdict: null, summary: null, unable_to_review: null,
+    inputs: null, outcome: null, verdict: null, verdict_reasons: [], model_verdict: null, summary: null, unable_to_review: null,
     review: null, validation: null, findings: [], counts: null, error: null,
   };
   const startedAt = Date.now();
@@ -474,6 +489,7 @@ async function main() {
 
     const scope = await buildScope(args);
     state.scope = { mode: scope.mode, repo: scope.repo, files: scope.files, against: scope.against };
+    state.inputs = scope.inputs;
 
     const reviewPrompt = render(REVIEW_TEMPLATE, { kind: args.kind, rubric: loadRubric(args.kind), scope: scope.scopeText });
     const reviewResult = await callCodexWithRetry({
@@ -527,7 +543,12 @@ async function main() {
         code = verdictResult.verdict === 'PASS' ? 0 : verdictResult.verdict === 'FAIL' ? 1 : 3;
       }
     }
+    recheckInputs(state.inputs);
   } catch (e) {
+    if (e instanceof SetupError && e.outcome === 'input_changed') {
+      state.verdict = 'NEEDS_HUMAN'; state.verdict_reasons = [`review outcome: input_changed (${e.message})`];
+      state.findings = []; state.counts = null;
+    }
     if (e instanceof SetupError) { state.outcome = e.outcome; state.error = e.message; } else { state.outcome = state.outcome || 'runner_error'; state.error = e.message; }
     console.error(state.error);
     code = 2;
