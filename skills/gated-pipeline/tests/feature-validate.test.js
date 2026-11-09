@@ -265,3 +265,81 @@ test('strict-json rejections carry code, path and offset', () => {
   const deep = parseError(Buffer.from('['.repeat(10000) + ']'.repeat(10000)));
   assert.equal(deep.code, 'E_PARSE', 'nesting depth is bounded');
 });
+
+// Rule branches beyond the fixture matrix, through the library entry point (same code path as the CLI).
+const { validateFeature, loadSchema } = require('../scripts/validate-feature.js');
+const validateSchema = loadSchema(SCHEMA);
+const BASES = {
+  s01: JSON.parse(fs.readFileSync(path.join(FIXTURES, 'valid/S01-minimal.feature.json'), 'utf8')),
+  medium: JSON.parse(fs.readFileSync(path.join(FIXTURES, 'valid/medium.feature.json'), 'utf8')),
+};
+function check(base, edit, opts = {}) {
+  const f = JSON.parse(JSON.stringify(BASES[base]));
+  edit(f);
+  const bytes = Buffer.from(JSON.stringify(f, null, 2) + '\n');
+  return validateFeature({ bytes, repoPath: opts.repoPath || repoPathFor(f.feature_id), validateSchema, request: opts.request || null, previous: opts.previous || null })
+    .errors.map(e => `${e.rule || '-'} ${e.code} ${e.path}`);
+}
+const AC = f => f.requirements[0].acceptance[0];
+const LIVE = f => f.requirements[1].acceptance[0];
+
+test('rule branches: proofs, checks and live acceptances', () => {
+  assert.deepEqual(check('s01', f => { delete AC(f).verification.live; }), ['G18 E_PROOF /requirements/0/acceptance/0/verification/live']);
+  assert.deepEqual(check('medium', f => { f.requirements[2].acceptance[0].verification.live = false; }), ['G19 E_PROOF /requirements/2/acceptance/0/verification/live']);
+  assert.deepEqual(check('medium', f => { delete f.requirements[2].acceptance[0].verification.evidence; }), ['G19 E_PROOF /requirements/2/acceptance/0/verification/evidence']);
+  assert.deepEqual(check('medium', f => { f.checks[1].budget_min = 0; }), ['G21 E_PROOF /requirements/1/acceptance/0/verification/check_id']);
+  assert.deepEqual(check('medium', f => { f.checks[1].applicable = false; }), ['G21 E_PROOF /requirements/1/acceptance/0/verification/check_id']);
+  assert.deepEqual(check('s01', f => { delete f.checks[0].expected; delete f.checks[0].timeout_min; }), ['G28 E_REASON_MISSING /checks/0/expected', 'G28 E_REASON_MISSING /checks/0/timeout_min']);
+  assert.deepEqual(check('s01', f => { f.checks[0].applicable = false; delete f.checks[0].command; delete f.checks[0].expected; delete f.checks[0].timeout_min; }), []);
+  assert.deepEqual(check('s01', f => { f.checks[0].command = 'a\nb'; f.suite.unit_command = 'c\nd'; f.suite.setup_command = 'e\nf'; }),
+    ['G20 E_PROOF /checks/0/command', 'G20 E_PROOF /suite/setup_command', 'G20 E_PROOF /suite/unit_command']);
+  assert.deepEqual(check('s01', f => { f.checks[0].reason = '   '; }), ['G27 E_REASON_MISSING /checks/0/reason']);
+  assert.deepEqual(check('medium', f => { LIVE(f).negative_control = { method: 'exempt', description: 'x', exemption_reason: 'y' }; }), []);
+});
+
+test('rule branches: ids, statements, references and controls', () => {
+  assert.deepEqual(check('s01', f => { f.checks[0].id = 'CHECK-NEWS'; f.title = 'Revision-proof greeting'; }), [], 'segments only match whole words');
+  assert.deepEqual(check('s01', f => { f.checks[0].id = 'CHECK-NEW-API'; }), ['G03 E_SHADOW_ID /checks/0/id']);
+  assert.deepEqual(check('s01', f => { f.feature_id = 'greet-addendum'; }), ['G03 E_SHADOW_ID /feature_id']);
+  assert.deepEqual(check('s01', f => { f.requirements[0].depends_on = ['HELLO-001']; }), ['G07 E_CYCLE /requirements/0/depends_on'], 'a self-dependency is a cycle');
+  assert.deepEqual(check('medium', f => { f.requirements[3].statement = f.requirements[0].statement; }), ['G04 E_DUP_STATEMENT /requirements/3/statement'], 'retired requirements are compared too');
+  assert.deepEqual(check('medium', f => { f.requirements[2].priority = 'P1'; delete f.requirements[2].acceptance[0].negative_control.alternate_evidence; }), [], 'G25 binds P0 only');
+  assert.deepEqual(check('s01', f => { f.requirements[0].status = 'retired'; f.requirements[0].retired_rationale = 'x'; f.requirements.push(Object.assign(JSON.parse(JSON.stringify(f.requirements[0])), { id: 'HELLO-002', status: 'active', statement: 'Other.', acceptance: [Object.assign(JSON.parse(JSON.stringify(f.requirements[0].acceptance[0])), { id: 'HELLO-002-AC1' })] })); f.coverage[0].requirement_ids.push('HELLO-002'); }), []);
+  assert.deepEqual(check('s01', f => { f.title = 'a\u0085b'; f.test_plan = 'x y'; }), ['G31 E_CONTROL_CHAR /test_plan', 'G31 E_CONTROL_CHAR /title']);
+  assert.deepEqual(check('s01', f => { f.title = 'tab\tand\nnewline'; }), [], 'TAB and LF are allowed');
+});
+
+test('rule branches: paths and --repo-path', () => {
+  assert.deepEqual(check('s01', () => {}, { repoPath: 'greet.feature.json' }), ['G38 E_SCOPE '], 'features_dir must be a directory');
+  assert.deepEqual(check('s01', () => {}, { repoPath: '/abs/greet.feature.json' }), ['G38 E_SCOPE ']);
+  assert.deepEqual(check('s01', () => {}, { repoPath: 'docs/.GIT/greet.feature.json' }), ['G38 E_SCOPE ']);
+  assert.deepEqual(check('s01', f => { f.scope.allowed_paths.push('specs/'); }, { repoPath: 'specs/features/greet.feature.json' }), ['G33 E_PROTECTED_OVERLAP /scope/allowed_paths/2'], 'the features_dir is protected');
+  assert.deepEqual(check('s01', f => { f.scope.allowed_paths = ['./src', 'test']; f.architecture.components[0].owned_paths = ['src//']; }), [], 'paths compare by segments');
+  assert.deepEqual(check('medium', f => { f.architecture.components[2].status = 'active'; f.architecture.components[2].exclusive = true; f.architecture.components[2].owned_paths = ['src/auth/legacy/']; }),
+    ['G35 E_OWNERSHIP /architecture/components/2/owned_paths/0'], 'exclusive overlap among active components');
+  assert.deepEqual(check('medium', f => { f.architecture.components[2].exclusive = true; f.architecture.components[2].owned_paths = ['src/auth/legacy/']; }), [], 'retired components own nothing');
+  assert.deepEqual(check('medium', f => { f.scope.state_paths = ['docs/']; }), ['G34 E_STATE_OVERLAP /scope/state_paths/0'], 'state paths may not hide alternate evidence');
+});
+
+test('rule branches: source request and previous revision', () => {
+  const text = fs.readFileSync(path.join(FIXTURES, 'valid/S01-minimal.request.txt'));
+  const req = mode => ({ requestBytes: text, requestText: text.toString('utf8'), mode });
+  assert.deepEqual(check('s01', () => {}, { request: req('text') }), []);
+  assert.deepEqual(check('s01', f => { f.source_request.text += '\n'; }, { request: req('text') }), [], 'one trailing newline is normalized');
+  assert.deepEqual(check('s01', f => { f.source_request.text += '\n\n'; }, { request: req('text') }), ['R01 E_SOURCE_MISMATCH /source_request/text']);
+  const sha = crypto.createHash('sha256').update(text).digest('hex');
+  assert.deepEqual(check('s01', f => { f.source_request = { ref: 'r', sha256: sha, summary: 's' }; }, { request: req('text') }), ['R03 E_SOURCE_FORM /source_request'], 'text mode needs the text form');
+  assert.deepEqual(check('s01', f => { f.source_request = { ref: 'r', sha256: sha, summary: 's' }; }, { request: req('ref') }), []);
+  const prev = JSON.parse(JSON.stringify(BASES.medium));
+  assert.deepEqual(check('medium', f => { f.requirements.splice(0, 1); f.requirements[1].depends_on = []; }, { previous: prev }).filter(e => e.startsWith('P')),
+    ['P01 E_ID_REMOVED /requirements', 'P01 E_ID_REMOVED /requirements', 'P01 E_ID_REMOVED /requirements'], 'a removed requirement takes its acceptances with it');
+  assert.deepEqual(check('medium', f => { f.checks[2].applicable = true; f.checks[2].command = 'true'; f.checks[2].expected = { exit_code: 0 }; f.checks[2].timeout_min = 1; }, { previous: prev }), [], 'a check may become applicable again');
+});
+
+test('schema errors suppress the graph rules; a non-object root is a version error', () => {
+  assert.deepEqual(check('s01', f => { f.title = 7; f.requirements[0].goal_ids = []; }), ['- E_TYPE /title']);
+  const out = validateFeature({ bytes: Buffer.from('[]'), repoPath: repoPathFor('x'), validateSchema });
+  assert.deepEqual(out.errors.map(e => [e.code, e.path]), [['E_SCHEMA_VERSION', '']]);
+  const ids = validateFeature({ bytes: Buffer.from(JSON.stringify(Object.assign({}, BASES.s01, { requirements: [Object.assign({}, BASES.s01.requirements[0], { priority: 'P9' })] }))), repoPath: repoPathFor('greet'), validateSchema });
+  assert.deepEqual(ids.errors.map(e => [e.code, e.path, e.id]), [['E_ENUM', '/requirements/0/priority', 'HELLO-001']], 'schema errors carry the nearest enclosing id');
+});
