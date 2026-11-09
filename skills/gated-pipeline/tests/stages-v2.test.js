@@ -218,6 +218,64 @@ const frozenCommands = c => {
   return [...m.checks.filter(x => x.applicable).map(x => x.command), ...m.requirements.filter(r => r.kind === 'runtime').map(r => r.proof_command), m.suite.command];
 };
 const stderrJson = r => JSON.parse(r.stderr.trim().split('\n').pop());
+// A second design run of the feature (design 6.2/6.7) in its own run_dir, on the branch checked out now: rev-0 (when
+// given), one snapshot rev-1 of `feature`, a PRD and a spec PASS (synthetic codex result.json files, the mocked model
+// steps), its approvals ledger, the commit block of design 6.2 against the current HEAD, and the frozen compile. It
+// updates c's design fields, so buildV2/verifyV2/landV2 and c.design() then use the new design.
+function redesign(c, { tag, feature, rev0 = null, previousDesign = null }) {
+  const runDir = path.join(c.root, `run-${tag}`);
+  fs.mkdirSync(runDir);
+  const request = path.join(runDir, 'source-request.txt');
+  fs.copyFileSync(c.request, request);
+  const pinned = c.node('hash-inputs.js', ['--out', path.join(runDir, 'source-request.inputs.json'), request]);
+  assert.equal(pinned.status, 0, pinned.stderr);
+  const startHead = head(c);
+  if (rev0) { fs.mkdirSync(path.join(runDir, 'rev-0')); fs.writeFileSync(path.join(runDir, 'rev-0', 'feature.json'), rev0); }
+  c.writeFeature(feature);
+  const revDir = path.join(runDir, 'rev-1');
+  const snapArgs = ['--repo', c.repo, '--from', c.featureFile, '--repo-path', c.repoPath, '--rev-dir', revDir, '--source-request', request, '--source-mode', 'text'];
+  if (rev0) snapArgs.push('--previous', path.join(runDir, 'rev-0', 'feature.json'));
+  const snapRun = c.node('feature-snapshot.js', snapArgs);
+  assert.equal(snapRun.status, 0, snapRun.stdout + snapRun.stderr);
+  const snap = snapRun.json();
+  const out = path.join(revDir, 'out');
+  const records = [];
+  let ledger = null;
+  for (const [n, gate] of [[1, 'prd'], [2, 'spec']]) {
+    const inputs = gate === 'prd' ? [{ role: 'files', path: path.join(out, 'prd.view.md') }, { role: 'against', path: request }]
+      : [{ role: 'files', path: path.join(out, 'spec.view.md') }, { role: 'files', path: path.join(out, 'execution-plan.json') }, { role: 'against', path: path.join(out, 'prd.view.md') }];
+    const reviewDir = path.join(runDir, 'reviews', `${gate}-${n}`);
+    const resultDir = path.join(reviewDir, `${gate}-20260101T000000000Z-1`);
+    fs.mkdirSync(resultDir, { recursive: true });
+    const result = { run_id: path.basename(resultDir), kind: gate, model: 'synthetic', effort: 'high', catalog_status: 'ok',
+      scope: { mode: 'files', repo: c.repo, files: inputs.filter(i => i.role === 'files').map(i => i.path), against: inputs.find(i => i.role === 'against').path },
+      outcome: 'ok', verdict: 'PASS', verdict_reasons: [], model_verdict: 'PASS', summary: 'synthetic', unable_to_review: null, review: null, validation: null, findings: [], counts: {},
+      inputs: inputs.map(i => ({ role: i.role, path: i.path, sha256: sha256(fs.readFileSync(i.path)) })) };
+    fs.writeFileSync(path.join(resultDir, 'result.json'), JSON.stringify(result, null, 2));
+    records.push({ gate, round: n, rev: 1, rev_dir: revDir, verdict: 'PASS', reviewer: 'codex', review_dir: reviewDir, source_sha256: snap.source_sha256,
+      prd_projection_sha256: snap.prd_projection_sha256, spec_view_sha256: snap.spec_view_sha256, manifest_sha256: snap.manifest_sha256,
+      source_request_sha256: sha256(fs.readFileSync(request)), schema_version: 2, compiler_version: '1.0.0', result_path: path.join(resultDir, 'result.json') });
+    ledger = c.writeJson(path.join(runDir, `approvals-${n}.json`), { run_dir: runDir, start_head: startHead, previous_design: previousDesign, source_request_path: request,
+      source_request_sha256: sha256(fs.readFileSync(request)), records });
+  }
+  const r = c.sh([
+    'set -e',
+    `test "$(git symbolic-ref -q HEAD)" = refs/heads/${BRANCH}`,
+    `export GIT_INDEX_FILE=${runDir}/design.index; git read-tree ${startHead}`,
+    `B=$(git hash-object -w --no-filters -- ${revDir}/feature.json)`,
+    `git update-index --add --cacheinfo 100644,"$B",${c.repoPath}`,
+    `C=$(git commit-tree "$(git write-tree)" -p ${startHead} -m 'design: greet'); unset GIT_INDEX_FILE`,
+    `git update-ref refs/heads/${BRANCH} "$C" ${startHead}`,
+    `git add -- ${c.repoPath}`,
+    'echo "$C"',
+  ].join('\n'));
+  assert.equal(r.status, 0, r.stderr);
+  c.designCommit = r.stdout.trim();
+  c.approvalsPath = ledger.path;
+  c.approvalsSha = ledger.sha256;
+  c.compileFrozen(c.designCommit, path.join(runDir, 'frozen'));
+  return { runDir, startHead, snap };
+}
 
 // ---- S18 and the stage arg checks (no repo needed: every case BLOCKS before the first agent) -------------------------
 const DUMMY = {
@@ -590,6 +648,13 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(vo.result.stage, 'plan preflight');
       assert.match(vo.result.plan.stdout, /E_DRIFT/);
       assert.deepEqual(labels(vo.calls), ['plan preflight']);
+      assert.equal(vo.result.contract, 2, 'a plan-preflight BLOCKED names its contract');
+      // completion over the same edited frozen dir: exit 1, E_DRIFT
+      const cc = c.node('check-completion.js', ['--repo', c.repo, '--feature-id', 'greet', '--reviewed-sha', b.result.reviewed_sha, '--manifest', args.manifest_path, '--manifest-sha256', c.manifestSha,
+        '--spec', c.featureFile, '--build-result', b.path, '--verify-result', v.result.verify_result_path, '--out', path.join(c.root, 'proof-drift.json'), '--frozen-dir', edited,
+        '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha]);
+      assert.equal(cc.status, 1, cc.stdout);
+      assert.equal(stderrJson(cc).code, 'E_DRIFT');
     });
 
     test('L3.5: a changed manifest hash -> build BLOCKED at preflight before the implementer', async () => {
@@ -597,6 +662,131 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(bo.result.status, 'BLOCKED');
       assert.equal(bo.result.stage, 'preflight');
       assert.deepEqual(labels(bo.calls), ['design preflight']);
+    });
+
+    test('L3.6: a stale manifest at verify -> BLOCKED at plan preflight, nothing executed', async () => {
+      // the frozen dir as it was, with a manifest hash that no longer names it
+      const wrongHash = await verifyV2(c, b, { args: { manifest_sha256: 'f'.repeat(64) } });
+      // a manifest edited after freeze and re-hashed, so its hash and bytes agree with each other but not with the design
+      const stale = path.join(c.root, 'frozen-stale');
+      fs.cpSync(c.frozenDir, stale, { recursive: true });
+      const m = JSON.parse(fs.readFileSync(path.join(stale, 'execution-plan.json'), 'utf8'));
+      m.checks.find(x => x.id === 'CHECK-LINT').command = 'true';
+      fs.writeFileSync(path.join(stale, 'execution-plan.json'), JSON.stringify(m, null, 2) + '\n');
+      const reHashed = await verifyV2(c, b, { args: { frozen_dir: stale, manifest_path: path.join(stale, 'execution-plan.json'), manifest_sha256: sha256(fs.readFileSync(path.join(stale, 'execution-plan.json'))) } });
+      for (const [name, out] of [['wrong hash', wrongHash], ['re-hashed stale manifest', reHashed]]) {
+        assert.equal(out.result.status, 'BLOCKED', name);
+        assert.equal(out.result.stage, 'plan preflight', name);
+        assert.equal(out.result.contract, 2, `${name}: the result names its contract`);
+        assert.deepEqual(labels(out.calls), ['plan preflight'], `${name}: no check, proof or review ran`);
+        assert.ok(!fs.existsSync(path.join(out.runDir, 'frozen-runs')), `${name}: run-frozen wrote nothing`);
+      }
+    });
+
+    test('L3.6: a wrong reviewed_sha at verify -> never PASS: a sha that is not HEAD runs no check; a build result for another sha -> INCOMPLETE at completion', async () => {
+      // a sha that is not the checked-out HEAD: the plan preflight refuses before any frozen command runs
+      const notHead = await verifyV2(c, b, { args: { reviewed_sha: c.designCommit } });
+      assert.equal(notHead.result.status, 'BLOCKED', JSON.stringify(notHead.result).slice(0, 600));
+      assert.equal(notHead.result.stage, 'plan preflight');
+      assert.match(notHead.result.plan.stdout, /HEAD differs from reviewed SHA/);
+      assert.deepEqual(labels(notHead.calls), ['plan preflight']);
+      assert.ok(!fs.existsSync(path.join(notHead.runDir, 'frozen-runs', 'check:CHECK-LINT.record.json')), 'no check record for a commit that is not checked out');
+      // verify runs on HEAD, but the build result it hands to completion reviewed another commit
+      const other = clone(b.result);
+      other.reviewed_sha = c.designCommit;
+      const otherPath = path.join(c.root, 'build-other-sha.json');
+      fs.writeFileSync(otherPath, JSON.stringify(other, null, 2) + '\n');
+      const out = await verifyV2(c, { result: other, path: otherPath });
+      assert.equal(out.result.status, 'INCOMPLETE', JSON.stringify(out.result).slice(0, 2000));
+      assert.equal(out.result.stage, 'completion');
+      assert.equal(out.result.completion.passed, false);
+      assert.equal(out.result.completion.code, 'E_COMPLETION');
+      assert.match(out.result.completion.reason, /build reviewed SHA does not match/);
+    });
+
+    test('L3.6: the acceptance ledger file missing before completion -> INCOMPLETE at completion, land refuses', async () => {
+      const out = await verifyV2(c, b, { table: runDir => ({ 'pinned state': async (prompt, options, calls) => {
+        fs.rmSync(path.join(runDir, 'acceptance-ledger.json'));
+        return stub()(prompt, options, calls);
+      } }) });
+      assert.equal(out.result.status, 'INCOMPLETE', JSON.stringify(out.result).slice(0, 2000));
+      assert.equal(out.result.stage, 'completion');
+      assert.equal(out.result.completion.passed, false);
+      assert.equal(out.result.completion.code, 'E_BLOCKED');
+      assert.match(out.result.completion.reason, /acceptance-ledger\.json|acceptance ledger/);
+      const l = await landV2(c, b, { result: { verify_result_path: out.result.verify_result_path, completion: { proof_path: path.join(out.runDir, 'completion-proof.json') } } });
+      assert.equal(l.result.status, 'BLOCKED');
+      assert.deepEqual(labels(l.calls), ['completion proof']);
+    });
+
+    test('verify: the branch moves before check CHECK-LINT -> HEAD_MOVED (not BLOCKED), so the CI loop reruns build', async () => {
+      const sha = head(c);
+      const moved = await verifyV2(c, b, { table: { 'plan preflight': async (prompt, options, calls) => {
+        const r = await stub()(prompt, options, calls);
+        c.write('src/early.js', "module.exports = 'early';\n");
+        c.git('add', '--', 'src/early.js');
+        c.git('commit', '-qm', 'a commit while verify starts');
+        return r;
+      } } });
+      c.git('reset', '-q', '--hard', sha);
+      assert.equal(moved.result.status, 'HEAD_MOVED', JSON.stringify(moved.result).slice(0, 2000));
+      assert.equal(moved.result.stage, 'check CHECK-LINT');
+      assert.match(moved.result.reason, /re-run build/);
+      assert.equal(moved.result.contract, 2);
+      assert.deepEqual(labels(moved.calls), ['plan preflight', 'check CHECK-LINT']);
+      // the checkout gets dirty between the checks and the proofs -> HEAD_MOVED at acceptance proofs
+      const stray = path.join(c.repo, 'src', 'stray.js');
+      const dirtied = await verifyV2(c, b, { table: { 'check CHECK-LIVE': async (prompt, options, calls) => {
+        const r = await stub()(prompt, options, calls);
+        fs.writeFileSync(stray, 'stray\n');
+        return r;
+      } } });
+      fs.rmSync(stray);
+      assert.equal(dirtied.result.status, 'HEAD_MOVED', JSON.stringify(dirtied.result).slice(0, 2000));
+      assert.equal(dirtied.result.stage, 'acceptance proofs');
+      assert.match(dirtied.result.reason, /dirty: \?\? src\/stray\.js/);
+      // the same during a negative control: run-frozen refuses the dirty work checkout -> HEAD_MOVED at negative controls
+      const negDirty = await verifyV2(c, b, { table: runDir => ({ 'negative control HELLO-001-AC1': async (prompt, options, calls) => {
+        const dir = path.join(runDir, 'negative', 'HELLO-001-AC1');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'mutation.patch'), c.MUTATION);
+        fs.writeFileSync(stray, 'stray\n');
+        return stub()(prompt, options, calls);
+      } }) });
+      fs.rmSync(stray);
+      assert.equal(negDirty.result.status, 'HEAD_MOVED', JSON.stringify(negDirty.result).slice(0, 2000));
+      assert.equal(negDirty.result.stage, 'negative controls');
+      assert.ok(!labels(negDirty.calls).includes('completion proof'));
+    });
+
+    test('L3.13: the negative-control recipe of the prompt (intent-to-add, then git diff) carries a new file into the patch; run-frozen and completion accept it', async () => {
+      const out = await verifyV2(c, b, { table: runDir => ({ 'negative control HELLO-001-AC1': async (prompt, options, calls) => {
+        // the agent follows the prompt's recipe literally: a draft worktree, the edit, then exactly the commands it names
+        const m = /mkdir -p '([^']+)'; (git -C '[^']+' worktree add --detach '([^']+)' [0-9a-f]{40});[\s\S]*?(git -C '[^']+' add -A -N); (git -C '[^']+' diff --no-renames > '[^']+'); (git -C '[^']+' worktree remove --force '[^']+')/.exec(prompt);
+        assert.ok(m, 'the prompt names the recipe: worktree add, add -A -N, diff, worktree remove');
+        fs.mkdirSync(m[1], { recursive: true });
+        assert.equal(bash(m[2]).status, 0);
+        const draft = m[3];
+        fs.writeFileSync(path.join(draft, 'src', 'word.js'), "module.exports = 'goodbye';\n");
+        fs.writeFileSync(path.join(draft, 'src', 'hello.js'), "module.exports = () => require('./word.js');\n");
+        for (const cmd of [m[4], m[5], m[6]]) assert.equal(bash(cmd).status, 0, cmd);
+        assert.match(fs.readFileSync(path.join(runDir, 'negative', 'HELLO-001-AC1', 'mutation.patch'), 'utf8'), /\+\+\+ b\/src\/word\.js/);
+        return stub()(prompt, options, calls);
+      } }) });
+      assert.equal(out.result.status, 'PASS', JSON.stringify(out.result).slice(0, 3000));
+      const rec = JSON.parse(fs.readFileSync(out.result.negative_controls[0].record_path, 'utf8'));
+      assert.deepEqual([...rec.mutated_paths].sort(), ['src/hello.js', 'src/word.js']);
+      assert.notEqual(rec.exit_code, 0);
+    });
+
+    test('build: an implementer that reports blocked -> BLOCKED at implement, stamped contract 2 / build_mode v2', async () => {
+      const bo = await buildV2(c, { implement: () => ({ blocked: true, blocked_reason: 'tok-implement-blocked', summary: 'blocked', files_changed: [], commit: '' }) });
+      assert.equal(bo.result.status, 'BLOCKED');
+      assert.equal(bo.result.stage, 'implement');
+      assert.equal(bo.result.reason, 'tok-implement-blocked');
+      assert.equal(bo.result.contract, 2);
+      assert.equal(bo.result.build_mode, 'v2');
+      assert.equal(bo.result.fallback_used, false);
     });
 
     test('S19b: a dirty, then a committed edit of the canonical file -> build, verify and land each BLOCKED before their first side effect', async () => {
@@ -627,9 +817,17 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
   // ---- the Opus fallback path ---------------------------------------------------------------------------------------------
   test('L3.4 fallback: codex unavailable -> fallback reviews recorded by script (inputs hashed, reply written verbatim), completion derives cross_family false', async (t) => {
     const c = frozenRepo(t);
-    const b = await buildV2(c, { fallback: true, args: { review_fallback: 'opus-high' } });
+    const log = path.join(c.root, 'ci-red.log');
+    fs.writeFileSync(log, 'unit: AssertionError: tok-ci-log\n');
+    const b = await buildV2(c, { fallback: true, args: { review_fallback: 'opus-high', ci_failure_log_path: log } });
     assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
     assert.equal(b.result.fallback_used, true);
+    // the CI failure log is context for the implementer only: neither the codex relays nor the Opus fallback reviewers see it (#37 parity)
+    assert.match(b.calls.find(x => x.options.label === 'implement').prompt, /CI failure log: context only/);
+    for (const label of ['codex review 1', 'opus review 1 (codex unavailable)', 'codex security 1', 'opus security 1 (codex unavailable)']) {
+      const p = b.calls.find(x => x.options.label === label).prompt;
+      assert.ok(!p.includes('CI failure log') && !p.includes(log), `${label} does not carry the CI failure log`);
+    }
     assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'codex review 1', 'opus review 1 (codex unavailable)', 'record opus review 1',
       'codex security 1', 'opus security 1 (codex unavailable)', 'record opus security 1', 'suite 1']);
     const [impl, sec] = b.result.review_files;
@@ -807,6 +1005,227 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     const l = await landV2(c, b, { result: { verify_result_path: replay.result.verify_result_path, completion: { proof_path: path.join(runDir, 'completion-proof.json') } } });
     assert.equal(l.result.status, 'BLOCKED');
     assert.deepEqual(labels(l.calls), ['completion proof']);
+  });
+
+  // ---- L3.5, L3.8: build preflight refusals on a design that is not what was approved --------------------------------------
+  test('L3.5: a design commit that also adds another file -> build BLOCKED at preflight before the implementer', async (t) => {
+    const c = makeRepo(t);
+    c.snap(1);
+    c.addRecord(c.review('prd', 1));
+    c.addRecord(c.review('spec', 1));
+    // the commit block of design 6.2 with one extra path staged into the temp index
+    const r = c.sh([
+      'set -e',
+      `export GIT_INDEX_FILE=${c.run}/design-extra.index; git read-tree ${c.startHead}`,
+      `B=$(git hash-object -w --no-filters -- ${c.revDir(1)}/feature.json)`,
+      `git update-index --add --cacheinfo 100644,"$B",${c.repoPath}`,
+      `X=$(printf 'module.exports = 1;\\n' | git hash-object -w --stdin)`,
+      'git update-index --add --cacheinfo 100644,"$X",src/extra.js',
+      `C=$(git commit-tree "$(git write-tree)" -p ${c.startHead} -m 'design: greet'); unset GIT_INDEX_FILE`,
+      `git update-ref refs/heads/${BRANCH} "$C" ${c.startHead}`,
+      'git reset -q --hard',
+      'echo "$C"',
+    ].join('\n'));
+    assert.equal(r.status, 0, r.stderr);
+    c.designCommit = r.stdout.trim();
+    c.compileFrozen();
+    const bo = await buildV2(c);
+    assert.equal(bo.result.status, 'BLOCKED');
+    assert.equal(bo.result.stage, 'preflight');
+    assert.match(bo.result.preflight.stdout, /E_IDENTITY.*must change exactly \.pipeline\/features\/greet\.feature\.json.*src\/extra\.js/);
+    assert.deepEqual(labels(bo.calls), ['design preflight']);
+  });
+
+  test('L3.8: a state path outside the pipeline.yaml bound -> build BLOCKED at preflight (E_CONFIG_BOUND), before the implementer', async (t) => {
+    const f = baseFeature();
+    f.scope.state_paths = ['state/'];
+    const c = frozenRepo(t, { feature: f, pipelineYaml: '# synthetic pipeline config\nstate:\n  paths: ["other/"]\n' });
+    const bo = await buildV2(c);
+    assert.equal(bo.result.status, 'BLOCKED');
+    assert.equal(bo.result.stage, 'preflight');
+    assert.match(bo.result.preflight.stdout, /E_CONFIG_BOUND/);
+    assert.deepEqual(labels(bo.calls), ['design preflight']);
+  });
+
+  // ---- L3.6: live links and budgets ------------------------------------------------------------------------------------------------
+  test('L3.6: a live acceptance is linked to its check record and never re-executed (the live probe runs once, in its check)', async (t) => {
+    const c = frozenRepo(t);
+    const counter = path.join(c.root, 'live-runs.txt');
+    const files = { ...IMPL_FILES, 'test/live.test.js': `require('fs').appendFileSync(${JSON.stringify(counter)}, 'run\\n');\nconsole.log('live probe ok');\n` };
+    const b = await buildV2(c, { files });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    assert.ok(!fs.existsSync(counter), 'the build suite does not run the live probe');
+    const v = await verifyV2(c, b);
+    assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
+    assert.equal(fs.readFileSync(counter, 'utf8'), 'run\n', 'the live probe ran exactly once: in check CHECK-LIVE');
+    const ledger = JSON.parse(fs.readFileSync(v.result.acceptance_ledger.path, 'utf8'));
+    const link = ledger.entries.find(e => e.id === 'HELLO-001-AC2');
+    const check = v.result.check_records.find(e => e.check_id === 'CHECK-LIVE');
+    assert.deepEqual(link, { id: 'HELLO-001-AC2', live: true, check_id: 'CHECK-LIVE', record_path: check.record_path, record_sha256: check.record_sha256 });
+    assert.ok(!fs.readdirSync(path.join(v.runDir, 'frozen-runs')).some(n => n.startsWith('live:') || n.startsWith('proof:HELLO-001-AC2')), 'no run of its own for the live acceptance');
+  });
+
+  test('L3.6: a check over its budget_min is killed at the budget and rejected at the stage (INCOMPLETE at checks)', async (t) => {
+    const c = frozenRepo(t);
+    const files = { ...IMPL_FILES, 'test/live.test.js': "setTimeout(() => console.log('live probe late'), 60000);\n" };
+    const b = await buildV2(c, { files });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    // GP_RUN_FROZEN_SECONDS_PER_MINUTE=1 (run-frozen's test hook; it can only shorten limits): the 1-minute budget is 1 s.
+    const env = { GP_RUN_FROZEN_SECONDS_PER_MINUTE: '1', GP_RUN_FROZEN_KILL_GRACE_S: '0' };
+    const started = Date.now();
+    const v = await verifyV2(c, b, { table: { 'check CHECK-LIVE': stub(env) } });
+    assert.ok(Date.now() - started < 30000, 'the check was killed, not waited for');
+    assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
+    assert.equal(v.result.stage, 'checks');
+    assert.equal(v.result.contract, 2);
+    assert.match(v.result.reason, /CHECK-LIVE exit .* \(timed out\)/);
+    assert.deepEqual(labels(v.calls), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE']);
+    const rec = JSON.parse(fs.readFileSync(v.result.checks.find(x => x.check_id === 'CHECK-LIVE').record_path, 'utf8'));
+    assert.equal(rec.timed_out, true);
+    assert.equal(rec.budget_min, 1);
+    assert.equal(rec.timeout_s, 1);
+    assert.ok(rec.elapsed_s < 10, `killed at the budget (elapsed ${rec.elapsed_s} s)`);
+  });
+
+  // ---- L3.9: resume is a new call with a fresh run_dir ------------------------------------------------------------------------
+  test('L3.9: after a crashed build and verify, new calls with fresh run_dirs from the persisted design result keep source hash and base; the frozen dir is never recompiled; a partial ledger is never reused', async (t) => {
+    const c = frozenRepo(t);
+    const persisted = { design_commit: c.designCommit, source_sha256: sha256(fs.readFileSync(c.featureFile)), frozen_dir: c.frozenDir, manifest_path: c.manifestPath, manifest_sha256: c.manifestSha,
+      approvals_path: c.approvalsPath, approvals_sha256: c.approvalsSha };
+    const frozenBytes = () => fs.readdirSync(c.frozenDir).sort().map(n => [n, sha256(fs.readFileSync(path.join(c.frozenDir, n)))]);
+    const frozenBefore = frozenBytes();
+    // a build that died before its suite
+    const crashedDir = freshRun(c, 'build');
+    const crashed = await run('build', buildArgs(c, crashedDir), many(responder({ 'design preflight': stub(), implement: implement(c),
+      'codex review 1': codexReview(c, path.join(crashedDir, 'review-1'), 1), 'codex security 1': codexSecurity(path.join(crashedDir, 'security-1')), 'suite 1': STOP })));
+    assert.ok(crashed.result.stopped);
+    // recompiling into the frozen dir is refused, and its bytes stay
+    const recompile = c.node('compile-feature.js', ['--file', path.join(c.run, 'frozen-source-frozen.feature.json'), '--repo', c.repo, '--repo-path', c.repoPath, '--out', c.frozenDir]);
+    assert.notEqual(recompile.status, 0, 'compile-feature.js refuses an existing frozen dir');
+    assert.deepEqual(frozenBytes(), frozenBefore);
+    // the resumed build: a new call, a fresh run_dir, the same frozen args
+    const b = await buildV2(c, { implement: noChange(c) });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    assert.notEqual(b.runDir, crashedDir);
+    assert.equal(b.result.base_commit, persisted.design_commit);
+    assert.equal(b.result.plan_identity.source_sha256, persisted.source_sha256);
+    assert.equal(b.result.plan_identity.manifest_sha256, persisted.manifest_sha256);
+    // a verify that died after its proofs: a partial ledger stays in its run_dir
+    const partialDir = freshRun(c, 'verify');
+    const partial = await run('verify', verifyArgs(c, partialDir, b.path), many(responder({ 'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs': stub(), 'codex final review': STOP })));
+    assert.ok(partial.result.stopped);
+    const partialLedger = path.join(partialDir, 'acceptance-ledger.json');
+    assert.ok(fs.existsSync(partialLedger));
+    // rerun in the same run_dir: run-frozen never overwrites a record, so the stage BLOCKS (not HEAD_MOVED: the checkout is pinned)
+    const reused = await run('verify', verifyArgs(c, partialDir, b.path), many(responder({ 'plan preflight': stub(), 'check CHECK-LINT': stub() })));
+    assert.equal(reused.result.status, 'BLOCKED', JSON.stringify(reused.result).slice(0, 2000));
+    assert.equal(reused.result.stage, 'check CHECK-LINT');
+    // the resumed verify: a fresh run_dir, its own ledger
+    const v = await verifyV2(c, b);
+    assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
+    assert.equal(v.result.acceptance_ledger.path, path.join(v.runDir, 'acceptance-ledger.json'));
+    const ledger = JSON.parse(fs.readFileSync(v.result.acceptance_ledger.path, 'utf8'));
+    assert.ok(ledger.entries.every(e => e.record_path.startsWith(v.runDir + '/')), 'every ledger entry is this run\'s');
+    assert.equal(v.result.completion.passed, true);
+    assert.deepEqual(frozenBytes(), frozenBefore);
+  });
+
+  // ---- L2.5 and L3.11: a change after approval invalidates rev A; a new design (rev B) propagates ----------------------------------
+  test('L2.5 / L3.11: a proof command edited after approval voids rev A; a new design on a fresh branch from the trunk with previous_design binds the old ids and carries rev B hashes through build, verify and land', async (t) => {
+    const fA = baseFeature();
+    fA.architecture.invariants = [{ id: 'INV-001', statement: 'hello() reads no input.', status: 'active' }];
+    const c = frozenRepo(t, { feature: fA });
+    const A = { designCommit: c.designCommit, manifestSha: c.manifestSha, approvalsSha: c.approvalsSha, sourceSha: sha256(fs.readFileSync(c.featureFile)),
+      blob: c.exec('git', ['cat-file', 'blob', `${c.designCommit}:${c.repoPath}`], { encoding: null }).stdout };
+    const bA = await buildV2(c);
+    assert.equal(bA.result.status, 'PASS', JSON.stringify(bA.result).slice(0, 2000));
+    const vA = await verifyV2(c, bA);
+    assert.equal(vA.result.status, 'PASS', JSON.stringify(vA.result).slice(0, 3000));
+    const proofA = vA.result.completion.proof_path;
+    // a proof command edited after approval, committed on the work branch
+    const fB = clone(fA);
+    fB.requirements[0].acceptance[0].verification.command = 'node ./test/hello.test.js';
+    c.writeFeature(fB);
+    c.git('add', '--', c.repoPath);
+    c.git('commit', '-qm', 'edit a proof command after approval');
+    const editedCopy = path.join(c.root, 'edited.feature.json');
+    fs.writeFileSync(editedCopy, fs.readFileSync(c.featureFile));
+    // rev A's approvals and proof certify nothing now: design, plan, approvals and completion modes all exit 1
+    for (const [mode, r] of [['design', c.design()], ['plan', c.plan({ sha: head(c) })], ['approvals', c.approvals({ source: editedCopy })],
+      ['completion', c.node('check-completion.js', ['--repo', c.repo, '--feature-id', 'greet', '--reviewed-sha', bA.result.reviewed_sha, '--manifest', c.manifestPath, '--manifest-sha256', c.manifestSha,
+        '--spec', c.featureFile, '--build-result', bA.path, '--verify-result', vA.result.verify_result_path, '--out', path.join(c.root, 'proof-after-edit.json'), '--frozen-dir', c.frozenDir,
+        '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha])]]) {
+      assert.equal(r.status, 1, `${mode}: ${r.stdout}${r.stderr}`);
+    }
+    // the authorized change is a new design (design 6.7): the earlier design stays unmerged on its own branch; a fresh
+    // work branch from the trunk; previous_design = the earlier design commit, so rev-0 is its blob
+    c.git('branch', '-m', 'feature/greet-a');
+    c.git('checkout', '-q', '-f', '-b', BRANCH, 'main');
+    const pd = { commit: A.designCommit, repo_path: c.repoPath };
+    // a revision that drops the old invariant is bound by --previous to rev-0, the earlier design's blob (E_ID_REMOVED)
+    const rev0 = path.join(c.root, 'rev0-a.feature.json');
+    fs.writeFileSync(rev0, A.blob);
+    const fDrop = clone(fB);
+    fDrop.architecture.invariants = [];
+    c.writeFeature(fDrop);
+    const drop = c.node('feature-snapshot.js', ['--repo', c.repo, '--from', c.featureFile, '--repo-path', c.repoPath, '--rev-dir', path.join(c.root, 'rev-drop'),
+      '--source-request', c.request, '--source-mode', 'text', '--previous', rev0]);
+    assert.equal(drop.status, 1);
+    assert.match(drop.stdout + drop.stderr, /E_ID_REMOVED/);
+    // rev B keeps every id: a design run of its own (rev-0 = the earlier blob, PRD and spec PASS, commit, frozen compile)
+    const runB = redesign(c, { tag: 'b', feature: fB, rev0: A.blob, previousDesign: pd });
+    const d = c.design();
+    assert.equal(d.status, 0, d.stdout + d.stderr);
+    assert.notEqual(c.exec('git', ['cat-file', '-e', `${c.designCommit}^:${c.repoPath}`]).status, 0, 'the fresh branch starts from the trunk, which holds no canonical file');
+    assert.notEqual(c.manifestSha, A.manifestSha);
+    // prior implementation work re-applied on top of the new design commit
+    const bB = await buildV2(c);
+    assert.equal(bB.result.status, 'PASS', JSON.stringify(bB.result).slice(0, 2000));
+    const B = { design_commit: c.designCommit, source_sha256: sha256(fs.readFileSync(c.featureFile)), manifest_sha256: c.manifestSha, approvals_sha256: c.approvalsSha };
+    assert.notEqual(B.source_sha256, A.sourceSha);
+    for (const k of Object.keys(B)) assert.equal(bB.result.plan_identity[k], B[k], `build plan_identity.${k} is rev B's`);
+    assert.equal(bB.result.base_commit, B.design_commit);
+    const vB = await verifyV2(c, bB);
+    assert.equal(vB.result.status, 'PASS', JSON.stringify(vB.result.completion));
+    for (const k of ['design_commit', 'manifest_sha256', 'approvals_sha256']) assert.equal(vB.result[k], B[k], `verify ${k} is rev B's`);
+    const proofB = JSON.parse(fs.readFileSync(vB.result.completion.proof_path, 'utf8'));
+    assert.equal(proofB.design_commit, B.design_commit);
+    assert.equal(proofB.source.sha256, B.source_sha256);
+    assert.equal(proofB.manifest_sha256, B.manifest_sha256);
+    assert.equal(proofB.approvals_sha256, B.approvals_sha256);
+    assert.ok(proofB.approvals.length === 2 && proofB.approvals.every(x => x.rev === 1), 'only the new run\'s approvals');
+    assert.deepEqual(JSON.parse(fs.readFileSync(c.approvalsPath, 'utf8')).previous_design, pd);
+    assert.ok(fs.readFileSync(path.join(runB.runDir, 'rev-0', 'feature.json')).equals(A.blob), 'rev-0 is the earlier design blob');
+    // rev A's proof is rejected as the previous proof of rev B, by completion and by land
+    const prevA = c.node('check-completion.js', ['--repo', c.repo, '--feature-id', 'greet', '--reviewed-sha', bB.result.reviewed_sha, '--manifest', c.manifestPath, '--manifest-sha256', c.manifestSha,
+      '--spec', c.featureFile, '--build-result', bB.path, '--verify-result', vB.result.verify_result_path, '--out', path.join(c.root, 'proof-b-again.json'), '--frozen-dir', c.frozenDir,
+      '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha, '--previous-proof', proofA]);
+    assert.equal(prevA.status, 1);
+    assert.equal(stderrJson(prevA).code, 'E_PREVIOUS');
+    const proofABytes = fs.readFileSync(proofA);
+    const landA = await landV2(c, bB, { result: { verify_result_path: vB.result.verify_result_path, completion: { proof_path: proofA } } });
+    assert.equal(landA.result.status, 'BLOCKED');
+    assert.equal(landA.result.completion.code, 'E_PREVIOUS');
+    assert.deepEqual(labels(landA.calls), ['completion proof']);
+    assert.ok(fs.readFileSync(proofA).equals(proofABytes), 'rev A\'s proof is not overwritten');
+    const l = await landV2(c, bB, vB);
+    assert.equal(l.result.status, 'READY_FOR_HUMAN_MERGE', JSON.stringify(l.result).slice(0, 2000));
+    assert.equal(JSON.parse(fs.readFileSync(vB.result.completion.proof_path, 'utf8')).design_commit, B.design_commit);
+  });
+
+  test('L3.11: a second design stacked on a design commit without previous_design or rev-0 -> --mode design exit 1 (E_REV0) and build BLOCKED at preflight', async (t) => {
+    const c = frozenRepo(t);
+    const f2 = baseFeature();
+    f2.test_plan = 'One focused test, written first.';
+    redesign(c, { tag: '2', feature: f2 });
+    const d = c.design();
+    assert.equal(d.status, 1);
+    assert.equal(stderrJson(d).code, 'E_REV0');
+    const bo = await buildV2(c);
+    assert.equal(bo.result.status, 'BLOCKED');
+    assert.equal(bo.result.stage, 'preflight');
+    assert.match(bo.result.preflight.stdout, /E_REV0/);
+    assert.deepEqual(labels(bo.calls), ['design preflight']);
   });
 
   // ---- #37 rerun against contract 2 (plan 1a, 1b: "after WP4/WP5 the same table runs against v2 build and verify") ------
