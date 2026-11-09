@@ -107,6 +107,29 @@ test('--tap: Level rows and the fixture matrix with statuses, gates, the command
   assert.ok(out.includes('Levels 4 and 5 are live rows'));
 });
 
+// node:test counts a suite whose describe callback throws as `not ok` but leaves `# fail 0` and exit 0 (seen with
+// the #37 parity suite): any `not ok` line makes the Level 0 row FAIL.
+test('--tap: a `not ok` suite with `# fail 0` and exit 0 is a FAIL Level 0 row', t => {
+  const root = tmp(t);
+  const tap = path.join(root, 'quiet.tap');
+  fs.writeFileSync(tap, [
+    'TAP version 13',
+    '# Subtest: outer',
+    '    # Subtest: a suite whose callback throws',
+    '    not ok 1 - a suite whose callback throws',
+    '      ---', "      error: 'gitEnv is not defined'", '      ...',
+    '    # Subtest: a test',
+    '    ok 2 - a test',
+    '    1..2',
+    'not ok 1 - outer',
+    '1..1',
+    '# tests 1', '# suites 2', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0', '',
+  ].join('\n'));
+  const r = tool(['--tap', tap, '--exit', '0', '--fixtures', fixtures(root), '--commit', 'abc123', '--table', 'level']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(rowsOf(r.stdout, '0', 'quiet.tap'), /^\| 0 \| quiet\.tap \| FAIL \| 1\/1 \| 0 \|/);
+});
+
 test('--run: one TAP source per test file with its exit code; --save-tap keeps the TAP bytes', t => {
   const root = tmp(t);
   const tests = path.join(root, 'tests');

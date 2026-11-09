@@ -1246,9 +1246,18 @@ const implementationRows = src => {
   return src.replace(from, "const RUNS = new Map(ROWS.filter(r => r.kind === 'implementation').map(");
 };
 
+  // A describe callback that throws is reported `not ok` with `# fail 0` and exit 0, so the slice is built inside a
+  // try: a construction error becomes a failing test, and a last test checks every row test was registered.
+  const PARITY_ROW_TESTS = 28; // 14 implementation rows (i01-i14) x build, verify
   describe('#37 parity table, implementation rows, through contract-2 build and verify', { concurrency: 1 }, () => {
-    const P = new Function('fs', 'os', 'path', 'crypto', 'spawn', 'FAKE', 'RUNNER',
-      implementationRows(sliceOf('fallback-parity.test.js', '// --- the table', '// --- the stages')) + '\nreturn { ROWS, tok, fallbackReply, RUNS, project, WORK };')(fs, os, path, crypto, spawn, FAKE, RUNNER);
+    let P, registered = 0;
+    try {
+      P = new Function('fs', 'os', 'path', 'crypto', 'spawn', 'FAKE', 'RUNNER', 'gitEnv',
+        implementationRows(sliceOf('fallback-parity.test.js', '// --- the table', '// --- the stages')) + '\nreturn { ROWS, tok, fallbackReply, RUNS, project, WORK };')(fs, os, path, crypto, spawn, FAKE, RUNNER, gitEnv);
+    } catch (e) {
+      test('the parity table slice builds', () => { throw e; });
+      return;
+    }
     after(async () => { await Promise.allSettled([...P.RUNS.values()]); fs.rmSync(P.WORK, { recursive: true, force: true }); });
     let c;
     const repo = () => {
@@ -1317,8 +1326,10 @@ const implementationRows = src => {
           assert.equal(fb.transition, row.fallback[si], 'fallback transition ' + JSON.stringify(fb.result || {}).slice(0, 600));
           forwarded(row, 'fallback', fb);
         });
+        registered++;
       });
     }
+    test(`the parity suite registered all ${PARITY_ROW_TESTS} row tests`, () => assert.equal(registered, PARITY_ROW_TESTS));
   });
 
   describe('#37 relay waits executed against contract-2 build and verify (real runner, fake codex)', { concurrency: true }, () => {

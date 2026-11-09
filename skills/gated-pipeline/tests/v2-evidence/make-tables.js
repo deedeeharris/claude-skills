@@ -4,9 +4,10 @@
 // Generates two tables of the evidence report (plan section 4, items 2 and 3) from `node --test
 // --test-reporter=tap` output plus the fixtures' .expect.json files, so neither is ever typed by hand:
 //   - the Level table, rows of Levels 0-3 (plan 3.1, 3.2, 3.3): Level 0 one row per TAP source (its summary
-//     counts and exit code); Level 1 one row per fixture-matrix case (S01-S20, S19a/S19b, X01-X07); Levels 2 and
-//     3 one row per checklist id (L2.1-L2.8, L3.1-L3.14). A Level 1-3 row collects the tests whose name (or an
-//     enclosing suite's name) carries its id as a token, plus, for a case, the fixture tests of its .expect.json
+//     counts and exit code; FAIL on any `not ok` line even when `# fail` is 0); Level 1 one row per
+//     fixture-matrix case (S01-S20, S19a/S19b, X01-X07); Levels 2 and 3 one row per checklist id (L2.1-L2.8,
+//     L3.1-L3.14). A Level 1-3 row collects the tests whose name (or an enclosing suite's name) carries its id as
+//     a token, plus, for a case, the fixture tests of its .expect.json
 //     files; L2.8 collects the tests of cases X03 and S10 (plan 3.3). Status: FAIL if any collected test is
 //     `not ok`, PASS if at least one ran and all are ok, NOT RUN if none ran (missing or skipped).
 //   - the fixture matrix: one row per .expect.json (case, fixture, variant, expected exit, codes, rules, gate) with
@@ -181,7 +182,9 @@ function build(opts) {
 
   const levelRows = [];
   for (const s of sources) {
-    const failed = (s.summary.fail || 0) + (s.summary.cancelled || 0);
+    // A suite whose describe callback throws is `not ok` while node:test still prints `# fail 0` and exits 0, so any
+    // `not ok` line fails the row too.
+    const failed = (s.summary.fail || 0) + (s.summary.cancelled || 0) + s.tests.filter(t => !t.ok && t.directive === null).length;
     const status = s.summary.tests === undefined ? 'NOT RUN' : failed || (s.exit !== undefined && s.exit !== null && s.exit !== 0) ? 'FAIL' : 'PASS';
     levelRows.push({ level: '0', row: s.label, status, tests: `${s.summary.pass ?? '-'}/${s.summary.tests ?? '-'}`, exit: s.exit ?? '-', artifact: `${s.label} (TAP sha256 ${s.sha256.slice(0, 12)})` });
   }
