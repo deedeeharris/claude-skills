@@ -1255,6 +1255,202 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.deepEqual(labels(v.calls), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE', 'acceptance proofs 1']);
   });
 
+  // ---- record readback: a relay that paraphrased run-frozen's stdout (design 6.4) ------------------------------------------
+  // The live case: the negative-control agent really ran run-frozen.js (its record is on disk) but returned invented
+  // stdout. ONE read-only readback agent (test -f, sha256sum, cat; nothing runs, nothing is written) recovers the record;
+  // a missing record, a refusal or a blocked reply keeps today's outcome, and completion still re-derives every record.
+  describe('record readback after a paraphrased run-frozen reply (mocked agents, real scripts)', { concurrency: 1 }, () => {
+    let c, b;
+    after(() => c && fs.rmSync(c.root, { recursive: true, force: true }));
+    const READ_ONLY = /^test -f '[^']+' && sha256sum (?:'[^']+' )+&& cat '[^']+'$/;
+    const readOnly = call => {
+      assert.ok(call, 'the readback call was made');
+      assert.equal(call.options.effort, 'low');
+      const blocks = gpExecBlocks(call.prompt);
+      assert.equal(blocks.length, 1, 'one gp-exec block');
+      for (const l of blocks[0].split('\n')) assert.match(l, READ_ONLY, 'the readback block only reads');
+      return blocks[0];
+    };
+    const callOf = (v, label) => v.calls.find(x => x.options.label === label);
+    const negDir = (runDir, id) => path.join(runDir, 'negative', id);
+    const negRecord = (runDir, id) => path.join(negDir(runDir, id), `negative:${id}.record.json`);
+    // What the live relay returned instead of run-frozen's line: a result_path that does not exist, a verdict run-frozen
+    // never prints and a patch hash that is not the patch's.
+    const invented = (runDir, id) => JSON.stringify({ target: `negative:${id}`, result_path: path.join(negDir(runDir, id), 'result.json'), verdict: 'PASS',
+      baseline_exit_code: 0, exit_code: 1, patch_sha256: 'f'.repeat(64) }) + '\n';
+    // The control's agent writes the frozen mutation as its patch, really runs the block (unless run: false), then
+    // paraphrases: it returns invented stdout instead of what the block printed.
+    const paraphrasedNegative = (runDir, id, { run: really = true, patch = c.MUTATION } = {}) => (prompt, options, calls) => {
+      fs.mkdirSync(negDir(runDir, id), { recursive: true });
+      fs.writeFileSync(path.join(negDir(runDir, id), 'mutation.patch'), patch);
+      if (really) { const real = stub()(prompt, options, calls); assert.equal(real.exit_code, 0, real.stdout); }
+      return { stdout: invented(runDir, id), exit_code: 0 };
+    };
+    const paraphrased = (stdout, exitCode = 0, extra = {}) => (prompt, options, calls) => {
+      const real = stub()(prompt, options, calls);
+      assert.equal(real.exit_code, 0, real.stdout);
+      return { stdout, exit_code: exitCode, ...extra };
+    };
+    // A readback reply whose sha256sum line for `file` (a path suffix) carries `hash` instead of the real one.
+    const forgedHash = (suffix, hash) => scriptStep(r => {
+      const lines = r.stdout.split('\n');
+      const at = lines.findIndex(l => /^[0-9a-f]{64}  /.test(l) && l.endsWith(suffix));
+      assert.ok(at >= 0, 'the readback printed a sha256sum line for ' + suffix);
+      lines[at] = hash + lines[at].slice(64);
+      return { stdout: lines.join('\n'), exit_code: r.exit_code };
+    });
+
+    test('setup: one frozen design and its build (no readback needed: result.readback is empty)', async () => {
+      c = frozenRepo(null);
+      b = await buildV2(c);
+      assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+      assert.deepEqual(b.result.readback, []);
+    });
+
+    test('(a) a negative-control reply with paraphrased stdout, the real record on disk -> one read-only readback recovers it, verify PASSES, result.readback lists it', async () => {
+      const id = 'HELLO-001-AC1';
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: paraphrasedNegative(runDir, id), [`readback negative control ${id}`]: stub() }) });
+      const r = v.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
+      assert.deepEqual(labels(v.calls).slice(-4), [`negative control ${id}`, `readback negative control ${id}`, 'pinned state', 'completion proof']);
+      const rec = negRecord(v.runDir, id);
+      assert.deepEqual(r.readback, [{ step: `negative control ${id}`, record_path: rec }]);
+      assert.deepEqual(r.negative_controls, [{ id, record_path: rec, record_sha256: sha256(fs.readFileSync(rec)) }]);
+      assert.equal(r.completion.passed, true);
+      const block = readOnly(callOf(v, `readback negative control ${id}`));
+      assert.ok(block.includes(`sha256sum '${path.join(negDir(v.runDir, id), 'mutation.patch')}' '${rec}'`), 'the patch is hashed with the record: ' + block);
+      assert.ok(!block.includes('run-frozen') && !block.includes('write-json'), 'the readback re-runs and writes nothing');
+      // the verify result handed to completion discloses it too
+      assert.deepEqual(JSON.parse(fs.readFileSync(r.verify_result_path, 'utf8')).readback, r.readback);
+    });
+
+    test('(b) a paraphrased reply and NO record file (run-frozen never ran) -> the readback finds nothing: INCOMPLETE at negative controls as today, the reason names both', async () => {
+      const id = 'HELLO-001-AC1';
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: paraphrasedNegative(runDir, id, { run: false }), [`readback negative control ${id}`]: stub() }) });
+      const r = v.result;
+      assert.equal(r.status, 'INCOMPLETE', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.stage, 'negative controls');
+      assert.match(r.reason, new RegExp(`negative control ${id} did not run`));
+      assert.match(r.reason, /no printed record line/);
+      assert.match(r.reason, /readback: .*no record file/);
+      assert.deepEqual(r.readback, []);
+      assert.deepEqual(labels(v.calls).slice(-2), [`negative control ${id}`, `readback negative control ${id}`]);
+      assert.ok(!fs.existsSync(negRecord(v.runDir, id)));
+    });
+
+    test('(b) a blocked reply, or one showing run-frozen refusing the patch, gets no readback: today\'s BLOCKED / INCOMPLETE', async () => {
+      const id = 'HELLO-001-AC1';
+      const blocked = await verifyV2(c, b, { table: { [`negative control ${id}`]: { stdout: '', exit_code: 0, blocked: true, note: 'a command was refused' } } });
+      assert.equal(blocked.result.status, 'BLOCKED', JSON.stringify(blocked.result).slice(0, 2000));
+      assert.match(blocked.result.reason, new RegExp(`negative control ${id} was blocked`));
+      assert.ok(!labels(blocked.calls).some(l => l.startsWith('readback')));
+      // a patch whose context is not the reviewed file: run-frozen.js refuses it (exit 1, a run-frozen: line, no record)
+      const bad = c.MUTATION.replace("-module.exports = () => 'hello';", "-module.exports = () => 'nope';");
+      const refused = await verifyV2(c, b, { mutations: { [id]: bad } });
+      assert.equal(refused.result.status, 'INCOMPLETE', JSON.stringify(refused.result).slice(0, 2000));
+      assert.match(refused.result.reason, new RegExp(`negative control ${id} did not run`));
+      assert.match(refused.result.negative.stdout, /^run-frozen: /m);
+      assert.ok(!labels(refused.calls).some(l => l.startsWith('readback')));
+      assert.deepEqual(refused.result.readback, []);
+    });
+
+    test('(c) a readback whose printed patch sha256 differs from the record\'s mutation_patch_sha256 -> not accepted: INCOMPLETE at negative controls', async () => {
+      const id = 'HELLO-001-AC1';
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: paraphrasedNegative(runDir, id),
+        [`readback negative control ${id}`]: forgedHash('/mutation.patch', '0'.repeat(64)) }) });
+      const r = v.result;
+      assert.equal(r.status, 'INCOMPLETE', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.stage, 'negative controls');
+      assert.match(r.reason, /no printed record line/);
+      assert.match(r.reason, new RegExp(`readback: .*patch hashes to ${'0'.repeat(64)}`));
+      assert.deepEqual(r.readback, []);
+      assert.ok(!labels(v.calls).includes('completion proof'));
+    });
+
+    test('a readback carrying a wrong record sha256 passes the stage but not completion: completion exit 1 (E_HASH), verify INCOMPLETE at completion', async () => {
+      const id = 'HELLO-001-AC1';
+      const wrong = '1'.repeat(64);
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: paraphrasedNegative(runDir, id),
+        [`readback negative control ${id}`]: forgedHash(`/negative:${id}.record.json`, wrong) }) });
+      const r = v.result;
+      assert.equal(r.status, 'INCOMPLETE', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.stage, 'completion');
+      assert.deepEqual(r.readback, [{ step: `negative control ${id}`, record_path: negRecord(v.runDir, id) }]);
+      assert.deepEqual(r.negative_controls.map(x => x.record_sha256), [wrong]);
+      assert.equal(r.completion.passed, false);
+      assert.equal(r.completion.code, 'E_HASH');
+      assert.match(r.completion.reason, new RegExp(`${id} negative control .* does not hash to its recorded sha256`));
+      // the same verify result through check-completion.js directly: exit 1
+      const cc = c.node('check-completion.js', ['--repo', c.repo, '--feature-id', 'greet', '--reviewed-sha', b.result.reviewed_sha, '--manifest', c.manifestPath, '--manifest-sha256', c.manifestSha,
+        '--spec', c.featureFile, '--build-result', b.path, '--verify-result', r.verify_result_path, '--out', path.join(c.root, 'proof-wrong-readback.json'), '--frozen-dir', c.frozenDir,
+        '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha]);
+      assert.equal(cc.status, 1, cc.stdout);
+      assert.equal(stderrJson(cc).code, 'E_HASH');
+    });
+
+    test('(d) paraphrased check and proof-batch replies, the records and the ledger on disk -> one readback each recovers them, verify PASSES', async () => {
+      const v = await verifyV2(c, b, { table: {
+        // the relay even reports a nonzero exit code; it prints no run-frozen: refusal and no checkout drift
+        'check CHECK-LINT': paraphrased('CHECK-LINT passed, lint clean\n', 1), 'readback check CHECK-LINT': stub(),
+        'acceptance proofs 1': paraphrased('{"proofs":"all passed","verdict":"PASS","ledger":"written"}\n'), 'readback acceptance proofs 1': stub(),
+      } });
+      const r = v.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
+      assert.deepEqual(labels(v.calls).slice(0, 6), ['plan preflight', 'check CHECK-LINT', 'readback check CHECK-LINT', 'check CHECK-LIVE', 'acceptance proofs 1', 'readback acceptance proofs 1']);
+      const runs = path.join(v.runDir, 'frozen-runs');
+      const ledger = path.join(v.runDir, 'acceptance-ledger.json');
+      assert.deepEqual(r.readback, [
+        { step: 'check CHECK-LINT', record_path: path.join(runs, 'check:CHECK-LINT.record.json') },
+        { step: 'acceptance proofs 1', record_path: path.join(runs, 'proof:HELLO-001-AC1.record.json') },
+        { step: 'acceptance proofs 1', record_path: path.join(runs, 'check:CHECK-LIVE.record.json') },
+        { step: 'acceptance proofs 1', ledger_path: ledger },
+      ]);
+      const lint = r.checks.find(x => x.check_id === 'CHECK-LINT');
+      assert.equal(lint.status, 'PASS');
+      assert.equal(lint.record_sha256, sha256(fs.readFileSync(path.join(runs, 'check:CHECK-LINT.record.json'))));
+      assert.deepEqual(r.acceptance_ledger, { path: ledger, sha256: sha256(fs.readFileSync(ledger)) });
+      assert.equal(r.completion.passed, true);
+      readOnly(callOf(v, 'readback check CHECK-LINT'));
+      const block = readOnly(callOf(v, 'readback acceptance proofs 1'));
+      assert.ok(block.includes(`cat '${ledger}'`), 'the batch readback reads the ledger');
+    });
+
+    test('(d) a paraphrased proof batch whose proof never ran -> the readback finds no record: BLOCKED at acceptance proofs, the reason names both', async () => {
+      const v = await verifyV2(c, b, { table: { 'acceptance proofs 1': { stdout: '{"proofs":"all passed"}\n', exit_code: 0 }, 'readback acceptance proofs 1': stub() } });
+      const r = v.result;
+      assert.equal(r.status, 'BLOCKED', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.stage, 'acceptance proofs');
+      assert.match(r.reason, /HELLO-001-AC1/);
+      assert.match(r.reason, /readback: .*no record file/);
+      assert.deepEqual(r.readback, []);
+      assert.deepEqual(labels(v.calls).slice(-2), ['acceptance proofs 1', 'readback acceptance proofs 1']);
+    });
+
+    test('build: a paraphrased suite reply, the record on disk -> one readback recovers it, build PASSES with result.readback', async (t) => {
+      const c2 = frozenRepo(t);
+      const b2 = await buildV2(c2, { suite: paraphrased('suite passed: 1 test, 0 failures\n', 0, { failures: [], other_failures: [] }), table: { 'readback suite 1': stub() } });
+      const r = b2.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 2000));
+      const rec = path.join(b2.runDir, 'suite-1', 'suite.record.json');
+      assert.deepEqual(r.readback, [{ step: 'suite 1', record_path: rec }]);
+      assert.equal(r.suite_identity.record_sha256, sha256(fs.readFileSync(rec)));
+      assert.equal(r.suite.exit_code, 0);
+      assert.deepEqual(labels(b2.calls).slice(-2), ['suite 1', 'readback suite 1']);
+      readOnly(callOf(b2, 'readback suite 1'));
+    });
+
+    test('the record readback block is the same in build.js and verify.js', () => {
+      const block = name => {
+        const src = fs.readFileSync(path.join(__dirname, '..', 'workflows', name + '.js'), 'utf8');
+        const i = src.indexOf('// --- record readback');
+        const j = src.indexOf('// --- end of the record readback block', i);
+        assert.ok(i >= 0 && j > i, `${name}.js has the record readback block`);
+        return src.slice(i, j);
+      };
+      assert.equal(block('build'), block('verify'));
+    });
+  });
+
   // ---- the fresh run_dir: the first gp-exec block of build and verify makes it, with its parent ----------------------------
   test('fresh run_dir: build and verify create a run_dir whose parent does not exist; an existing run_dir is BLOCKED with GP_RUN_DIR_EXISTS and nothing else runs; an unusable parent is GP_RUN_DIR_PARENT', async (t) => {
     const c = frozenRepo(t);
