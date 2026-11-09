@@ -481,12 +481,13 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   `suite.live_budget_min` and the known-failure ids come from the preflight output (the
   manifest). The suite runs through `run-frozen.js --target suite` (6.4) in a `gp-exec` block;
   the suite agent relays the printed `record_path`, `record_sha256`, `exit_code`, `timed_out`
-  and `setup_exit_code`, plus the failing test ids and `other_failures` it reads from the
-  framed log. Build PASS needs no other failure, not timed out, setup exit 0 when set, and
-  either integer `exit_code` 0 with no failing id, or a nonzero exit (not 124/126/127, below
-  128) whose failing ids are all manifest known-failure ids (at least one). `completed` and
-  `passed` are derived from these fields, never relayed. Anything else is a fix round (a
-  nonzero exit naming no test gets the "failed without naming a test" item).
+  and `setup_exit_code` (a reply without them gets the record readback of 6.4), plus the
+  failing test ids and `other_failures` it reads from the framed log. Build PASS needs no
+  other failure, not timed out, setup exit 0 when set, and either integer `exit_code` 0 with
+  no failing id, or a nonzero exit (not 124/126/127, below 128) whose failing ids are all
+  manifest known-failure ids (at least one). `completed` and `passed` are derived from these
+  fields, never relayed. Anything else is a fix round (a nonzero exit naming no test gets the
+  "failed without naming a test" item).
 - Optional `ci_failure_log_path` (absolute, outside the repo): the CI_RED/HEAD_MOVED loop. A
   `gp-exec` block hashes it with `hash-inputs.js`; the implementer and fixer prompts carry it
   as "CI failure log: context only; the frozen canonical file is the only authority". It
@@ -566,6 +567,31 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   proof and live record must be printed by some batch, and a batch that fails or is refused
   stops verify as a single block would. With no proof and no live acceptance one block writes
   the empty ledger.
+- Record readback (relay attestation): the workflow reads run-frozen's printed record line
+  (`record_path` equal to the expected path, a hex `record_sha256`) from the relayed stdout.
+  When a reply that is not blocked lacks it (a relay that paraphrased stdout: invented fields,
+  a wrong hash) and shows neither run-frozen's own refusal (a nonzero exit with a
+  `run-frozen:` line) nor checkout drift, the workflow runs ONE low-effort readback agent
+  whose gp-exec block only reads: `test -f <record> && sha256sum <record> && cat <record>`
+  (a negative control hashes its patch on the same line; a proof batch also reads the ledger
+  the same way). It re-runs nothing and writes nothing. The record is accepted only when the
+  file exists, its hash is printed, its JSON names the expected target, `head_before` and
+  `head_after` are `reviewed_sha` and `status_before`/`status_after` are clean outside the
+  frozen `clean_ignore` (the condition under which run-frozen.js exits 0 having written it),
+  and, for a negative control, it holds integer `baseline_exit_code` and `exit_code` and a
+  `mutation_patch_sha256` equal to the printed patch hash; for a proof batch every recovered
+  record and live link must also be listed in the ledger as run-frozen.js appends it, and the
+  last batch's ledger hash is the readback's. The step then continues as if the reply had
+  printed the line. Otherwise the step keeps today's outcome (INCOMPLETE for a negative
+  control, BLOCKED or HEAD_MOVED for a check or proof batch, BLOCKED for build's suite) with a
+  reason naming the missing line and the readback result. A refused run writes no record, so
+  the readback never turns a refusal into a pass. It covers every run-frozen relay: build's
+  suite and verify's checks, proof batches and negative controls (one shared block in both
+  workflows, kept identical by a test). The result lists each recovery in
+  `readback[] { step, record_path }` (`{ step, ledger_path }` for a ledger hash). The workflow
+  cannot hash, so a wrong printed record hash passes the stage; completion re-derives every
+  record from disk (hash, target, frozen command, pinned state, logs, patch and exit codes,
+  6.5) and rejects it.
 - Final review and compliance trace: `review_files[]` as in build, steps `final` and
   `compliance` (codex `compliance.json` or the wrapped fallback reply).
 - Negative-control phase: runs LAST, after checks, acceptance proofs, final review and the
@@ -748,6 +774,9 @@ FAIL and a fix round (stops for a human instead).
   agent-invoked (`inputs.json`, `fallback-review.json`, wrapped fallback replies, run-frozen
   records, the `result.json` a relay reads) and evidence logs are host attestations, as in v1:
   a deliberately forged one is not caught.
+- Relayed run-frozen stdout: a record line a relay failed to copy is recovered only by the
+  read-only readback (6.4) and disclosed in `readback[]`; the readback is itself relayed, so the
+  record it names counts only once completion has re-derived it from disk like any other.
 - Suite: its exit code is bound to the run-frozen record (6.5); the failing test ids and
   `other_failures` behind it are read from the framed log by a model, so which known failure
   excused a nonzero exit, and whether a non-test step also failed, are attested.

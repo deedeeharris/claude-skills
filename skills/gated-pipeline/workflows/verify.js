@@ -306,7 +306,9 @@ const RELAY = RELAY_REVIEW({ head_sha: { type: 'string' } })
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
 // Every review step is recorded, so the result discloses any Opus fallback review.
 const reviewers = []
-const disclose = o => ({ ...o, ...(C2 ? { contract: 2 } : {}), reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
+// contract 2: the run-frozen steps recovered by a record readback (block below), disclosed in every result.
+const READBACK = []
+const disclose = o => ({ ...o, ...(C2 ? { contract: 2, readback: READBACK.slice() } : {}), reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
 async function reviewed(step, gate, viaCodex, fallback) {
   const r = await viaCodex()
   let res
@@ -367,6 +369,76 @@ const refusedStatus = (r, stage, reason, extra) => {
   return drift && drift.length
     ? disclose({ status: 'HEAD_MOVED', stage, reason: `the work checkout is no longer the clean reviewed commit (${drift.join('; ')}): re-run build`, ...extra })
     : disclose({ status: 'BLOCKED', stage, reason, ...extra })
+}
+// --- record readback (design 6.4): this block is the same in build.js and verify.js. A run-frozen step whose reply
+// lacks a record line run-frozen.js prints (a relay that paraphrased its stdout) gets ONE low-effort readback agent
+// whose gp-exec block only reads: test -f, sha256sum and cat of each record (and sha256sum of a negative control's
+// patch, or cat of the ledger). It never re-runs and never writes anything. A record is accepted only when the file
+// exists, its hash is printed, its JSON names the expected target, it was made on the pinned reviewed commit with the
+// checkout clean before and after (exactly when run-frozen.js exits 0 having written it) and, for a negative control,
+// it holds integer baseline_exit_code and exit_code and a mutation_patch_sha256 equal to the printed patch hash. A
+// blocked reply, or one that shows run-frozen's own refusal (a nonzero exit with a run-frozen: line), gets no
+// readback. The workflow cannot hash, so a wrong printed record hash is caught by completion, which re-derives every
+// record from disk (hash, target, command, logs, patch, exit codes).
+const rbRefused = r => !r || r.blocked === true || (r.exit_code !== 0 && /^run-frozen: /m.test(String(r.stdout || '')))
+const rbCovered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'))
+const rbClean = (status, entries) => Array.isArray(status) && status.every(l => typeof l === 'string' && l.slice(3).split(' -> ').map(p => p.replace(/^"|"$/g, '')).every(p => rbCovered(p, entries)))
+// The text a cat printed after a file's sha256sum line (up to the next sha256sum line), parsed as one JSON object, else null.
+function rbJsonAfter(stdout, file) {
+  const lines = String(stdout || '').split('\n')
+  const shaLine = l => /^([0-9a-f]{64}) [ *](.+)$/.exec(l)
+  const at = lines.findIndex(l => { const m = shaLine(l); return !!m && m[2] === file })
+  if (at < 0) return null
+  let end = at + 1
+  while (end < lines.length && !shaLine(lines[end])) end++
+  try { const v = JSON.parse(lines.slice(at + 1, end).join('\n')); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null }
+}
+// reads: [{ record, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
+// Returns { records: [{ record_path, record_sha256, record, printed }], files: { <path>: { sha256, value } } } or { error }.
+async function readback({ step, ph, sha, clean, reads, files = [] }) {
+  const body = [...reads.map(x => `test -f ${q(x.record)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(x.record)} && cat ${q(x.record)}`),
+    ...files.map(f => `test -f ${q(f)} && sha256sum ${q(f)} && cat ${q(f)}`)].join('\n')
+  const r = await agent(`Step ${step} ran run-frozen.js, but its reply did not carry the record line run-frozen.js prints. Read the files back: the block below only reads; ` +
+    `it never runs or writes anything. Return its stdout exactly as printed, byte for byte, with nothing added, dropped or reformatted. ${EXEC_NOTE}` + execBlock(body) + `\n- ${RULES}`,
+    { label: `readback ${step}`, phase: ph, schema: EXEC, effort: 'low' })
+  if (!r || r.blocked) return { error: 'the readback was blocked' }
+  const records = []
+  for (const x of reads) {
+    const recSha = shaOf(r.stdout, x.record)
+    const rec = rbJsonAfter(r.stdout, x.record)
+    const patchSha = x.patch ? shaOf(r.stdout, x.patch) : null
+    const bad = !HEX64.test(recSha || '') ? `no record file or no sha256 printed for ${x.record}`
+      : !rec ? `${x.record} did not print as one JSON object`
+      : rec.target !== x.target ? `${x.record} names target ${rec.target}, not ${x.target}`
+      : rec.head_before !== sha || rec.head_after !== sha || !rbClean(rec.status_before, clean) || !rbClean(rec.status_after, clean) ? `${x.record} was not made on the clean reviewed commit ${sha}`
+      : x.patch && !(Number.isInteger(rec.baseline_exit_code) && Number.isInteger(rec.exit_code) && HEX64.test(rec.mutation_patch_sha256 || '')) ? `${x.record} lacks baseline_exit_code, exit_code or mutation_patch_sha256`
+      : x.patch && patchSha !== rec.mutation_patch_sha256 ? `the patch ${x.patch} hashes to ${patchSha || 'nothing printed'}, the record says ${rec.mutation_patch_sha256}` : ''
+    if (bad) return { error: bad }
+    records.push({ record_path: x.record, record_sha256: recSha, record: rec,
+      printed: { record_path: x.record, record_sha256: recSha, exit_code: rec.exit_code ?? null, timed_out: rec.timed_out ?? false, setup_exit_code: rec.setup ? rec.setup.exit_code : null } })
+  }
+  const read = {}
+  for (const f of files) {
+    const s = shaOf(r.stdout, f)
+    const value = rbJsonAfter(r.stdout, f)
+    if (!HEX64.test(s || '') || !value) return { error: `no file, sha256 or JSON printed for ${f}` }
+    read[f] = { sha256: s, value }
+  }
+  return { records, files: read }
+}
+// --- end of the record readback block
+// verify: a run-frozen step's printed record line, else ONE readback (block above) when the reply lacks it and shows
+// neither a refusal nor checkout drift. { printed, relayed } when the reply printed it; { printed, recovered } after an
+// accepted readback (listed in READBACK); else { why }, naming the missing line and the readback result.
+async function recordLine(r, { step, ph, record, target, patch }) {
+  const line = r && !r.blocked ? jsonLines(r.stdout).find(o => o.record_path === record && HEX64.test(o.record_sha256 || '')) : null
+  if (line) return { printed: line, relayed: true }
+  const why = `no printed record line with record_path ${record}`
+  if (rbRefused(r) || (stateDrift(r.stdout) || []).length) return { why }
+  const rb = await readback({ step, ph, sha: A.reviewed_sha, clean: IGNORE, reads: [{ record, target, patch }] })
+  if (rb.error) return { why: `${why}; readback: ${rb.error}` }
+  READBACK.push({ step, record_path: record })
+  return { printed: rb.records[0].printed, recovered: true }
 }
 // Review files (design 6.3/6.4): steps final and compliance, one entry per round, every path and hash printed by a script.
 const reviewFiles = []
@@ -459,9 +531,11 @@ if (C2) {
       (c.quiet ? 'Run only on a quiet machine: before the block, check that no other heavy test process is running and wait (bounded) if one is; if the machine never goes quiet, run nothing and return blocked=true with the reason in note. ' : '') +
       EXEC_NOTE + frozenBlock([runFrozen(`check:${c.id}`, frozenRuns)]) + `\n- ${RULES}`,
       { label: `check ${c.id}`, phase: 'Checks', schema: EXEC, effort: c.effort })
-    if (!r || r.blocked || r.exit_code !== 0) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check', { check: r, checks })
-    const printed = jsonLines(r.stdout).find(o => o.record_path === `${frozenRuns}/check:${c.id}.record.json` && HEX64.test(o.record_sha256 || ''))
-    if (!printed) return disclose({ status: 'BLOCKED', stage: `check ${c.id}`, reason: 'the check record was not printed', check: r, checks })
+    if (!r || r.blocked) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check', { check: r, checks })
+    const got = await recordLine(r, { step: `check ${c.id}`, ph: 'Checks', record: `${frozenRuns}/check:${c.id}.record.json`, target: `check:${c.id}` })
+    if (r.exit_code !== 0 && !got.recovered) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check' + (got.why ? ` (${got.why})` : ''), { check: r, checks })
+    if (!got.printed) return disclose({ status: 'BLOCKED', stage: `check ${c.id}`, reason: `the check record was not printed (${got.why})`, check: r, checks })
+    const printed = got.printed
     checks.push({ check_id: c.id, name: c.name, record_path: printed.record_path, record_sha256: printed.record_sha256, exit_code: printed.exit_code, timed_out: printed.timed_out,
       status: printed.exit_code === 0 && printed.timed_out === false ? 'PASS' : 'FAIL' })
   }
@@ -476,28 +550,65 @@ if (C2) {
   // live links execute nothing and follow the last proof, in manifest order, in the last batch.
   const ledger = `${A.run_dir}/acceptance-ledger.json`
   const perBatch = Math.max(1, Math.floor(ONE_CALL_S / run1(L.proof_timeout_s)))
-  const batches = []
-  for (let i = 0; i < p.runtime_acceptance_ids.length; i += perBatch) batches.push(p.runtime_acceptance_ids.slice(i, i + perBatch).map(id => runFrozen(`proof:${id}`, frozenRuns, ` --ledger ${q(ledger)}`)))
-  const liveLines = p.live_acceptances.map(x => runFrozen(`live:${x.id}`, frozenRuns, ` --ledger ${q(ledger)}`))
-  if (!batches.length) batches.push([])
-  batches[batches.length - 1].push(...liveLines)
+  const batchIds = []
+  for (let i = 0; i < p.runtime_acceptance_ids.length; i += perBatch) batchIds.push(p.runtime_acceptance_ids.slice(i, i + perBatch))
+  if (!batchIds.length) batchIds.push([])
+  const batches = batchIds.map(ids => ids.map(id => runFrozen(`proof:${id}`, frozenRuns, ` --ledger ${q(ledger)}`)))
+  batches[batches.length - 1].push(...p.live_acceptances.map(x => runFrozen(`live:${x.id}`, frozenRuns, ` --ledger ${q(ledger)}`)))
+  const proofRec = id => `${frozenRuns}/proof:${id}.record.json`
+  const liveRec = x => `${frozenRuns}/check:${x.check_id}.record.json`
   const proofRuns = []
+  const recoveredLines = [] // record lines a readback recovered, as run-frozen.js would have printed them
+  const rbErrors = []
   let proofs = null
+  let ledgerSha = null
   for (const [i, lines] of batches.entries()) {
     const part = batches.length > 1 ? ` (batch ${i + 1} of ${batches.length}; every batch appends to the same ledger)` : ''
+    const step = `acceptance proofs ${i + 1}`
     proofs = await agent(
       `Record the acceptance evidence of feature ${A.feature_id} with run-frozen.js${part}: every runtime proof runs exactly its frozen command on the pinned reviewed commit and is appended to the acceptance ledger ${ledger}; ` +
       `a live acceptance executes nothing and only links the record of the check that ran it. Do not make live or paid calls here. ${EXEC_NOTE}` +
       frozenBlock([...(lines.length ? lines : [writeJsonBlock(ledger, { version: 2, entries: [] })]), `sha256sum ${q(ledger)}`]) + `\n- ${RULES}`,
-      { label: `acceptance proofs ${i + 1}`, phase: 'Acceptance proofs', effort: 'low', schema: EXEC })
-    if (!proofs || proofs.blocked || proofs.exit_code !== 0) return refusedStatus(proofs, 'acceptance proofs', `run-frozen.js refused a proof or live link (batch ${i + 1} of ${batches.length})`, { proofs, proof_batches: proofRuns, checks })
+      { label: step, phase: 'Acceptance proofs', effort: 'low', schema: EXEC })
+    if (!proofs || proofs.blocked) return refusedStatus(proofs, 'acceptance proofs', `run-frozen.js refused a proof or live link (batch ${i + 1} of ${batches.length})`, { proofs, proof_batches: proofRuns, checks })
+    // A batch reply that lacks a record line, a live link or (last batch) the ledger hash gets ONE readback of the
+    // missing records and the ledger; every recovered record must be listed in the ledger as run-frozen.js appends it.
+    const last = i === batches.length - 1
+    const here = jsonLines(proofs.stdout)
+    const lostIds = batchIds[i].filter(id => !here.some(o => o.record_path === proofRec(id) && HEX64.test(o.record_sha256 || '')))
+    const lostLive = last ? p.live_acceptances.filter(x => !here.some(o => o.linked === true && o.record_path === liveRec(x) && HEX64.test(o.record_sha256 || ''))) : []
+    const lost = [...lostIds.map(proofRec), ...lostLive.map(x => `the live link ${x.id}`), ...(last && !HEX64.test(shaOf(proofs.stdout, ledger) || '') ? [`the sha256sum line of ${ledger}`] : [])]
+    let rb = null
+    if (lost.length && !rbRefused(proofs) && !(stateDrift(proofs.stdout) || []).length) {
+      rb = await readback({ step, ph: 'Acceptance proofs', sha, clean: IGNORE, reads: lostIds.map(id => ({ record: proofRec(id), target: `proof:${id}` })), files: [ledger] })
+      const checkSha = x => (checks.find(ch => ch.check_id === x.check_id) || {}).record_sha256
+      if (!rb.error) {
+        const entries = Array.isArray(rb.files[ledger].value.entries) ? rb.files[ledger].value.entries : []
+        const listed = (id, live, recPath, recSha, checkId) => entries.some(e => e && e.id === id && e.live === live && e.record_path === recPath && e.record_sha256 === recSha && (!live || e.check_id === checkId))
+        const unlisted = [...lostIds.filter((id, k) => !listed(id, false, rb.records[k].record_path, rb.records[k].record_sha256)),
+          ...lostLive.filter(x => !listed(x.id, true, liveRec(x), checkSha(x), x.check_id)).map(x => x.id)]
+        if (unlisted.length) rb = { error: `the ledger ${ledger} does not list ${unlisted.join(', ')} with the record read back` }
+      }
+      if (rb.error) rbErrors.push(`batch ${i + 1}: no printed record line for ${lost.join(', ')}; readback: ${rb.error}`)
+      else {
+        recoveredLines.push(...rb.records.map(x => x.printed),
+          ...lostLive.map(x => ({ record_path: liveRec(x), record_sha256: checkSha(x), exit_code: 0, timed_out: false, setup_exit_code: null, linked: true })))
+        READBACK.push(...rb.records.map(x => ({ step, record_path: x.record_path })), ...lostLive.map(x => ({ step, record_path: liveRec(x) })), ...(last ? [{ step, ledger_path: ledger }] : []))
+      }
+    }
+    const recovered = !!rb && !rb.error
+    if (proofs.exit_code !== 0 && !recovered) {
+      return refusedStatus(proofs, 'acceptance proofs', `run-frozen.js refused a proof or live link (batch ${i + 1} of ${batches.length})${rb ? ` (${rbErrors[rbErrors.length - 1]})` : ''}`, { proofs, proof_batches: proofRuns, checks })
+    }
     proofRuns.push(proofs)
+    if (last) ledgerSha = recovered ? rb.files[ledger].sha256 : shaOf(proofs.stdout, ledger)
   }
-  const ledgerSha = shaOf(proofs.stdout, ledger)
-  const proofPrinted = proofRuns.flatMap(r => jsonLines(r.stdout))
-  const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => o.record_path === `${frozenRuns}/proof:${id}.record.json`)),
-    ...p.live_acceptances.filter(x => !proofPrinted.some(o => o.linked === true && o.record_path === `${frozenRuns}/check:${x.check_id}.record.json`)).map(x => x.id)]
-  if (!HEX64.test(ledgerSha || '') || missingProof.length) return disclose({ status: 'BLOCKED', stage: 'acceptance proofs', reason: 'the ledger hash or a proof record was not printed: ' + missingProof.join(', '), proofs, proof_batches: proofRuns, checks })
+  const proofPrinted = [...proofRuns.flatMap(r => jsonLines(r.stdout)), ...recoveredLines]
+  const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => o.record_path === proofRec(id))),
+    ...p.live_acceptances.filter(x => !proofPrinted.some(o => o.linked === true && o.record_path === liveRec(x))).map(x => x.id)]
+  if (!HEX64.test(ledgerSha || '') || missingProof.length) {
+    return disclose({ status: 'BLOCKED', stage: 'acceptance proofs', reason: 'the ledger hash or a proof record was not printed: ' + missingProof.join(', ') + (rbErrors.length ? ` (${rbErrors.join('; ')})` : ''), proofs, proof_batches: proofRuns, checks })
+  }
   const acceptance = { path: ledger, sha256: ledgerSha }
 
   phase('Final review')
@@ -594,14 +705,15 @@ if (C2) {
       `3. Then: ${EXEC_NOTE}` + frozenBlock([runFrozen(`negative:${n.id}`, dir, ` --patch ${q(patch)}`)]) + `\n- ${RULES}`,
       { label: `negative control ${n.id}`, phase: 'Negative controls', schema: EXEC, effort: 'medium' })
     if (!r || r.blocked) return reportOf('BLOCKED', { stage: 'negative controls', reason: `negative control ${n.id} was blocked`, negative: r, negative_controls: negatives })
-    const printed = jsonLines(r.stdout).find(o => o.record_path === `${dir}/negative:${n.id}.record.json` && HEX64.test(o.record_sha256 || ''))
+    const got = await recordLine(r, { step: `negative control ${n.id}`, ph: 'Negative controls', record: `${dir}/negative:${n.id}.record.json`, target: `negative:${n.id}`, patch })
+    const printed = got.printed
     if (printed && printed.not_run) {
       negatives.push({ id: n.id, record_path: printed.record_path, record_sha256: printed.record_sha256 })
       return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} is NOT RUN: negative_controls_total_min of phase time was used before it`, negative: r, negative_controls: negatives })
     }
     const negDrift = r.exit_code !== 0 ? stateDrift(r.stdout) : null
     if (negDrift && negDrift.length) return reportOf('HEAD_MOVED', { stage: 'negative controls', reason: `during negative control ${n.id} the work checkout left the clean reviewed commit (${negDrift.join('; ')}): re-run build`, negative: r, negative_controls: negatives })
-    if (r.exit_code !== 0 || !printed) return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} did not run (refused patch, or the checkout moved)`, negative: r, negative_controls: negatives })
+    if ((r.exit_code !== 0 && !got.recovered) || !printed) return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} did not run (refused patch, or the checkout moved)${got.why ? `: ${got.why}` : ''}`, negative: r, negative_controls: negatives })
     negatives.push({ id: n.id, record_path: printed.record_path, record_sha256: printed.record_sha256 })
   }
   const after = await agent(`After the negative controls, check that the work checkout is still pinned at ${sha} and clean. ${EXEC_NOTE}` +

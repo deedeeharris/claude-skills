@@ -316,7 +316,9 @@ const RELAY = RELAY_REVIEW({ head_sha: HEAD_SHA, changed: CHANGED })
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
 // Every review step is recorded, so an earlier Opus fallback round stays visible after a later codex PASS.
 const reviewers = []
-const disclose = o => ({ ...o, ...(C2 ? { contract: 2 } : {}), build_mode: BUILD_MODE, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
+// contract 2: the run-frozen steps recovered by a record readback (block below), disclosed in every result.
+const READBACK = []
+const disclose = o => ({ ...o, ...(C2 ? { contract: 2, readback: READBACK.slice() } : {}), build_mode: BUILD_MODE, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
 async function reviewed(step, gate, viaCodex, fallback) {
   const r = await viaCodex()
   let res
@@ -384,6 +386,63 @@ let SUITE_M = null // the manifest suite, contract 2
 let CI_LOG = null // { path, sha256 } of ci_failure_log_path, contract 2
 let PLAN_IDENTITY = null
 const reviewFiles = []
+// --- record readback (design 6.4): this block is the same in build.js and verify.js. A run-frozen step whose reply
+// lacks a record line run-frozen.js prints (a relay that paraphrased its stdout) gets ONE low-effort readback agent
+// whose gp-exec block only reads: test -f, sha256sum and cat of each record (and sha256sum of a negative control's
+// patch, or cat of the ledger). It never re-runs and never writes anything. A record is accepted only when the file
+// exists, its hash is printed, its JSON names the expected target, it was made on the pinned reviewed commit with the
+// checkout clean before and after (exactly when run-frozen.js exits 0 having written it) and, for a negative control,
+// it holds integer baseline_exit_code and exit_code and a mutation_patch_sha256 equal to the printed patch hash. A
+// blocked reply, or one that shows run-frozen's own refusal (a nonzero exit with a run-frozen: line), gets no
+// readback. The workflow cannot hash, so a wrong printed record hash is caught by completion, which re-derives every
+// record from disk (hash, target, command, logs, patch, exit codes).
+const rbRefused = r => !r || r.blocked === true || (r.exit_code !== 0 && /^run-frozen: /m.test(String(r.stdout || '')))
+const rbCovered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'))
+const rbClean = (status, entries) => Array.isArray(status) && status.every(l => typeof l === 'string' && l.slice(3).split(' -> ').map(p => p.replace(/^"|"$/g, '')).every(p => rbCovered(p, entries)))
+// The text a cat printed after a file's sha256sum line (up to the next sha256sum line), parsed as one JSON object, else null.
+function rbJsonAfter(stdout, file) {
+  const lines = String(stdout || '').split('\n')
+  const shaLine = l => /^([0-9a-f]{64}) [ *](.+)$/.exec(l)
+  const at = lines.findIndex(l => { const m = shaLine(l); return !!m && m[2] === file })
+  if (at < 0) return null
+  let end = at + 1
+  while (end < lines.length && !shaLine(lines[end])) end++
+  try { const v = JSON.parse(lines.slice(at + 1, end).join('\n')); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null }
+}
+// reads: [{ record, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
+// Returns { records: [{ record_path, record_sha256, record, printed }], files: { <path>: { sha256, value } } } or { error }.
+async function readback({ step, ph, sha, clean, reads, files = [] }) {
+  const body = [...reads.map(x => `test -f ${q(x.record)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(x.record)} && cat ${q(x.record)}`),
+    ...files.map(f => `test -f ${q(f)} && sha256sum ${q(f)} && cat ${q(f)}`)].join('\n')
+  const r = await agent(`Step ${step} ran run-frozen.js, but its reply did not carry the record line run-frozen.js prints. Read the files back: the block below only reads; ` +
+    `it never runs or writes anything. Return its stdout exactly as printed, byte for byte, with nothing added, dropped or reformatted. ${EXEC_NOTE}` + execBlock(body) + `\n- ${RULES}`,
+    { label: `readback ${step}`, phase: ph, schema: EXEC, effort: 'low' })
+  if (!r || r.blocked) return { error: 'the readback was blocked' }
+  const records = []
+  for (const x of reads) {
+    const recSha = shaOf(r.stdout, x.record)
+    const rec = rbJsonAfter(r.stdout, x.record)
+    const patchSha = x.patch ? shaOf(r.stdout, x.patch) : null
+    const bad = !HEX64.test(recSha || '') ? `no record file or no sha256 printed for ${x.record}`
+      : !rec ? `${x.record} did not print as one JSON object`
+      : rec.target !== x.target ? `${x.record} names target ${rec.target}, not ${x.target}`
+      : rec.head_before !== sha || rec.head_after !== sha || !rbClean(rec.status_before, clean) || !rbClean(rec.status_after, clean) ? `${x.record} was not made on the clean reviewed commit ${sha}`
+      : x.patch && !(Number.isInteger(rec.baseline_exit_code) && Number.isInteger(rec.exit_code) && HEX64.test(rec.mutation_patch_sha256 || '')) ? `${x.record} lacks baseline_exit_code, exit_code or mutation_patch_sha256`
+      : x.patch && patchSha !== rec.mutation_patch_sha256 ? `the patch ${x.patch} hashes to ${patchSha || 'nothing printed'}, the record says ${rec.mutation_patch_sha256}` : ''
+    if (bad) return { error: bad }
+    records.push({ record_path: x.record, record_sha256: recSha, record: rec,
+      printed: { record_path: x.record, record_sha256: recSha, exit_code: rec.exit_code ?? null, timed_out: rec.timed_out ?? false, setup_exit_code: rec.setup ? rec.setup.exit_code : null } })
+  }
+  const read = {}
+  for (const f of files) {
+    const s = shaOf(r.stdout, f)
+    const value = rbJsonAfter(r.stdout, f)
+    if (!HEX64.test(s || '') || !value) return { error: `no file, sha256 or JSON printed for ${f}` }
+    read[f] = { sha256: s, value }
+  }
+  return { records, files: read }
+}
+// --- end of the record readback block
 // Review files (design 6.3): one entry per round of each review step, every path and hash printed by a script. The Opus
 // fallback hashes its inputs before reviewing (hash-inputs.js --out) and again after (--verify, in the record block), and
 // its structured reply is written verbatim by write-json.js; a raw codex file is hashed by sha256sum in the cleanup block.
@@ -600,12 +659,23 @@ async function suiteV2(round) {
     { label: `suite ${round}`, phase: 'Suite', effort: 'low', schema: { ...EXEC, properties: { ...EXEC.properties, failures: { type: 'array', items: { type: 'string' } }, other_failures: { type: 'array', items: { type: 'string' } } },
       required: [...EXEC.required, 'failures', 'other_failures'] } })
   if (!rep || rep.blocked) return { blocked: true, reason: 'the suite step was blocked', report: rep }
-  if (rep.exit_code !== 0) return { blocked: true, reason: 'run-frozen.js refused or the checkout moved or got dirty during the suite', report: rep }
   const lines = jsonLines(rep.stdout)
-  const printed = lines.find(o => o.record_path === rec)
-  const record = lines.find(o => o.target === 'suite' && o.log_path)
+  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let record = lines.find(o => o.target === 'suite' && o.log_path)
+  // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
+  let rb = null
+  if ((!printed || !record) && !rbRefused(rep)) {
+    rb = await readback({ step: `suite ${round}`, ph: 'Suite', sha: reviewedSha, clean: PRE.clean_ignore, reads: [{ record: rec, target: 'suite' }] })
+    if (!rb.error) {
+      printed = rb.records[0].printed
+      record = rb.records[0].record
+      READBACK.push({ step: `suite ${round}`, record_path: rec })
+    }
+  }
+  const why = rb && rb.error ? ` (no printed record line with record_path ${rec}; readback: ${rb.error})` : ''
+  if (rep.exit_code !== 0 && !(rb && !rb.error)) return { blocked: true, reason: 'run-frozen.js refused or the checkout moved or got dirty during the suite' + why, report: rep }
   if (!printed || !record || !HEX64.test(printed.record_sha256 || '') || record.exit_code !== printed.exit_code || record.head_before !== reviewedSha || record.head_after !== reviewedSha) {
-    return { blocked: true, reason: 'the suite record was not printed for the reviewed commit', report: rep }
+    return { blocked: true, reason: 'the suite record was not printed for the reviewed commit' + why, report: rep }
   }
   const failures = rep.failures.map(f => f.trim()).filter(Boolean)
   const exit = record.exit_code
