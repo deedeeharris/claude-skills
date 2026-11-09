@@ -55,7 +55,7 @@
     }
   ],
   "scope": { "allowed_paths": ["src/", "test/"], "protected_paths": ["/etc/passwd"], "state_paths": [], "clean_ignore": [], "test_paths": ["test/"] },
-  "suite": { "command": "node --test", "unit_command": "node --test test/hello.test.js", "known_failures": [], "isolated": false, "setup_command": null, "timeout_min": 10, "live_budget_min": 0 },
+  "suite": { "command": "node --test", "unit_command": "node --test test/hello.test.js", "known_failures": [], "isolated": false, "setup_command": null, "timeout_min": 4, "live_budget_min": 0 },
   "limits": { "proof_timeout_s": 120, "negative_controls_total_min": 10 },
   "checks": [
     { "id": "CHECK-LINT", "name": "Lint", "applicable": true, "reason": "The repo has a lint script.", "command": "npm run lint", "expected": { "exit_code": 0 }, "timeout_min": 5, "budget_min": 0, "quiet": false, "effort": "low", "environment": "local shell" }

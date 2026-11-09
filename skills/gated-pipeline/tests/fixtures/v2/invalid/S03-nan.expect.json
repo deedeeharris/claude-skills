@@ -3,7 +3,7 @@
   "variant": "NaN literal",
   "base": "valid/S01-minimal.feature.json",
   "mutation": {
-    "find": "\"timeout_min\": 10,",
+    "find": "\"timeout_min\": 4,",
     "replace": "\"timeout_min\": NaN,"
   },
   "exit": 1,

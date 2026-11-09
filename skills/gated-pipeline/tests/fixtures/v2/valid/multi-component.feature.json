@@ -252,7 +252,7 @@
     "known_failures": [],
     "isolated": false,
     "setup_command": null,
-    "timeout_min": 10,
+    "timeout_min": 4,
     "live_budget_min": 0
   },
   "limits": {

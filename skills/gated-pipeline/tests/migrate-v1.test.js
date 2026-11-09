@@ -104,8 +104,9 @@ function underivable(draft, manifest, mapping, expect) {
 const PLACEHOLDER_LISTS = ['/product/non_goals/', '/product/constraints/', '/product/risks/', '/architecture/decisions/',
   '/architecture/invariants/', '/architecture/security/accepted_risks/'];
 const SCHEMA_CODES = ['E_TYPE', 'E_ENUM', 'E_CONST', 'E_PATTERN', 'E_MIN_LENGTH', 'E_MIN_ITEMS', 'E_MINIMUM', 'E_MAXIMUM', 'E_REQUIRED', 'E_UNKNOWN_FIELD'];
-// A schema-valid value for a typed todo (by field name), so the graph rules run on the rest.
-const TYPED_FILL = { priority: 'P1', depends_on: [], live: false, exclusive: true, known_failures: [], isolated: false, timeout_min: 5,
+// A schema-valid value for a typed todo (by field name), so the graph rules run on the rest. timeout_min 4 fits one
+// foreground call (G40) even when the suite's setup_command is still a string todo (setup and suite: 2 x 255 s).
+const TYPED_FILL = { priority: 'P1', depends_on: [], live: false, exclusive: true, known_failures: [], isolated: false, timeout_min: 4,
   live_budget_min: 0, proof_timeout_s: 60, negative_controls_total_min: 5, budget_min: 0, quiet: false, effort: 'low' };
 
 function runCase(name, extra = {}) {

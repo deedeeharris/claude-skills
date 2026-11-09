@@ -25,7 +25,7 @@ const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const uniqSorted = list => [...new Set(list)].sort();
 
 // Copied by hand from docs/v2-design.md section 3 (the parse, version and schema code lists, the rule tables
-// G01-G39, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
+// G01-G40, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
 // change to the contract shows up here; the lists are never imported from the validator.
 const DESIGN_CODES = [
   'E_PARSE', 'E_DUP_KEY', 'E_FORBIDDEN_KEY', 'E_SCHEMA_VERSION',
@@ -37,7 +37,7 @@ const DESIGN_CODES = [
   'E_SOURCE_MISMATCH', 'E_SOURCE_LEAK', 'E_ID_REMOVED', 'E_ID_REACTIVATED',
 ];
 const DESIGN_RULES = [
-  ...Array.from({ length: 39 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
+  ...Array.from({ length: 40 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
   'R01', 'R02', 'R03', 'R04', 'P01', 'P02',
 ];
 
@@ -296,7 +296,7 @@ test('rule branches: proofs, checks and live acceptances', () => {
   assert.deepEqual(check('s01', f => { delete AC(f).verification.live; }), ['G18 E_PROOF /requirements/0/acceptance/0/verification/live']);
   assert.deepEqual(check('medium', f => { f.requirements[2].acceptance[0].verification.live = false; }), ['G19 E_PROOF /requirements/2/acceptance/0/verification/live']);
   assert.deepEqual(check('medium', f => { delete f.requirements[2].acceptance[0].verification.evidence; }), ['G19 E_PROOF /requirements/2/acceptance/0/verification/evidence']);
-  assert.deepEqual(check('medium', f => { f.checks[1].budget_min = 0; }), ['G21 E_PROOF /requirements/1/acceptance/0/verification/check_id']);
+  assert.deepEqual(check('medium', f => { f.checks[1].budget_min = 0; f.checks[1].timeout_min = 5; }), ['G21 E_PROOF /requirements/1/acceptance/0/verification/check_id']);
   assert.deepEqual(check('medium', f => { f.checks[1].applicable = false; }), ['G21 E_PROOF /requirements/1/acceptance/0/verification/check_id']);
   assert.deepEqual(check('s01', f => { delete f.checks[0].expected; delete f.checks[0].timeout_min; }), ['G28 E_REASON_MISSING /checks/0/expected', 'G28 E_REASON_MISSING /checks/0/timeout_min']);
   assert.deepEqual(check('s01', f => { f.checks[0].applicable = false; delete f.checks[0].command; delete f.checks[0].expected; delete f.checks[0].timeout_min; }), []);
@@ -304,6 +304,36 @@ test('rule branches: proofs, checks and live acceptances', () => {
     ['G20 E_PROOF /checks/0/command', 'G20 E_PROOF /suite/setup_command', 'G20 E_PROOF /suite/unit_command']);
   assert.deepEqual(check('s01', f => { f.checks[0].reason = '   '; }), ['G27 E_REASON_MISSING /checks/0/reason']);
   assert.deepEqual(check('medium', f => { LIVE(f).negative_control = { method: 'exempt', description: 'x', exemption_reason: 'y' }; }), []);
+});
+
+// G40 (design section 3 and 6.4): every frozen run whose worst case cannot finish inside one foreground Bash call,
+// counted as the workflows count it (limit + 15 s per run, within 570 s).
+test('rule branches: G40 one foreground call per frozen run (suite, check, proof, negative control)', () => {
+  assert.deepEqual(check('s01', f => { f.suite.timeout_min = 9; }), [], 'suite 9 min: 555 s fits');
+  assert.deepEqual(check('s01', f => { f.suite.timeout_min = 10; }), ['G40 E_LIMIT /suite/timeout_min'], 'suite 10 min: 615 s');
+  assert.deepEqual(check('s01', f => { f.suite.setup_command = 'npm ci'; f.suite.timeout_min = 5; }), ['G40 E_LIMIT /suite/timeout_min'], 'setup and suite count twice: 630 s');
+  assert.deepEqual(check('s01', f => { f.checks[0].timeout_min = 10; }), ['G40 E_LIMIT /checks/0/timeout_min']);
+  assert.deepEqual(check('s01', f => { f.checks[0].timeout_min = 10; f.checks[0].applicable = false; }), [], 'a check that is not applicable never runs');
+  assert.deepEqual(check('medium', f => { f.checks[1].timeout_min = 20; }), [], 'a live check is bounded by its budget_min');
+  assert.deepEqual(check('medium', f => { f.checks[1].timeout_min = 20; f.checks[1].budget_min = 10; }), ['G40 E_LIMIT /checks/1/budget_min']);
+  assert.deepEqual(check('s01', f => { f.limits.proof_timeout_s = 555; f.limits.negative_controls_total_min = 9; }), [], 'one proof 570 s fits; the control is capped at 9 min + 30 s');
+  assert.deepEqual(check('s01', f => { f.limits.proof_timeout_s = 556; }), ['G40 E_LIMIT /limits/proof_timeout_s'], 'one proof report, not a second one for the control');
+  assert.deepEqual(check('s01', f => { f.limits.proof_timeout_s = 300; }), ['G40 E_LIMIT /limits'], 'baseline and mutated run 630 s, the cap 630 s');
+  assert.deepEqual(check('medium', f => { f.limits.proof_timeout_s = 180; }), ['G40 E_LIMIT /limits'], 'with setup the control counts three runs: 585 s');
+  assert.deepEqual(check('s01', f => { AC(f).negative_control = { method: 'exempt', description: 'x', exemption_reason: 'y' }; f.limits.proof_timeout_s = 300; }), [],
+    'without an isolated_mutation only one proof counts');
+  assert.deepEqual(check('s01', f => { AC(f).status = 'retired'; AC(f).retired_rationale = 'gone'; f.limits.proof_timeout_s = 600; })
+    .filter(x => x.startsWith('G40')), [], 'a retired acceptance runs no proof');
+});
+
+test('the one-call bound of scripts/lib/call-limits.js equals the copies in workflows/build.js and workflows/verify.js', () => {
+  const limits = require('../scripts/lib/call-limits.js');
+  for (const name of ['build', 'verify']) {
+    const src = fs.readFileSync(path.join(SKILL, 'workflows', name + '.js'), 'utf8');
+    const value = k => { const m = src.match(new RegExp(`^const ${k} = (\\d+)$`, 'm')); assert.ok(m, `${name}.js defines ${k}`); return Number(m[1]); };
+    assert.equal(value('ONE_CALL_S'), limits.ONE_CALL_S, `${name}.js ONE_CALL_S`);
+    assert.equal(value('RUN_GRACE_S'), limits.RUN_GRACE_S, `${name}.js RUN_GRACE_S`);
+  }
 });
 
 test('rule branches: ids, statements, references and controls', () => {

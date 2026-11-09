@@ -40,6 +40,19 @@ const stub = (env) => scriptStep(undefined, env ? { env: cleanEnv(env) } : {});
 const bash = (body, env) => spawnSync('bash', ['-c', body], { env: env || cleanEnv(), encoding: 'utf8' });
 const labels = calls => calls.map(c => c.options.label);
 const sameKeys = (o, keys) => assert.deepEqual(Object.keys(o).sort(), [...keys].sort());
+// verify runs the acceptance proofs in batches labelled 'acceptance proofs 1', 'acceptance proofs 2', ...: a stub for each.
+const proofStubs = (n = 10) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`acceptance proofs ${i + 1}`, stub()]))
+// One more runtime acceptance HELLO-001-AC<n> of HELLO-001 (live false, exempt control), proved by the focused test.
+const extraProof = n => ({ id: `HELLO-001-AC${n}`, status: 'active', given: 'the library', when: `probe ${n} runs`, then: 'it returns hello',
+  verification: { kind: 'runtime', live: false, command: 'node test/hello.test.js', expected: { exit_code: 0 } },
+  negative_control: { method: 'exempt', description: 'A repeat probe.', exemption_reason: 'Covered by the AC1 mutation.' } })
+// A workflow's text with a smaller one-call bound, for its own guard: the validator (G40) keeps a plan whose frozen
+// limits cannot fit the real bound from being frozen at all, so the stage guard is exercised with a smaller one.
+function withOneCall(name, seconds) {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'workflows', name + '.js'), 'utf8')
+  assert.equal(src.split('\nconst ONE_CALL_S = 570\n').length, 2, `${name}.js defines ONE_CALL_S = 570 once`)
+  return src.replace('\nconst ONE_CALL_S = 570\n', `\nconst ONE_CALL_S = ${seconds}\n`)
+}
 
 // A fresh run_dir path (<state_dir>/<stage>/<run_id>): picked here, created by the stage's first gp-exec block.
 let runCount = 0;
@@ -163,7 +176,7 @@ async function buildV2(c, opts = {}) {
     }),
     ...(opts.table || {}),
   };
-  const { result, calls } = await run('build', buildArgs(c, runDir, opts.args), many(responder(table)));
+  const { result, calls } = await run('build', buildArgs(c, runDir, opts.args), many(responder(table)), opts.source ? { source: opts.source } : {});
   const file = path.join(c.root, `build-result-${runCount}.json`);
   fs.writeFileSync(file, JSON.stringify(result, null, 2) + '\n');
   return { result, calls, path: file, runDir };
@@ -177,7 +190,7 @@ async function verifyV2(c, build, opts = {}) {
   };
   const negative = id => async (prompt, options, calls) => { patch(id)(); return stub(opts.negativeEnv)(prompt, options, calls); };
   const table = {
-    'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs': stub(),
+    'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), ...proofStubs(),
     'negative control HELLO-001-AC1': negative('HELLO-001-AC1'), 'negative control HELLO-001-AC4': negative('HELLO-001-AC4'),
     'pinned state': stub(), 'completion proof': stub(),
     ...(opts.fallback ? {
@@ -192,7 +205,7 @@ async function verifyV2(c, build, opts = {}) {
     }),
     ...(typeof opts.table === 'function' ? opts.table(runDir) : opts.table || {}),
   };
-  const { result, calls } = await run('verify', verifyArgs(c, runDir, build.path, opts.args), many(responder(table)));
+  const { result, calls } = await run('verify', verifyArgs(c, runDir, build.path, opts.args), many(responder(table)), opts.source ? { source: opts.source } : {});
   return { result, calls, runDir };
 }
 function addOrigin(c) {
@@ -443,7 +456,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       const r = v.result;
       assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
       assert.equal(r.contract, 2);
-      assert.deepEqual(labels(v.calls), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE', 'acceptance proofs', 'codex final review', 'codex spec compliance',
+      assert.deepEqual(labels(v.calls), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE', 'acceptance proofs 1', 'codex final review', 'codex spec compliance',
         'negative control HELLO-001-AC1', 'pinned state', 'completion proof']);
       assert.equal(r.completion.passed, true);
       assert.equal(r.completion.certification, 'design-gated');
@@ -1001,7 +1014,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       fs.writeFileSync(path.join(dir, 'mutation.patch'), c.MUTATION);
       return stub()(prompt, options, calls);
     };
-    const table = recordAll({ 'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs': stub(),
+    const table = recordAll({ 'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs 1': stub(),
       'codex final review': codexReview(c, path.join(runDir, 'final-review'), 1), 'codex spec compliance': codexCompliance(c, path.join(runDir, 'compliance')),
       'negative control HELLO-001-AC1': neg, 'pinned state': stub() });
     const first = await run('verify', verifyArgs(c, runDir, b.path), many(responder({ ...table, 'completion proof': STOP })));
@@ -1116,46 +1129,123 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
   });
 
   // ---- one foreground Bash call (at most 600 s): a frozen step whose limits cannot fit in it BLOCKs before it starts ------------
-  test('a frozen suite whose limit cannot finish inside one 600 s foreground Bash call -> build BLOCKED at preflight, before the implementer', async (t) => {
-    const f = baseFeature();
-    f.suite.timeout_min = 10;
-    const c = frozenRepo(t, { feature: f });
-    const bo = await buildV2(c);
+  // The validator (G40) refuses to freeze such a plan, so design never hands one to build or verify. The stage guards stay
+  // as a second line: they are exercised with the workflow's one-call bound lowered in its text (withOneCall), on plans
+  // whose limits fit the real bound.
+  test('G40: the validator refuses a plan whose suite, check, single proof or negative control cannot fit one 600 s call, so design cannot freeze it', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-g40-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    for (const [name, edit, at] of [
+      ['suite timeout_min 10', f => { f.suite.timeout_min = 10; }, '/suite/timeout_min'],
+      ['setup and suite, 2 x 5 min', f => { f.suite.timeout_min = 5; f.suite.isolated = true; f.suite.setup_command = 'echo setup'; }, '/suite/timeout_min'],
+      ['a check with timeout_min 10', f => { f.checks[0].timeout_min = 10; }, '/checks/0/timeout_min'],
+      ['a live check with budget_min 10', f => { f.checks[1].timeout_min = 12; f.checks[1].budget_min = 10; }, '/checks/1/budget_min'],
+      ['proof_timeout_s 600', f => { f.limits.proof_timeout_s = 600; }, '/limits/proof_timeout_s'],
+      ['a negative control with proof_timeout_s 300', f => { f.limits.proof_timeout_s = 300; f.limits.negative_controls_total_min = 10; }, '/limits'],
+    ]) {
+      const f = baseFeature();
+      edit(f);
+      const file = path.join(dir, 'greet.feature.json');
+      fs.writeFileSync(file, JSON.stringify(f, null, 2) + '\n');
+      const r = spawnSync(process.execPath, [path.join(SCRIPTS, 'validate-feature.js'), '--file', file, '--repo-path', '.pipeline/features/greet.feature.json'], { encoding: 'utf8' });
+      assert.equal(r.status, 1, name + ': ' + r.stdout);
+      assert.deepEqual(JSON.parse(r.stdout).errors.map(e => [e.code, e.rule, e.path]), [['E_LIMIT', 'G40', at]], name);
+    }
+    // 28 runtime proofs at proof_timeout_s 120 sum to 3780 s, but each fits one call: valid
+    const many28 = baseFeature();
+    for (let n = 4; n <= 30; n++) many28.requirements[0].acceptance.push(extraProof(n));
+    many28.limits.proof_timeout_s = 120;
+    const file = path.join(dir, 'greet.feature.json');
+    fs.writeFileSync(file, JSON.stringify(many28, null, 2) + '\n');
+    const r = spawnSync(process.execPath, [path.join(SCRIPTS, 'validate-feature.js'), '--file', file, '--repo-path', '.pipeline/features/greet.feature.json'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout);
+  });
+  test('a frozen suite whose limit cannot finish inside one foreground Bash call -> build BLOCKED at preflight, before the implementer', async (t) => {
+    const c = frozenRepo(t);
+    const bo = await buildV2(c, { source: withOneCall('build', 120) }); // the suite: 2 min + 15 s = 135 s
     assert.equal(bo.result.status, 'BLOCKED', JSON.stringify(bo.result).slice(0, 1500));
     assert.equal(bo.result.stage, 'preflight');
-    assert.match(bo.result.reason, /suite .*cannot finish inside one foreground Bash call \(600 s\)/);
+    assert.match(bo.result.reason, /suite .*can take up to 135 s and cannot finish inside one foreground Bash call \(600 s\)/);
     assert.deepEqual(labels(bo.calls), ['design preflight']);
     assert.match(bo.calls[0].prompt, /Bash timeout 600000 ms/, 'every gp-exec step asks for the Bash maximum');
   });
-  test('a suite with setup counts both runs: 2 x 5 min -> build BLOCKED at preflight (600 s)', async (t) => {
+  test('a suite with setup counts both runs: 2 x (2 min + 15 s) -> build BLOCKED at preflight where the suite alone fits', async (t) => {
     const f = baseFeature();
-    f.suite.timeout_min = 5;
     f.suite.isolated = true;
     f.suite.setup_command = 'echo setup';
     const c = frozenRepo(t, { feature: f });
-    const bo = await buildV2(c);
+    const bo = await buildV2(c, { source: withOneCall('build', 200) });
     assert.equal(bo.result.status, 'BLOCKED');
     assert.equal(bo.result.stage, 'preflight');
-    assert.match(bo.result.reason, /suite .*setup.*600 s/);
+    assert.match(bo.result.reason, /suite \(setup and suite, 2 x timeout_min 2\) can take up to 270 s/);
   });
-  for (const [name, edit, pattern] of [
-    ['a check with timeout_min 10', f => { f.checks[0].timeout_min = 10; }, /check CHECK-LINT .*600 s/],
-    ['a live check with budget_min 10', f => { f.checks[1].timeout_min = 12; f.checks[1].budget_min = 10; }, /check CHECK-LIVE .*600 s/],
-    ['proof_timeout_s 600', f => { f.limits.proof_timeout_s = 600; }, /acceptance proofs .*600 s/],
-    ['a negative control with proof_timeout_s 300 (baseline + mutated run)', f => { f.limits.proof_timeout_s = 300; f.limits.negative_controls_total_min = 10; }, /negative control HELLO-001-AC1 .*600 s/],
+  for (const [name, edit, bound, pattern] of [
+    ['a check with timeout_min 2', f => { f.checks[1].timeout_min = 1; }, 120, /^check CHECK-LINT \(timeout_min 2\) can take up to 135 s .*600 s/],
+    ['a live check with budget_min 2', f => { f.checks[0].timeout_min = 1; f.checks[1].budget_min = 2; }, 120, /^check CHECK-LIVE \(budget_min 2\) can take up to 135 s .*600 s/],
+    ['one proof with proof_timeout_s 120', f => { f.checks[0].timeout_min = 1; f.limits.proof_timeout_s = 120; }, 120,
+      /^an acceptance proof \(proof_timeout_s 120, one run-frozen\.js run\) can take up to 135 s and cannot finish inside one foreground Bash call \(600 s\)/],
+    ['a negative control with proof_timeout_s 30 (baseline + mutated run)', f => { f.checks[0].timeout_min = 1; }, 80, /^negative control HELLO-001-AC1 .*can take up to 90 s .*600 s/],
   ]) {
-    test(`${name} cannot finish inside one 600 s foreground Bash call -> verify BLOCKED at plan preflight, before any check runs`, async (t) => {
+    test(`${name} cannot finish inside one foreground Bash call -> verify BLOCKED at plan preflight, before any check runs`, async (t) => {
       const f = baseFeature();
       edit(f);
       const c = frozenRepo(t, { feature: f });
       c.implement();
-      const vo = await verifyV2(c, { path: path.join(c.root, 'unused-build-result.json') });
+      const vo = await verifyV2(c, { path: path.join(c.root, 'unused-build-result.json') }, { source: withOneCall('verify', bound) });
       assert.equal(vo.result.status, 'BLOCKED', JSON.stringify(vo.result).slice(0, 1500));
       assert.equal(vo.result.stage, 'plan preflight');
       assert.match(vo.result.reason, pattern);
+      assert.ok(!/in one block|\d+ x proof_timeout_s/.test(vo.result.reason), 'one proof is judged alone, never the sum of the proofs: ' + vo.result.reason);
       assert.deepEqual(labels(vo.calls), ['plan preflight']);
     });
   }
+  test('28 runtime acceptances at proof_timeout_s 120 (3780 s in all, 135 s each): verify runs the proofs in batches that each fit one call, into one ledger, and completion passes', async (t) => {
+    const f = baseFeature();
+    const extra = [];
+    for (let n = 4; n <= 30; n++) { f.requirements[0].acceptance.push(extraProof(n)); extra.push(`HELLO-001-AC${n}`); }
+    f.limits.proof_timeout_s = 120;
+    const c = frozenRepo(t, { feature: f });
+    const b = await buildV2(c);
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    const v = await verifyV2(c, b, { extraIds: extra });
+    assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
+    assert.equal(v.result.completion.passed, true);
+    const runtimeIds = ['HELLO-001-AC1', ...extra];
+    const batchCalls = v.calls.filter(x => /^acceptance proofs \d+$/.test(x.options.label));
+    assert.deepEqual(batchCalls.map(x => x.options.label), Array.from({ length: 7 }, (_, i) => `acceptance proofs ${i + 1}`), 'floor(570 / 135) = 4 proofs a batch: 7 batches');
+    assert.deepEqual(labels(v.calls).slice(0, 3 + 7), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE', ...batchCalls.map(x => x.options.label)], 'the batches run one after another');
+    const targets = batchCalls.map(x => {
+      const blocks = gpExecBlocks(x.prompt);
+      assert.equal(blocks.length, 1, 'one gp-exec block per batch');
+      assert.match(blocks[0], new RegExp(`sha256sum '?${v.runDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/acceptance-ledger\\.json`), 'every batch prints the ledger hash');
+      return [...blocks[0].matchAll(/--target ((?:proof|live):[A-Z0-9-]+)/g)].map(m => m[1]);
+    });
+    for (const tg of targets) {
+      const proofsHere = tg.filter(x => x.startsWith('proof:')).length;
+      assert.ok(proofsHere >= 1 && proofsHere * (120 + 15) <= 570, `a batch's worst case fits one call: ${proofsHere} proofs`);
+    }
+    assert.deepEqual(targets.flat(), [...runtimeIds.map(id => `proof:${id}`), 'live:HELLO-001-AC2'], 'every proof once, in manifest order, then the live link in the last batch');
+    // one ledger with every record; the hash verify reports is the last batch's, of the final ledger
+    const ledger = path.join(v.runDir, 'acceptance-ledger.json');
+    const entries = JSON.parse(fs.readFileSync(ledger, 'utf8')).entries;
+    assert.deepEqual(entries.map(e => e.id), [...runtimeIds, 'HELLO-001-AC2']);
+    assert.equal(v.result.acceptance_ledger.path, ledger);
+    assert.equal(v.result.acceptance_ledger.sha256, sha256(fs.readFileSync(ledger)));
+    for (const id of runtimeIds) assert.ok(fs.existsSync(path.join(v.runDir, 'frozen-runs', `proof:${id}.record.json`)), id);
+  });
+  test('a refused proof batch stops verify: the batches after it never run', async (t) => {
+    const f = baseFeature();
+    for (let n = 4; n <= 10; n++) f.requirements[0].acceptance.push(extraProof(n));
+    f.limits.proof_timeout_s = 120;
+    const c = frozenRepo(t, { feature: f });
+    const b = await buildV2(c);
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    const v = await verifyV2(c, b, { table: { 'acceptance proofs 1': { stdout: 'run-frozen: refused\n', exit_code: 1 } } });
+    assert.equal(v.result.status, 'BLOCKED', JSON.stringify(v.result).slice(0, 2000));
+    assert.equal(v.result.stage, 'acceptance proofs');
+    assert.match(v.result.reason, /batch 1 of 2/);
+    assert.deepEqual(labels(v.calls), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE', 'acceptance proofs 1']);
+  });
 
   // ---- the fresh run_dir: the first gp-exec block of build and verify makes it, with its parent ----------------------------
   test('fresh run_dir: build and verify create a run_dir whose parent does not exist; an existing run_dir is BLOCKED with GP_RUN_DIR_EXISTS and nothing else runs; an unusable parent is GP_RUN_DIR_PARENT', async (t) => {
@@ -1228,7 +1318,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.equal(b.result.plan_identity.manifest_sha256, persisted.manifest_sha256);
     // a verify that died after its proofs: a partial ledger stays in its run_dir
     const partialDir = freshRun(c, 'verify');
-    const partial = await run('verify', verifyArgs(c, partialDir, b.path), many(responder({ 'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs': stub(), 'codex final review': STOP })));
+    const partial = await run('verify', verifyArgs(c, partialDir, b.path), many(responder({ 'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), ...proofStubs(), 'codex final review': STOP })));
     assert.ok(partial.result.stopped);
     const partialLedger = path.join(partialDir, 'acceptance-ledger.json');
     assert.ok(fs.existsSync(partialLedger));
@@ -1411,7 +1501,7 @@ const implementationRows = src => {
       const runDir = freshRun(cc, 'parity-verify');
       const build = { path: path.join(cc.root, 'unused-build-result.json') };
       const table = {
-        'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs': stub(),
+        'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), ...proofStubs(),
         'codex final review': side === 'codex' ? () => codexAt(ran, path.join(runDir, 'final-review')) : { ...UNAVAILABLE, head_sha: head(cc) },
         'opus final review (codex unavailable)': opus(({ headSha }) => ({ ...P.fallbackReply(row), head_sha: headSha })), 'record opus final review': stub(),
         'codex spec compliance': codexCompliance(cc, path.join(runDir, 'compliance')),
@@ -1495,7 +1585,7 @@ const implementationRows = src => {
       const venv = R.envWith('v2-relay-verify', { FAKE_CODEX_DELAY_MS: '3000',
         FAKE_CODEX_RAW: JSON.stringify({ verdict: 'PASS', summary: 'every acceptance traced', findings: [], requirements: complianceReqs(head(c)) }) });
       const { result: vr, calls: vc } = await run('verify', verifyArgs(c, verifyDir, b.path), many(responder({
-        'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs': stub(), 'pinned state': stub(), 'completion proof': stub(),
+        'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), ...proofStubs(), 'pinned state': stub(), 'completion proof': stub(),
         'negative control HELLO-001-AC1': async (prompt, options, calls) => {
           fs.mkdirSync(path.join(verifyDir, 'negative', 'HELLO-001-AC1'), { recursive: true });
           fs.writeFileSync(path.join(verifyDir, 'negative', 'HELLO-001-AC1', 'mutation.patch'), c.MUTATION);

@@ -131,8 +131,8 @@
     }
   ],
   "scope": { "allowed_paths": ["src/", "test/"], "protected_paths": ["config/secrets/"], "state_paths": ["var/state/"], "clean_ignore": ["tmp/"], "test_paths": ["test/"] },
-  "suite": { "command": "node --test", "unit_command": "node --test test/login.test.js", "known_failures": [{ "test_id": "test/flaky-clock.test.js", "reason": "Fails near DST changes; tracked upstream." }], "isolated": true, "setup_command": "npm ci", "timeout_min": 20, "live_budget_min": 5 },
-  "limits": { "proof_timeout_s": 300, "negative_controls_total_min": 15 },
+  "suite": { "command": "node --test", "unit_command": "node --test test/login.test.js", "known_failures": [{ "test_id": "test/flaky-clock.test.js", "reason": "Fails near DST changes; tracked upstream." }], "isolated": true, "setup_command": "npm ci", "timeout_min": 4, "live_budget_min": 5 },
+  "limits": { "proof_timeout_s": 120, "negative_controls_total_min": 15 },
   "checks": [
     { "id": "CHECK-LINT", "name": "Lint", "applicable": true, "reason": "The repo has a lint script.", "command": "npm run lint", "expected": { "exit_code": 0 }, "timeout_min": 5, "budget_min": 0, "quiet": false, "effort": "low", "environment": "local shell" },
     { "id": "CHECK-E2E", "name": "Staging end to end", "applicable": true, "reason": "The audit sink only exists in staging.", "command": "npm run e2e", "expected": { "exit_code": 0 }, "timeout_min": 10, "budget_min": 5, "quiet": true, "effort": "medium", "environment": "staging sandbox" },
