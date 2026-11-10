@@ -1019,6 +1019,53 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.equal(fs.existsSync(redRecordOf(b)), false);
   });
 
+  test('test-first: a red_commit equal to the work branch HEAD (no implementation commit after it) -> BLOCKED at test-first before run-frozen, as completion would reject it', async (t) => {
+    const c = frozenRepo(t);
+    const redOnly = () => {
+      c.write('test/hello.test.js', IMPL_FILES['test/hello.test.js']);
+      c.git('add', '--', 'test/hello.test.js');
+      c.git('commit', '-qm', 'red: focused tests only');
+      const red = head(c);
+      return { blocked: false, summary: 'tests only', files_changed: ['test/hello.test.js'], commit: red, base_commit: c.designCommit, red_commit: red };
+    };
+    const b = await buildV2(c, { implement: redOnly });
+    testFirstBlocked(b, /is the work branch HEAD: no implementation commit after it/);
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red']);
+    assert.equal(fs.existsSync(redRecordOf(b)), false, 'no red run without an implementation after the red commit');
+  });
+
+  // An empty scope.test_paths leaves the red commit nowhere to go: the validator rejects it at design (G41), so it is
+  // never frozen, and build's preflight BLOCKS it as a second line (here a preflight whose output names no test path).
+  test('test-first: the validator refuses a design with an empty scope.test_paths (G41), so design cannot freeze it', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-g41-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const f = baseFeature();
+    f.requirements[0].acceptance[0].negative_control = { method: 'exempt', description: 'A unit probe.', exemption_reason: 'Covered by review.' };
+    const file = path.join(dir, 'greet.feature.json');
+    for (const [paths, status, errors] of [[['test/'], 0, []], [[], 1, [['E_COVERAGE', 'G41', '/scope/test_paths']]]]) {
+      f.scope.test_paths = paths;
+      fs.writeFileSync(file, JSON.stringify(f, null, 2) + '\n');
+      const r = spawnSync(process.execPath, [path.join(SCRIPTS, 'validate-feature.js'), '--file', file, '--repo-path', '.pipeline/features/greet.feature.json'], { encoding: 'utf8' });
+      assert.equal(r.status, status, r.stdout);
+      assert.deepEqual(JSON.parse(r.stdout).errors.map(e => [e.code, e.rule, e.path]), errors);
+    }
+  });
+  test('test-first: a design preflight that names no scope.test_paths -> build BLOCKED at preflight (E_TEST_FIRST), before the implementer', async (t) => {
+    const c = frozenRepo(t);
+    let seen = false;
+    const noTests = scriptStep(r => {
+      seen = r.stdout.includes('"test_paths":["test/"]');
+      return { stdout: r.stdout.split('"test_paths":["test/"]').join('"test_paths":[]'), exit_code: r.exit_code };
+    });
+    const b = await buildV2(c, { table: { 'design preflight': noTests } });
+    assert.ok(seen, 'the real preflight printed the frozen test_paths');
+    assert.equal(b.result.status, 'BLOCKED', JSON.stringify(b.result).slice(0, 1500));
+    assert.equal(b.result.stage, 'preflight');
+    assert.equal(b.result.code, 'E_TEST_FIRST');
+    assert.match(b.result.reason, /at least one scope\.test_paths entry/);
+    assert.deepEqual(labels(b.calls), ['design preflight']);
+  });
+
   test('known failures come from the manifest only: exit 1 naming only a manifest known-failure id -> PASS and completion exit 0; naming none -> fix round', async (t) => {
     const yaml = '# synthetic pipeline config\ntests:\n  known_failures: ["test/known.js"]\n  clean_ignore: []\nstate:\n  paths: []\n';
     const c = frozenRepo(t, { pipelineYaml: yaml, baseFiles: { 'test/known.js': "console.log('not ok test/known.js');\nprocess.exit(1);\n" },

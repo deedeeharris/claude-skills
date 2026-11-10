@@ -25,7 +25,7 @@ const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const uniqSorted = list => [...new Set(list)].sort();
 
 // Copied by hand from docs/v2-design.md section 3 (the parse, version and schema code lists, the rule tables
-// G01-G40, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
+// G01-G41, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
 // change to the contract shows up here; the lists are never imported from the validator.
 const DESIGN_CODES = [
   'E_PARSE', 'E_DUP_KEY', 'E_FORBIDDEN_KEY', 'E_SCHEMA_VERSION',
@@ -37,7 +37,7 @@ const DESIGN_CODES = [
   'E_SOURCE_MISMATCH', 'E_SOURCE_LEAK', 'E_ID_REMOVED', 'E_ID_REACTIVATED',
 ];
 const DESIGN_RULES = [
-  ...Array.from({ length: 40 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
+  ...Array.from({ length: 41 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
   'R01', 'R02', 'R03', 'R04', 'P01', 'P02',
 ];
 
@@ -387,6 +387,16 @@ test('rule branches: overlap rules fold case, G36 compares exactly', () => {
   assert.deepEqual(check('medium', f => { f.scope.allowed_paths.push('SRC/'); f.architecture.components[1].owned_paths = ['SRC/Auth/']; }),
     ['G35 E_OWNERSHIP /architecture/components/1/owned_paths/0']);
   assert.deepEqual(check('s01', f => { f.architecture.components[0].owned_paths = ['SRC/']; }), ['G36 E_OWNERSHIP /architecture/components/0/owned_paths/0'], 'owned "SRC/" is not inside allowed "src/"');
+});
+
+// G41 (design sections 3 and 6.3): contract-2 test-first commits the RED commit under scope.test_paths, so a
+// design with none is rejected before it is frozen; G26 alone reports the case where an isolated_mutation exists.
+test('rule branches: G41 an empty scope.test_paths is rejected at design; G26 reports it alone when an isolated_mutation exists', () => {
+  const exempt = f => { AC(f).negative_control = { method: 'exempt', description: 'x', exemption_reason: 'y' }; };
+  assert.deepEqual(check('s01', f => { exempt(f); }), [], 'every control exempt, a test path: valid');
+  assert.deepEqual(check('s01', f => { exempt(f); f.scope.test_paths = []; }), ['G41 E_COVERAGE /scope/test_paths'], 'no isolated_mutation and no test path');
+  assert.deepEqual(check('s01', f => { f.scope.test_paths = []; }), ['G26 E_NEGATIVE_CONTROL /scope/test_paths'], 'one diagnostic per cause');
+  assert.deepEqual(check('s01', f => { exempt(f); f.scope.test_paths = ['test/']; }), []);
 });
 
 test('rule branches: G13, G14 count active goals and components; G25 needs every active acceptance exempt', () => {

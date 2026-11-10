@@ -92,7 +92,9 @@ function underivable(draft, manifest, mapping, expect) {
       } else out.push(`${p}/verification/evidence/paths/0`, `${p}/verification/evidence/description`, `${p}/negative_control/exemption_reason`);
     });
   });
-  if (runtime) out.push('/scope/test_paths/0');
+  // contract-2 test-first commits the RED commit under scope.test_paths (G41), so the migrated draft needs one
+  // whether or not an isolated_mutation exists.
+  out.push('/scope/test_paths/0');
   manifest.checks.forEach((c, i) => {
     out.push(...['budget_min', 'quiet', 'effort', 'environment'].map(k => `/checks/${i}/${k}`));
     if (c.applicable) out.push(`/checks/${i}/command`, `/checks/${i}/timeout_min`);
@@ -227,6 +229,24 @@ describe('migrate-v1 fixtures (design 8, plan 5.4)', () => {
     assert.deepEqual(JSON.parse(v2.stdout).errors.map(e => [e.code, e.rule, e.path]), [['E_MIGRATION_TODO', 'G39', '/test_plan']]);
     assert.equal(at(draft, '/title'), 'Login lockout');
     assert.equal(at(draft, '/source_request/text'), 'Lock an account after five failed logins.');
+  });
+
+  test('a v1 manifest with no runtime requirement still leaves /scope/test_paths/0 as a todo: contract-2 test-first needs one (G41)', () => {
+    const root = tmp();
+    const src = path.join(FIXTURES, 'exact');
+    for (const f of ['spec.md', 'prd.md', 'request.txt']) fs.copyFileSync(path.join(src, f), path.join(root, f));
+    const manifest = JSON.parse(fs.readFileSync(path.join(src, 'execution-plan.json'), 'utf8'));
+    for (const r of manifest.requirements) { r.kind = 'static'; r.proof_command = ''; }
+    fs.writeFileSync(path.join(root, 'execution-plan.json'), JSON.stringify(manifest, null, 2) + '\n');
+    const out = path.join(root, 'draft.json');
+    const r = migrate(['--manifest', path.join(root, 'execution-plan.json'), '--spec', path.join(root, 'spec.md'), '--prd', path.join(root, 'prd.md'),
+      '--source-request', path.join(root, 'request.txt'), '--feature-id', 'login', '--out', out]);
+    assert.equal(r.status, 0, r.stderr);
+    const draft = JSON.parse(fs.readFileSync(out, 'utf8'));
+    const report = JSON.parse(fs.readFileSync(out + '.report.json', 'utf8'));
+    assert.ok(draft.requirements.every(q => q.acceptance.every(a => a.negative_control.method !== 'isolated_mutation')), 'no isolated_mutation in the draft');
+    assert.deepEqual(draft.scope.test_paths, [TOKEN]);
+    assert.ok(report.todos.some(t => t.path === '/scope/test_paths/0' && /test-first/.test(t.reason)), JSON.stringify(report.todos.filter(t => t.path.startsWith('/scope'))));
   });
 
   test('a spec.md that does not hash to the manifest spec_sha256 is a conflict', () => {

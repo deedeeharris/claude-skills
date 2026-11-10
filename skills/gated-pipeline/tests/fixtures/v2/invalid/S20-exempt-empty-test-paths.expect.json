@@ -1,0 +1,27 @@
+{
+  "case": "S20",
+  "variant": "every control exempt with empty test_paths (contract-2 test-first needs one)",
+  "base": "valid/S20-alternate-evidence.feature.json",
+  "mutation": {
+    "find": "\"test_paths\": [\n      \"test/\"\n    ]",
+    "replace": "\"test_paths\": []"
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G41"
+  ],
+  "paths": [
+    "/scope/test_paths"
+  ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G41",
+      "/scope/test_paths"
+    ]
+  ],
+  "args": {}
+}
