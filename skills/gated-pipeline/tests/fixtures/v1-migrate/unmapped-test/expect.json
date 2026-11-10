@@ -1,0 +1,44 @@
+{
+  "description": "a test file named only by spec.md and one named only by a static manifest command",
+  "prd": false,
+  "source_request": false,
+  "mapping": [
+    {
+      "v1_id": "UI-001-AC1",
+      "acceptance_id": "UI-001-AC1",
+      "requirement_id": "UI-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/ui.test.js",
+      "command": "node --test test/ui.test.js"
+    },
+    {
+      "v1_id": "UI-001-AC2",
+      "acceptance_id": "UI-001-AC2",
+      "requirement_id": "UI-001",
+      "kind": "static",
+      "renamed": false,
+      "v1_proof_command": "inspect test/snapshot.test.js",
+      "command": null
+    }
+  ],
+  "conflicts": [],
+  "unmapped_tests": [
+    {
+      "path": "test/extra.test.js",
+      "sources": [
+        "spec.md:13"
+      ]
+    },
+    {
+      "path": "test/snapshot.test.js",
+      "sources": [
+        "spec.md:10",
+        "manifest:UI-001-AC2"
+      ]
+    }
+  ],
+  "lost": [],
+  "provenance_missing": true,
+  "todos_include": []
+}

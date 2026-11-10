@@ -1,0 +1,12 @@
+{
+  "case": "S15",
+  "variant": "contradiction (semantic, review gate)",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "diagnostics": [],
+  "args": {}
+}

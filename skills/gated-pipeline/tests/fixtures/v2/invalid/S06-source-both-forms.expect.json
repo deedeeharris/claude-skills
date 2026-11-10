@@ -1,0 +1,27 @@
+{
+  "case": "S06",
+  "variant": "source_request with both forms",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"text\": \"Add a GET /hello endpoint that returns the text hello.\"",
+    "replace": "\"text\": \"Add a GET /hello endpoint that returns the text hello.\", \"ref\": \"ticket 12\", \"sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"summary\": \"Add a hello route.\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_SOURCE_FORM"
+  ],
+  "rules": [
+    "G08"
+  ],
+  "paths": [
+    "/source_request"
+  ],
+  "diagnostics": [
+    [
+      "E_SOURCE_FORM",
+      "G08",
+      "/source_request"
+    ]
+  ],
+  "args": {}
+}

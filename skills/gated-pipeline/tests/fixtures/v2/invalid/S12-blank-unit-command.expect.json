@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "whitespace-only unit command",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"unit_command\": \"node --test test/hello.test.js\"",
+    "replace": "\"unit_command\": \" \""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G20"
+  ],
+  "paths": [
+    "/suite/unit_command"
+  ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G20",
+      "/suite/unit_command"
+    ]
+  ],
+  "args": {}
+}

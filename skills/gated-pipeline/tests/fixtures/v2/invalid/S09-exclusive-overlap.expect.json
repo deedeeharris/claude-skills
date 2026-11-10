@@ -1,0 +1,27 @@
+{
+  "case": "S09",
+  "variant": "overlapping exclusive owners",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "{ \"id\": \"COMP-SERVER\", \"name\": \"HTTP server\", \"description\": \"Routes requests.\", \"owned_paths\": [\"src/\"], \"exclusive\": true, \"status\": \"active\" }",
+    "replace": "{ \"id\": \"COMP-SERVER\", \"name\": \"HTTP server\", \"description\": \"Routes requests.\", \"owned_paths\": [\"src/\"], \"exclusive\": true, \"status\": \"active\" },\n      { \"id\": \"COMP-ROUTES\", \"name\": \"Routes\", \"description\": \"Route table.\", \"owned_paths\": [\"src/routes/\"], \"exclusive\": true, \"status\": \"active\" }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_OWNERSHIP"
+  ],
+  "rules": [
+    "G35"
+  ],
+  "paths": [
+    "/architecture/components/1/owned_paths/0"
+  ],
+  "diagnostics": [
+    [
+      "E_OWNERSHIP",
+      "G35",
+      "/architecture/components/1/owned_paths/0"
+    ]
+  ],
+  "args": {}
+}

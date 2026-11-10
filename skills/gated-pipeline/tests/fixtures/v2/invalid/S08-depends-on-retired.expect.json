@@ -1,0 +1,27 @@
+{
+  "case": "S08",
+  "variant": "depends_on a retired requirement",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"priority\": \"P1\",\n      \"depends_on\": [],\n      \"component_ids\": [\"COMP-STORE\"],",
+    "replace": "\"priority\": \"P1\",\n      \"depends_on\": [\"OLD-001\"],\n      \"component_ids\": [\"COMP-STORE\"],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_REF"
+  ],
+  "rules": [
+    "G06"
+  ],
+  "paths": [
+    "/requirements/1/depends_on/0"
+  ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G06",
+      "/requirements/1/depends_on/0"
+    ]
+  ],
+  "args": {}
+}

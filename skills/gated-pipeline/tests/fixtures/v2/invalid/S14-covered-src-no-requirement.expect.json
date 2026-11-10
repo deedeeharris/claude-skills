@@ -1,0 +1,27 @@
+{
+  "case": "S14",
+  "variant": "covered SRC without requirement",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"excerpt\": \"keep an audit trail\", \"disposition\": \"covered\", \"requirement_ids\": [\"AUTH-002\"]",
+    "replace": "\"excerpt\": \"keep an audit trail\", \"disposition\": \"covered\", \"requirement_ids\": []"
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G09"
+  ],
+  "paths": [
+    "/coverage/1/requirement_ids"
+  ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G09",
+      "/coverage/1/requirement_ids"
+    ]
+  ],
+  "args": {}
+}

@@ -1,0 +1,25 @@
+{
+  "case": "X04",
+  "variant": "check id CHECK-../x",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"id\": \"CHECK-LINT\"",
+    "replace": "\"id\": \"CHECK-../x\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PATTERN"
+  ],
+  "rules": [],
+  "paths": [
+    "/checks/0/id"
+  ],
+  "diagnostics": [
+    [
+      "E_PATTERN",
+      null,
+      "/checks/0/id"
+    ]
+  ],
+  "args": {}
+}

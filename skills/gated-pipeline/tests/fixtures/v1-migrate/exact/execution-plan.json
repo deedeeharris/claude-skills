@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "feature_id": "login",
+  "spec_sha256": "7d4332d1e7aedc3075519ce5770e8350925acdf8acaa91d5e2771aaf83a8d168",
+  "allowed_paths": [
+    "src/",
+    "test/"
+  ],
+  "protected_paths": [
+    "config/"
+  ],
+  "state_paths": [],
+  "clean_ignore": [],
+  "requirements": [
+    {
+      "id": "AUTH-001-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/login.test.js"
+    },
+    {
+      "id": "AUTH-001-AC2",
+      "kind": "runtime",
+      "proof_command": "node --test test/lockout.test.js"
+    },
+    {
+      "id": "AUTH-002-AC1",
+      "kind": "static",
+      "proof_command": ""
+    }
+  ],
+  "checks": [
+    {
+      "name": "lint",
+      "applicable": true,
+      "reason": "The repo has a lint script."
+    },
+    {
+      "name": "visual",
+      "applicable": false,
+      "reason": "No user interface in this change."
+    }
+  ]
+}

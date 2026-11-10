@@ -1,0 +1,25 @@
+{
+  "case": "S03",
+  "variant": "NaN literal",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"timeout_min\": 4,",
+    "replace": "\"timeout_min\": NaN,"
+  },
+  "exit": 1,
+  "codes": [
+    "E_PARSE"
+  ],
+  "rules": [],
+  "paths": [
+    "/suite/timeout_min"
+  ],
+  "diagnostics": [
+    [
+      "E_PARSE",
+      null,
+      "/suite/timeout_min"
+    ]
+  ],
+  "args": {}
+}

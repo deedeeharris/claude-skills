@@ -1,0 +1,27 @@
+{
+  "case": "X02",
+  "variant": "identical normalized acceptance scenarios (G42)",
+  "base": "valid/multi-component.feature.json",
+  "mutation": {
+    "find": "\"when\": \"a client sends GET /hello twice in a row\",",
+    "replace": "\"when\": \"a client sends GET /hello\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_DUP_STATEMENT"
+  ],
+  "rules": [
+    "G42"
+  ],
+  "paths": [
+    "/requirements/1/acceptance/0"
+  ],
+  "diagnostics": [
+    [
+      "E_DUP_STATEMENT",
+      "G42",
+      "/requirements/1/acceptance/0"
+    ]
+  ],
+  "args": {}
+}

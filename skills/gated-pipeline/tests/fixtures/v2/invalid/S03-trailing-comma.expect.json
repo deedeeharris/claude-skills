@@ -1,0 +1,25 @@
+{
+  "case": "S03",
+  "variant": "trailing comma",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"test_plan\": \"One focused test for the route.\"",
+    "replace": "\"test_plan\": \"One focused test for the route.\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_PARSE"
+  ],
+  "rules": [],
+  "paths": [
+    ""
+  ],
+  "diagnostics": [
+    [
+      "E_PARSE",
+      null,
+      ""
+    ]
+  ],
+  "args": {}
+}

@@ -1,0 +1,15 @@
+{
+  "case": "X06",
+  "variant": "valid ref form in ref mode",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "diagnostics": [],
+  "args": {
+    "source_request": "valid/X06-ref.request.txt",
+    "source_mode": "ref"
+  }
+}

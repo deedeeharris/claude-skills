@@ -1,9 +1,27 @@
 #!/usr/bin/env node
 'use strict';
-// Stub codex executable for the offline test suite. Behavior is controlled by two
-// env vars: FAKE_CODEX_SCENARIO selects a canned response, FAKE_CODEX_STATE is a
+// Stub codex executable for the offline test suite. Behavior is controlled by env
+// vars: FAKE_CODEX_SCENARIO selects a canned response, FAKE_CODEX_STATE is a
 // directory the stub appends its invocation history to on every call. It tells a
 // review call from a validation call by the schema file named with --output-schema.
+// Optional, all absent by default (existing scenarios unchanged):
+// - FAKE_CODEX_DELAY_MS: wait this long before answering an exec call.
+// - FAKE_CODEX_PLAN: JSON { "review": [ { "delay_ms": n, "ignore_term": bool }, ... ],
+//   "validate": [ ... ] }, entry i applying to the i-th call of that kind (overrides the
+//   delay; ignore_term makes the stub ignore SIGTERM, so only SIGKILL stops it).
+// - FAKE_CODEX_TABLE (scenario "table"): JSON { findings: [review findings],
+//   model_verdict, unable_to_review, validation: { <id>: "CONFIRMED"|"REFUTED" } (an id
+//   left out is omitted from the validation reply), validation_failure: "error"|null }.
+// `codex --version` prints a version and touches no state. An exec call whose
+// --output-schema is security.schema.json or compliance.schema.json (the gated-pipeline
+// relays' raw `codex exec`) writes a PASS document of that shape (FAKE_CODEX_RAW: JSON to
+// write instead) and is counted apart from review/validate. Every exec call writes its
+// pid to FAKE_CODEX_STATE/<call>-<index>.pid.
+// Scenario "timeout" spawns a detached grandchild and writes its pid to
+// FAKE_CODEX_STATE/timeout-child-pid (the latest) and timeout-child-<call>-<index>.pid;
+// FAKE_CODEX_GRANDCHILD_IGNORE_TERM=1 makes that grandchild ignore SIGTERM.
+// - FAKE_CODEX_TOUCH: a file the review call appends one line to before answering (a review
+//   input that changes while the run is in flight).
 
 const fs = require('fs');
 const path = require('path');
@@ -28,10 +46,32 @@ function getFlag(argv, name) {
   return i >= 0 ? argv[i + 1] : null;
 }
 
+function reviewFindings(name) {
+  const sets = {
+    pass: [],
+    'one-major-low': [{ id: 'F1', severity: 'MAJOR', confidence: 0.6, category: 'correctness', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
+    'blocking-and-major': [
+      { id: 'F1', severity: 'BLOCKING', confidence: 0.9, category: 'security', iso_property: null, location: { file: 'a.js', line: 1, section: null }, claim: 'sql injection', evidence: 'concat', suggested_fix: 'parameterize' },
+      { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'correctness', iso_property: null, location: { file: 'a.js', line: 2, section: null }, claim: 'off by one', evidence: 'loop', suggested_fix: 'fix bound' },
+    ],
+    minor: [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
+    'with-unknown-key': [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z', confirmed_by_reproduction: 'sneaky leftover field' }],
+    special: [{ id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'template', iso_property: null, location: { file: null, line: null, section: 'rubric' }, claim: 'has $& and {{rubric}}', evidence: 'rubric text present', suggested_fix: 'none' }],
+    'three-major-null-iso': [
+      { id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R1' }, claim: 'gap one', evidence: 'text one', suggested_fix: 'fix one' },
+      { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R2' }, claim: 'gap two', evidence: 'text two', suggested_fix: 'fix two' },
+      { id: 'F3', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R3' }, claim: 'gap three', evidence: 'text three', suggested_fix: 'fix three' },
+    ],
+  };
+  return sets[name] || [];
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const scenario = process.env.FAKE_CODEX_SCENARIO || 'pass';
   const state = process.env.FAKE_CODEX_STATE || null;
+
+  if (argv[0] === '--version') { process.stdout.write('codex-cli 0.0.0-fake\n'); process.exit(0); }
 
   if (argv[0] === 'debug' && argv[1] === 'models') {
     appendState(state, { argv, stdin: '', call: 'debug-models' });
@@ -50,39 +90,59 @@ function main() {
   const stdin = readStdin();
   const outPath = getFlag(argv, '-o');
   const schemaPath = getFlag(argv, '--output-schema') || '';
-  const call = schemaPath.includes('validation') ? 'validate' : 'review';
+  const raw = { 'security.schema.json': 'security', 'compliance.schema.json': 'compliance' }[path.basename(schemaPath)];
+  const call = raw || (schemaPath.includes('validation') ? 'validate' : 'review');
   const callCountFile = state ? path.join(state, `${call}-count`) : null;
   let callIndex = 1;
   if (callCountFile) {
     try { callIndex = Number(fs.readFileSync(callCountFile, 'utf8')) + 1; } catch { callIndex = 1; }
     fs.writeFileSync(callCountFile, String(callIndex), 'utf8');
   }
-  appendState(state, { argv, stdin, call, callIndex });
+  appendState(state, { argv, stdin, call, callIndex, pid: process.pid });
+  if (process.env.FAKE_CODEX_TOUCH && call === 'review') fs.appendFileSync(process.env.FAKE_CODEX_TOUCH, 'changed during the review\n', 'utf8');
+  if (state) fs.writeFileSync(path.join(state, `${call}-${callIndex}.pid`), String(process.pid), 'utf8');
 
-  const reviewFindings = (name) => {
-    const sets = {
-      pass: [],
-      'one-major-low': [{ id: 'F1', severity: 'MAJOR', confidence: 0.6, category: 'correctness', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
-      'blocking-and-major': [
-        { id: 'F1', severity: 'BLOCKING', confidence: 0.9, category: 'security', iso_property: null, location: { file: 'a.js', line: 1, section: null }, claim: 'sql injection', evidence: 'concat', suggested_fix: 'parameterize' },
-        { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'correctness', iso_property: null, location: { file: 'a.js', line: 2, section: null }, claim: 'off by one', evidence: 'loop', suggested_fix: 'fix bound' },
-      ],
-      minor: [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z' }],
-      'with-unknown-key': [{ id: 'F1', severity: 'MINOR', confidence: 0.9, category: 'style', iso_property: null, location: { file: null, line: null, section: null }, claim: 'x', evidence: 'y', suggested_fix: 'z', confirmed_by_reproduction: 'sneaky leftover field' }],
-      special: [{ id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'template', iso_property: null, location: { file: null, line: null, section: 'rubric' }, claim: 'has $& and {{rubric}}', evidence: 'rubric text present', suggested_fix: 'none' }],
-      'three-major-null-iso': [
-        { id: 'F1', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R1' }, claim: 'gap one', evidence: 'text one', suggested_fix: 'fix one' },
-        { id: 'F2', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R2' }, claim: 'gap two', evidence: 'text two', suggested_fix: 'fix two' },
-        { id: 'F3', severity: 'MAJOR', confidence: 0.9, category: 'incomplete', iso_property: null, location: { file: null, line: null, section: 'R3' }, claim: 'gap three', evidence: 'text three', suggested_fix: 'fix three' },
-      ],
-    };
-    return sets[name] || [];
-  };
+  let plan = {};
+  try { plan = JSON.parse(process.env.FAKE_CODEX_PLAN || '{}') || {}; } catch { plan = {}; }
+  const step = (Array.isArray(plan[call]) && plan[call][callIndex - 1]) || {};
+  const delayMs = Number(step.delay_ms !== undefined ? step.delay_ms : process.env.FAKE_CODEX_DELAY_MS) || 0;
+  if (step.ignore_term) process.on('SIGTERM', () => {});
+  const go = () => respond({ scenario, call, callIndex, outPath, state });
+  if (delayMs > 0) setTimeout(go, delayMs); else go();
+}
+
+function respond({ scenario, call, callIndex, outPath, state }) {
+  if (call === 'security' || call === 'compliance') {
+    const doc = process.env.FAKE_CODEX_RAW ? JSON.parse(process.env.FAKE_CODEX_RAW)
+      : call === 'security' ? { verdict: 'PASS', summary: 'no critical or high finding', findings: [] }
+        : { verdict: 'PASS', summary: 'every requirement traced', findings: [], requirements: [] };
+    writeOut(outPath, doc);
+    process.exit(0);
+  }
+  if (scenario === 'table') {
+    let table = {};
+    try { table = JSON.parse(process.env.FAKE_CODEX_TABLE || '{}') || {}; } catch { table = {}; }
+    const findings = Array.isArray(table.findings) ? table.findings : [];
+    if (call === 'review') {
+      writeOut(outPath, { verdict: table.model_verdict || 'PASS', summary: 'table', unable_to_review: table.unable_to_review == null ? null : table.unable_to_review, findings });
+      process.exit(0);
+    }
+    if (table.validation_failure === 'error') { process.stderr.write('fake codex: validation call failed\n'); process.exit(1); }
+    const verdicts = table.validation || {};
+    writeOut(outPath, { results: findings.filter((f) => verdicts[f.id]).map((f) => ({ id: f.id, status: verdicts[f.id], evidence: `table: ${f.id}` })) });
+    process.exit(0);
+  }
 
   if (scenario === 'timeout') {
     const sleepMs = 60000;
-    const grandchild = require('child_process').spawn(process.execPath, ['-e', `setTimeout(()=>{}, ${sleepMs})`], { detached: true, stdio: 'ignore' });
+    // The grandchild is detached (its own session and process group), so a kill of the
+    // codex process group alone does not reach it. FAKE_CODEX_GRANDCHILD_IGNORE_TERM=1 makes
+    // it ignore SIGTERM, so only SIGKILL stops it.
+    const body = process.env.FAKE_CODEX_GRANDCHILD_IGNORE_TERM === '1'
+      ? `process.on('SIGTERM',()=>{});setTimeout(()=>{}, ${sleepMs})` : `setTimeout(()=>{}, ${sleepMs})`;
+    const grandchild = require('child_process').spawn(process.execPath, ['-e', body], { detached: true, stdio: 'ignore' });
     if (state) fs.writeFileSync(path.join(state, 'timeout-child-pid'), String(grandchild.pid), 'utf8');
+    if (state) fs.writeFileSync(path.join(state, `timeout-child-${call}-${callIndex}.pid`), String(grandchild.pid), 'utf8');
     grandchild.unref();
     setTimeout(() => {}, sleepMs);
     return;

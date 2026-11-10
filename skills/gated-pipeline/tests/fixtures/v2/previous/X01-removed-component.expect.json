@@ -1,0 +1,29 @@
+{
+  "case": "X01",
+  "variant": "component removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n      { \"id\": \"COMP-LEGACY\", \"name\": \"Old session code\", \"description\": \"Removed earlier.\", \"owned_paths\": [\"src/legacy/\"], \"exclusive\": false, \"status\": \"retired\", \"retired_rationale\": \"Code was deleted.\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/architecture/components"
+  ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/architecture/components"
+    ]
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

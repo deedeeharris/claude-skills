@@ -1,0 +1,25 @@
+{
+  "case": "X05",
+  "variant": "minimum",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"timeout_min\": 4,",
+    "replace": "\"timeout_min\": 0,"
+  },
+  "exit": 1,
+  "codes": [
+    "E_MINIMUM"
+  ],
+  "rules": [],
+  "paths": [
+    "/suite/timeout_min"
+  ],
+  "diagnostics": [
+    [
+      "E_MINIMUM",
+      null,
+      "/suite/timeout_min"
+    ]
+  ],
+  "args": {}
+}

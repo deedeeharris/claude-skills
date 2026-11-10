@@ -1,0 +1,27 @@
+{
+  "case": "S03",
+  "variant": "\\r escape in a string",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\"",
+    "replace": "\"title\": \"Greeting\\rendpoint\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_CONTROL_CHAR"
+  ],
+  "rules": [
+    "G31"
+  ],
+  "paths": [
+    "/title"
+  ],
+  "diagnostics": [
+    [
+      "E_CONTROL_CHAR",
+      "G31",
+      "/title"
+    ]
+  ],
+  "args": {}
+}

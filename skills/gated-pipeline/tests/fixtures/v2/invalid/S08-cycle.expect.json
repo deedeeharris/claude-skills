@@ -1,0 +1,27 @@
+{
+  "case": "S08",
+  "variant": "depends_on cycle",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"priority\": \"P1\",\n      \"depends_on\": [],\n      \"component_ids\": [\"COMP-STORE\"],",
+    "replace": "\"priority\": \"P1\",\n      \"depends_on\": [\"AUTH-003\"],\n      \"component_ids\": [\"COMP-STORE\"],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_CYCLE"
+  ],
+  "rules": [
+    "G07"
+  ],
+  "paths": [
+    "/requirements/0/depends_on"
+  ],
+  "diagnostics": [
+    [
+      "E_CYCLE",
+      "G07",
+      "/requirements/0/depends_on"
+    ]
+  ],
+  "args": {}
+}

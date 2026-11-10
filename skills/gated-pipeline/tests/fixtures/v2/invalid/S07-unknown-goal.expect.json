@@ -1,0 +1,27 @@
+{
+  "case": "S07",
+  "variant": "unknown goal",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"goal_ids\": [\"GOAL-001\"],",
+    "replace": "\"goal_ids\": [\"GOAL-001\", \"GOAL-009\"],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_REF"
+  ],
+  "rules": [
+    "G05"
+  ],
+  "paths": [
+    "/requirements/0/goal_ids/1"
+  ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G05",
+      "/requirements/0/goal_ids/1"
+    ]
+  ],
+  "args": {}
+}

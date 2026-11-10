@@ -1,0 +1,27 @@
+{
+  "case": "S14",
+  "variant": "goal without requirement",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "{ \"id\": \"GOAL-001\", \"statement\": \"A client can fetch a greeting.\", \"source_ids\": [\"SRC-001\"], \"status\": \"active\" }",
+    "replace": "{ \"id\": \"GOAL-001\", \"statement\": \"A client can fetch a greeting.\", \"source_ids\": [\"SRC-001\"], \"status\": \"active\" },\n      { \"id\": \"GOAL-002\", \"statement\": \"Operators can count greetings.\", \"source_ids\": [\"SRC-001\"], \"status\": \"active\" }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G11"
+  ],
+  "paths": [
+    "/product/goals/1"
+  ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G11",
+      "/product/goals/1"
+    ]
+  ],
+  "args": {}
+}

@@ -1,0 +1,25 @@
+{
+  "case": "X05",
+  "variant": "goal source_ids empty (minItems 1)",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"source_ids\": [\"SRC-001\"]",
+    "replace": "\"source_ids\": []"
+  },
+  "exit": 1,
+  "codes": [
+    "E_MIN_ITEMS"
+  ],
+  "rules": [],
+  "paths": [
+    "/product/goals/0/source_ids"
+  ],
+  "diagnostics": [
+    [
+      "E_MIN_ITEMS",
+      null,
+      "/product/goals/0/source_ids"
+    ]
+  ],
+  "args": {}
+}

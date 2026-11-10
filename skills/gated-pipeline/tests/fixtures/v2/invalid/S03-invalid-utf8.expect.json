@@ -1,0 +1,25 @@
+{
+  "case": "S03",
+  "variant": "invalid UTF-8 byte",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\"",
+    "replace_hex": "227469746c65223a20224772656574696e6720ff656e64706f696e7422"
+  },
+  "exit": 1,
+  "codes": [
+    "E_PARSE"
+  ],
+  "rules": [],
+  "paths": [
+    ""
+  ],
+  "diagnostics": [
+    [
+      "E_PARSE",
+      null,
+      ""
+    ]
+  ],
+  "args": {}
+}

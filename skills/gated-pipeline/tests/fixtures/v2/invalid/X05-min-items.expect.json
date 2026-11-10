@@ -1,0 +1,25 @@
+{
+  "case": "X05",
+  "variant": "minItems",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"actors\": [\"api client\"],",
+    "replace": "\"actors\": [],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_MIN_ITEMS"
+  ],
+  "rules": [],
+  "paths": [
+    "/product/actors"
+  ],
+  "diagnostics": [
+    [
+      "E_MIN_ITEMS",
+      null,
+      "/product/actors"
+    ]
+  ],
+  "args": {}
+}

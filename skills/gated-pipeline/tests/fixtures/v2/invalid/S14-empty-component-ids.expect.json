@@ -1,0 +1,27 @@
+{
+  "case": "S14",
+  "variant": "active requirement with empty component_ids",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"component_ids\": [\"COMP-SERVER\"],",
+    "replace": "\"component_ids\": [],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G14"
+  ],
+  "paths": [
+    "/requirements/0/component_ids"
+  ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G14",
+      "/requirements/0/component_ids"
+    ]
+  ],
+  "args": {}
+}

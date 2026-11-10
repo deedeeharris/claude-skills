@@ -1,0 +1,25 @@
+{
+  "case": "S04",
+  "variant": "wrong type",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\",",
+    "replace": "\"title\": 5,"
+  },
+  "exit": 1,
+  "codes": [
+    "E_TYPE"
+  ],
+  "rules": [],
+  "paths": [
+    "/title"
+  ],
+  "diagnostics": [
+    [
+      "E_TYPE",
+      null,
+      "/title"
+    ]
+  ],
+  "args": {}
+}

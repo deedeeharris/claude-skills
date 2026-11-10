@@ -1,0 +1,27 @@
+{
+  "case": "X03",
+  "variant": "absolute evidence path",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"paths\": [\"src/auth/compare.js\"]",
+    "replace": "\"paths\": [\"/src/auth/compare.js\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_UNSAFE_PATH"
+  ],
+  "rules": [
+    "G32"
+  ],
+  "paths": [
+    "/requirements/2/acceptance/0/verification/evidence/paths/0"
+  ],
+  "diagnostics": [
+    [
+      "E_UNSAFE_PATH",
+      "G32",
+      "/requirements/2/acceptance/0/verification/evidence/paths/0"
+    ]
+  ],
+  "args": {}
+}

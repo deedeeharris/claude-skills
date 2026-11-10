@@ -1,0 +1,25 @@
+{
+  "case": "X05",
+  "variant": "maximum",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"proof_timeout_s\": 120",
+    "replace": "\"proof_timeout_s\": 4000"
+  },
+  "exit": 1,
+  "codes": [
+    "E_MAXIMUM"
+  ],
+  "rules": [],
+  "paths": [
+    "/limits/proof_timeout_s"
+  ],
+  "diagnostics": [
+    [
+      "E_MAXIMUM",
+      null,
+      "/limits/proof_timeout_s"
+    ]
+  ],
+  "args": {}
+}

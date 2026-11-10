@@ -1,0 +1,27 @@
+{
+  "case": "S10",
+  "variant": "state path containing features_dir",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"state_paths\": []",
+    "replace": "\"state_paths\": [\".pipeline/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROTECTED_OVERLAP"
+  ],
+  "rules": [
+    "G33"
+  ],
+  "paths": [
+    "/scope/state_paths/0"
+  ],
+  "diagnostics": [
+    [
+      "E_PROTECTED_OVERLAP",
+      "G33",
+      "/scope/state_paths/0"
+    ]
+  ],
+  "args": {}
+}

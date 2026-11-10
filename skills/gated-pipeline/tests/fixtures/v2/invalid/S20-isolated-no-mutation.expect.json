@@ -1,0 +1,27 @@
+{
+  "case": "S20",
+  "variant": "isolated_mutation without mutation",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": ", \"mutation\": \"Change the body returned by the /hello route to goodbye.\"",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_NEGATIVE_CONTROL"
+  ],
+  "rules": [
+    "G23"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/negative_control/mutation"
+  ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G23",
+      "/requirements/0/acceptance/0/negative_control/mutation"
+    ]
+  ],
+  "args": {}
+}

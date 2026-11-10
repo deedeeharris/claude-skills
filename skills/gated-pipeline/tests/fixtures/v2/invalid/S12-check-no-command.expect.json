@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "applicable check without command",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"command\": \"npm run lint\", ",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REASON_MISSING"
+  ],
+  "rules": [
+    "G28"
+  ],
+  "paths": [
+    "/checks/0/command"
+  ],
+  "diagnostics": [
+    [
+      "E_REASON_MISSING",
+      "G28",
+      "/checks/0/command"
+    ]
+  ],
+  "args": {}
+}

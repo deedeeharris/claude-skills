@@ -1,0 +1,25 @@
+{
+  "case": "S03",
+  "variant": "raw control character in a string",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\"",
+    "replace": "\"title\": \"Greeting\u0001endpoint\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PARSE"
+  ],
+  "rules": [],
+  "paths": [
+    "/title"
+  ],
+  "diagnostics": [
+    [
+      "E_PARSE",
+      null,
+      "/title"
+    ]
+  ],
+  "args": {}
+}

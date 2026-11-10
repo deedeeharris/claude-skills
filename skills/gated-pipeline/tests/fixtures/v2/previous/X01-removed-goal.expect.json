@@ -1,0 +1,29 @@
+{
+  "case": "X01",
+  "variant": "goal removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n      { \"id\": \"GOAL-002\", \"statement\": \"Users can reset by SMS.\", \"source_ids\": [\"SRC-001\"], \"status\": \"retired\", \"retired_rationale\": \"Excluded as SRC-003.\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/product/goals"
+  ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/product/goals"
+    ]
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

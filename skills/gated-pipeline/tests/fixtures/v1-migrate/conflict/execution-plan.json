@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "feature_id": "session",
+  "spec_sha256": "fc09ba04ec700facc5b35c5d4f625ad48ed14652ad572b0452fc9043c891972c",
+  "allowed_paths": [
+    "src/",
+    "test/"
+  ],
+  "protected_paths": [],
+  "requirements": [
+    {
+      "id": "AUTH-001-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/auth.test.js"
+    },
+    {
+      "id": "AUTH-002-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/session.test.js"
+    }
+  ],
+  "checks": []
+}

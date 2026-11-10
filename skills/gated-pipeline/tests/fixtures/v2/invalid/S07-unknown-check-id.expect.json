@@ -1,0 +1,27 @@
+{
+  "case": "S07",
+  "variant": "unknown check_id",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"check_id\": \"CHECK-E2E\"",
+    "replace": "\"check_id\": \"CHECK-NOPE\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REF"
+  ],
+  "rules": [
+    "G05"
+  ],
+  "paths": [
+    "/requirements/1/acceptance/0/verification/check_id"
+  ],
+  "diagnostics": [
+    [
+      "E_REF",
+      "G05",
+      "/requirements/1/acceptance/0/verification/check_id"
+    ]
+  ],
+  "args": {}
+}

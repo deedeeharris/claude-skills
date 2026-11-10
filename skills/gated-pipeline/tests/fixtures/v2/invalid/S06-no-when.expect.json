@@ -1,0 +1,25 @@
+{
+  "case": "S06",
+  "variant": "acceptance without when",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "          \"when\": \"a client sends GET /hello\",\n",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REQUIRED"
+  ],
+  "rules": [],
+  "paths": [
+    "/requirements/0/acceptance/0/when"
+  ],
+  "diagnostics": [
+    [
+      "E_REQUIRED",
+      null,
+      "/requirements/0/acceptance/0/when"
+    ]
+  ],
+  "args": {}
+}

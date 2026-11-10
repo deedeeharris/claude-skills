@@ -1,0 +1,27 @@
+{
+  "case": "S11",
+  "variant": "retired requirement without retired_rationale",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "      \"retired_rationale\": \"Split into AUTH-001 and AUTH-002.\",\n",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REASON_MISSING"
+  ],
+  "rules": [
+    "G17"
+  ],
+  "paths": [
+    "/requirements/3/retired_rationale"
+  ],
+  "diagnostics": [
+    [
+      "E_REASON_MISSING",
+      "G17",
+      "/requirements/3/retired_rationale"
+    ]
+  ],
+  "args": {}
+}

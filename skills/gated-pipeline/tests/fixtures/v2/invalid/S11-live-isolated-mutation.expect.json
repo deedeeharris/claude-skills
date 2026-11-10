@@ -1,0 +1,27 @@
+{
+  "case": "S11",
+  "variant": "live acceptance with isolated_mutation",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "{ \"method\": \"exempt\", \"description\": \"Live sink, no isolated copy.\", \"exemption_reason\": \"The audit sink cannot run in a throwaway worktree.\" }",
+    "replace": "{ \"method\": \"isolated_mutation\", \"description\": \"Live sink, no isolated copy.\", \"mutation\": \"Drop the audit write.\" }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_NEGATIVE_CONTROL"
+  ],
+  "rules": [
+    "G24"
+  ],
+  "paths": [
+    "/requirements/1/acceptance/0/negative_control/method"
+  ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G24",
+      "/requirements/1/acceptance/0/negative_control/method"
+    ]
+  ],
+  "args": {}
+}

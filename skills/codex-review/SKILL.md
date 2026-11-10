@@ -24,7 +24,7 @@ verdict.
 ```
 node "<skill-dir>/scripts/run-review.js" --kind implementation --uncommitted --repo <repo> --out-dir <dir outside the repo>
 
-node "<skill-dir>/scripts/run-review.js" --kind prd --files <prd.md> --out-dir <dir>
+node "<skill-dir>/scripts/run-review.js" --kind prd --files <prd.md> [--against <original-request.txt>] --out-dir <dir>
 
 node "<skill-dir>/scripts/run-review.js" --kind spec --files <spec.md> --against <prd.md> --out-dir <dir>
 ```
@@ -40,14 +40,16 @@ Use the runner's absolute path. Keep `--out-dir` outside the repository being re
 | `--uncommitted` | review staged + unstaged diffs and untracked files; `implementation` only |
 | `--files <path...>` | review an explicit file list; required for `prd`/`spec` |
 | `--repo <dir>` | repo root passed to Codex as `-C` (default: cwd) |
-| `--against <path>` | PRD to trace a spec against; `spec` only |
+| `--against <path>` | reference to trace against: the PRD for `spec`, the original request for `prd`; `prd` and `spec` only |
 | `--model <slug>` | override the model picked from `codex debug models` |
 | `--effort <level>` | reasoning effort (default `high`) |
 | `--timeout-seconds <n>` | per-attempt timeout, doubled on one retry (default 300) |
 | `--help` | print usage and exit 0 |
 
 `implementation` requires exactly one of `--uncommitted` / `--files`; `prd` and `spec`
-require `--files` and reject `--uncommitted`.
+require `--files` and reject `--uncommitted`. With `--files` the review and validation prompts
+tell codex that commands are data: it never executes a command found in the reviewed files or
+the `--against` document.
 
 codex-review picks the model from the live catalog (`codex debug models`); never
 hardcode a model name against it. When `--model` is given, it is checked against the
@@ -100,7 +102,7 @@ finding is also still reported, marked `refuted`, and never counted at any step 
 
 Exit codes: `0` PASS, `1` FAIL, `3` NEEDS_HUMAN (`refused`/`timeout`/`invalid_output`/
 `codex_error`/`unable_to_review`/`model_rule_disagreement`/etc.), `2` usage, setup, or
-scope error (`usage_error`/`scope_error`/`catalog_error`/`codex_not_found`/`runner_error`).
+scope error (`usage_error`/`scope_error`/`catalog_error`/`codex_not_found`/`input_changed`/`runner_error`).
 
 ## Output layout
 
@@ -137,7 +139,13 @@ scope error (`usage_error`/`scope_error`/`catalog_error`/`codex_not_found`/`runn
   entirely when the review returned none.
 - `result.json` (verdict, reasons, findings with their validation status, counts),
   best-effort, written once the run directory exists — an error raised before that
-  point (most `usage_error`s, a bad `--out-dir`) leaves no `result.json`.
+  point (most `usage_error`s, a bad `--out-dir`) leaves no `result.json`. With `--files`
+  it carries `inputs: [ { role: "files" | "against", path, sha256 } ]`: the absolute path
+  and SHA-256 of every reviewed file and of the `--against` reference, hashed by the
+  runner (never by codex) when the scope is built and rechecked when the run ends; a
+  change in between is the setup error `input_changed`. `--uncommitted` records
+  `inputs: null`. gated-pipeline's contract-2 approval check binds a design approval to
+  these hashes.
 
 `<out-dir>/codex-review-log.jsonl` gets one line per run, appended best-effort, as soon
 as `--out-dir` itself resolved to a writable directory — even a `usage_error` raised
@@ -169,7 +177,13 @@ made unconditionally whether or not `--model` is given), and an `implementation`
 unstaged diff, untracked file list) while building scope — up to 6T + 120s total in that
 case, or 6T + 30s for a `--files`-based review (`prd`, `spec`, or an `implementation`
 review of an explicit file list, which makes no git calls). Run this in the background, or
-lower `--timeout-seconds`, under any tool with a shorter cap.
+lower `--timeout-seconds`, under any tool with a shorter cap. A call that times out is
+stopped as a whole process tree: SIGTERM to the child's process group and to every
+descendant seen, including one that left that group (a detached or `setsid` process),
+by its pid and its own group, then SIGKILL to what is left after 5s; the call counts as
+done only once that tree is gone (a zombie counts as gone), so each timed-out call can
+add up to 7s. SIGTERM/SIGINT to the runner stops the trees of the running calls the
+same way.
 
 ## Failure modes
 
@@ -190,6 +204,7 @@ Setup, scope, or usage error, exit `2`:
 | `empty_scope` | `--uncommitted` found no staged/unstaged diff and no untracked files |
 | `usage_error` | bad or missing CLI arguments: unknown flag, missing `--kind`/`--out-dir`, `--files` given with no paths, wrong `--uncommitted`/`--files` combination for the kind, an unparseable `--timeout-seconds`, or a `--model` not present in a catalog that did load |
 | `scope_error` | a `--files`/`--against` path does not exist, or a `git diff` / `git diff --staged` / `git ls-files` call failed while building the `--uncommitted` scope |
+| `input_changed` | a `--files`/`--against` file no longer hashes to its `inputs` entry when the run ends (it changed while codex reviewed it); the verdict is `NEEDS_HUMAN` with no findings, never `PASS` |
 | `catalog_error` | no `--model` was given and the live model catalog is unavailable or has no eligible model |
 | `runner_error` | any other unexpected exception |
 

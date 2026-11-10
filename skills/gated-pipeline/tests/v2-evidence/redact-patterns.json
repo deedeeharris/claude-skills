@@ -1,0 +1,28 @@
+{
+  "about": "Pattern list of redact-scan.js (plan section 4, Redaction). This file is the scanner's only allowlisted path. Patterns are generic shapes; nothing here names a real person. JavaScript regular expressions, applied per line with the given flags.",
+  "patterns": [
+    { "id": "email", "regex": "(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*(?<=@(?:[A-Za-z0-9-]+\\.)*[A-Za-z][A-Za-z0-9-]*)(?![A-Za-z0-9-])", "flags": "g", "what": "any user@host address (the empty <> never matches)" },
+    { "id": "root-path", "regex": "(?<![A-Za-z0-9._~/-])/root(?![A-Za-z0-9._-])", "flags": "g", "what": "absolute path under the root user's home" },
+    { "id": "home-path", "regex": "(?<![A-Za-z0-9._~/-])/home/[A-Za-z0-9._-]+", "flags": "g", "what": "absolute path under a named home directory" },
+    { "id": "session-scratch", "regex": "/tmp/claude-", "flags": "g", "what": "session scratch prefix" },
+    { "id": "session-id", "regex": "(?<![A-Za-z0-9])session_[A-Za-z0-9]{16,}", "flags": "g", "what": "session id shape" },
+    { "id": "env-id", "regex": "(?<![A-Za-z0-9])env_[A-Za-z0-9]{16,}", "flags": "g", "what": "environment id shape" },
+    { "id": "session-link", "regex": "claude\\.ai/(?:code/)?(?:sessions?|chat|share)(?![A-Za-z])", "flags": "gi", "what": "a claude.ai session or chat link" }
+  ],
+  "allow": {
+    "email": [
+      "a@b.c",
+      "gate-test@example.invalid",
+      "git@github.com"
+    ]
+  },
+  "allow_notes": {
+    "a@b.c": "synthetic identity of the codex-review offline suite's scratch repos",
+    "gate-test@example.invalid": "synthetic identity of check-completion.test.js (reserved .invalid domain)",
+    "git@github.com": "the generic SSH user of a GitHub remote URL, not a person"
+  },
+  "bundle_authors": [
+    "gp-v2 toy"
+  ],
+  "bundle_authors_note": "Author and committer names a toy repo bundle may carry (synthetic only); any other name in a bundle's log is reported."
+}

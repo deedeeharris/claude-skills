@@ -11,6 +11,11 @@ consistent, complete, singular, feasible, traceable, verifiable.
   (at least MAJOR).
 - Two requirements conflict with each other -> `inconsistent`.
 - An impossible or self-contradictory constraint -> `infeasible`.
+- Two active requirements (or acceptance items) that state the same rule, even in
+  other words (a paraphrase, the same scenario with renamed terms): not necessary and
+  not singular, `iso_property: null`, at least MAJOR. The fix names the one to retire
+  (`status: retired` with a rationale) or how to merge them; a duplicate must never be
+  frozen with both active.
 - A goal with no requirement backing it, an undefined actor or trigger, or personal
   data handled with no stated protection requirement -> `incomplete`.
 
@@ -35,6 +40,11 @@ below, which is the one rule for them and always maps to `incomplete`.
   it. A premise that is impossible or self-contradictory on its own is `infeasible`. A
   premise that contradicts a specific statement elsewhere in the document is
   `inconsistent` — cite both locations as evidence.
+- **Exemptions and known failures are judged, never taken on trust.** Every
+  negative-control exemption (an acceptance whose negative control is `exempt`, with its
+  exemption reason and any alternate evidence) and every known suite failure (with its
+  reason) is judged on its own. An unjustified one is a MAJOR with `iso_property`
+  `unverifiable`: it lets a proof certify without showing that it can fail.
 - **A ranked cut list.** Its absence is a MINOR finding, not a blocking one.
 
 `location.section` is the work item id or heading. `evidence` is the exact quoted

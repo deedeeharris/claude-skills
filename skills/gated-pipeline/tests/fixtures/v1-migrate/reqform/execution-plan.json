@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "feature_id": "billing",
+  "spec_sha256": "9209dd19141a36dc44414f07428a8b57dfb1d59de008811fb20359862646716d",
+  "allowed_paths": [
+    "src/",
+    "test/"
+  ],
+  "protected_paths": [],
+  "requirements": [
+    {
+      "id": "AUTH-001-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/auth.test.js"
+    },
+    {
+      "id": "BILL-002-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/bill.test.js"
+    },
+    {
+      "id": "AUTH-001",
+      "kind": "runtime",
+      "proof_command": "node --test test/audit.test.js"
+    },
+    {
+      "id": "MIG-001-AC1",
+      "kind": "static",
+      "proof_command": ""
+    },
+    {
+      "id": "legacy-check",
+      "kind": "runtime",
+      "proof_command": "node --test test/legacy.test.js"
+    },
+    {
+      "id": "AUTH-001-AC2",
+      "kind": "runtime",
+      "proof_command": "node --test test/logout.test.js"
+    }
+  ],
+  "checks": []
+}

@@ -1,0 +1,27 @@
+{
+  "case": "X04",
+  "variant": "--repo-path basename differs from feature_id",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"feature_id\": \"greet\",",
+    "replace": "\"feature_id\": \"greeting\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_SCOPE"
+  ],
+  "rules": [
+    "G38"
+  ],
+  "paths": [
+    "/feature_id"
+  ],
+  "diagnostics": [
+    [
+      "E_SCOPE",
+      "G38",
+      "/feature_id"
+    ]
+  ],
+  "args": {}
+}

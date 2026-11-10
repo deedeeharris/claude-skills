@@ -1,0 +1,27 @@
+{
+  "case": "S11",
+  "variant": "exempt without exemption_reason",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"negative_control\": { \"method\": \"isolated_mutation\", \"description\": \"Break the route body.\", \"mutation\": \"Change the body returned by the /hello route to goodbye.\" }",
+    "replace": "\"negative_control\": { \"method\": \"exempt\", \"description\": \"Break the route body.\" }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_NEGATIVE_CONTROL"
+  ],
+  "rules": [
+    "G23"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/negative_control/exemption_reason"
+  ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G23",
+      "/requirements/0/acceptance/0/negative_control/exemption_reason"
+    ]
+  ],
+  "args": {}
+}

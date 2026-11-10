@@ -1,0 +1,27 @@
+{
+  "case": "S09",
+  "variant": "test path inside an owned path",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"test_paths\": [\"test/\"]",
+    "replace": "\"test_paths\": [\"src/test/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_OWNERSHIP"
+  ],
+  "rules": [
+    "G37"
+  ],
+  "paths": [
+    "/scope/test_paths/0"
+  ],
+  "diagnostics": [
+    [
+      "E_OWNERSHIP",
+      "G37",
+      "/scope/test_paths/0"
+    ]
+  ],
+  "args": {}
+}

@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "multi-line suite command",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"suite\": { \"command\": \"node --test\",",
+    "replace": "\"suite\": { \"command\": \"node --test\\n--watch\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G20"
+  ],
+  "paths": [
+    "/suite/command"
+  ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G20",
+      "/suite/command"
+    ]
+  ],
+  "args": {}
+}

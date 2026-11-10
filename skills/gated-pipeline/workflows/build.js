@@ -3,7 +3,9 @@ export const meta = {
   description: 'Test-first implementation by Claude, codex review + security pass, fix loop, full suite last',
   whenToUse: 'Stage 2 of the gated-pipeline skill: build a feature from its frozen spec or charge',
   phases: [
+    { title: 'Preflight', detail: 'contract 2: the design identity of the frozen plan, before any change' },
     { title: 'Implement', detail: 'Claude implementer, test-first, commits on the work branch' },
+    { title: 'Red', detail: 'contract 2: the frozen unit command fails at the red commit, in a throwaway worktree' },
     { title: 'Review', detail: 'codex reviews the change, then a codex security pass' },
     { title: 'Fix', detail: 'Claude fixes confirmed codex findings and suite failures' },
     { title: 'Suite', detail: 'full test suite, last' },
@@ -11,7 +13,25 @@ export const meta = {
 }
 
 const A = args || {}
-const need = ['feature_id', 'repo', 'work_branch', 'run_dir', 'review_runner', 'suite_cmd', 'security_schema']
+// contract 1 (absent = 1): today's flow, stamped build_mode "v1" (spec_path) or "charge-only" (charge only).
+// contract 2 (docs/v2-design.md 6.1, 6.3): design-gated, stamped build_mode "v2"; every command that runs or excuses
+// verification comes from the frozen manifest, so the args that used to carry them are BLOCKED before any agent.
+if (A.contract !== undefined && A.contract !== 1 && A.contract !== 2) return { status: 'BLOCKED', reason: 'contract must be 1 or 2' }
+const C2 = A.contract === 2
+const FORBIDDEN_V2 = ['checks', 'clean_ignore', 'state_paths', 'suite_cmd', 'unit_cmd', 'known_failures', 'isolated_setup', 'suite_isolated', 'live_budget_min']
+const ONLY_V2 = ['frozen_dir', 'design_commit', 'approvals_path', 'approvals_sha256', 'ci_failure_log_path']
+if (C2) {
+  const forbidden = FORBIDDEN_V2.filter(k => A[k] !== undefined)
+  if (forbidden.length) return { status: 'BLOCKED', stage: 'args', reason: `contract 2 does not take ${forbidden.join(', ')}: the frozen manifest is their only source` }
+  const mixed = ['task', 'charge'].filter(k => A[k] !== undefined)
+  if (mixed.length) return { status: 'BLOCKED', stage: 'args', reason: `contract 2 does not take ${mixed.join(', ')}: it builds the frozen canonical file (CI failure context goes in ci_failure_log_path)` }
+} else {
+  const v2only = ONLY_V2.filter(k => A[k] !== undefined)
+  if (v2only.length) return { status: 'BLOCKED', stage: 'args', reason: `${v2only.join(', ')} need contract: 2` }
+}
+const need = C2
+  ? ['feature_id', 'repo', 'work_branch', 'run_dir', 'review_runner', 'security_schema', 'completion_runner', 'frozen_dir', 'manifest_path', 'manifest_sha256', 'spec_path', 'design_commit', 'approvals_path', 'approvals_sha256', 'base_commit']
+  : ['feature_id', 'repo', 'work_branch', 'run_dir', 'review_runner', 'suite_cmd', 'security_schema']
 const missing = need.filter(k => !A[k])
 if (missing.length) return { status: 'BLOCKED', reason: 'missing args: ' + missing.join(', ') }
 if (!A.spec_path && !A.charge) return { status: 'BLOCKED', reason: 'need spec_path or charge' }
@@ -19,6 +39,24 @@ if (!A.spec_path && !A.charge) return { status: 'BLOCKED', reason: 'need spec_pa
 const SAFE = /^[A-Za-z0-9._\/\\: +@-]+$/
 for (const k of ['repo', 'run_dir', 'review_runner', 'spec_path', 'security_schema', 'security_checklist']) {
   if (A[k] && (!SAFE.test(A[k]) || !/^([A-Za-z]:[\/\\]|\/)/.test(A[k]))) return { status: 'BLOCKED', reason: `${k} must be an absolute path of safe characters (no ~, quotes, $ or backticks): ${A[k]}` }
+}
+// contract 2 identity args. Scripts (run-frozen, write-json, hash-inputs) are found next to completion_runner.
+const BUILD_MODE = C2 ? 'v2' : A.spec_path ? 'v1' : 'charge-only'
+// Absolute, normalized (no //, /./, .. or trailing slash), so a path the scripts print compares equal by spelling.
+const CANON = p => typeof p === 'string' && SAFE.test(p) && /^\//.test(p) && !/\/\/|\/\.(\/|$)|\/\.\.(\/|$)|.\/$|\\/.test(p)
+const V2_SCRIPTS = C2 ? A.completion_runner.replace(/\/check-completion\.js$/, '') : ''
+if (C2) {
+  for (const k of ['repo', 'run_dir', 'spec_path', 'completion_runner', 'frozen_dir', 'manifest_path', 'approvals_path', 'ci_failure_log_path']) {
+    if (A[k] !== undefined && !CANON(A[k])) return { status: 'BLOCKED', stage: 'args', reason: `${k} must be a normalized absolute POSIX path of safe characters: ${A[k]}` }
+  }
+  if (V2_SCRIPTS === A.completion_runner) return { status: 'BLOCKED', stage: 'args', reason: 'completion_runner must be the skill\'s scripts/check-completion.js' }
+  if (A.manifest_path !== A.frozen_dir + '/execution-plan.json') return { status: 'BLOCKED', stage: 'args', reason: 'manifest_path must be <frozen_dir>/execution-plan.json' }
+  if (!/^[A-Za-z0-9._-]+$/.test(A.feature_id)) return { status: 'BLOCKED', stage: 'args', reason: 'feature_id must match [A-Za-z0-9._-]' }
+  for (const k of ['manifest_sha256', 'approvals_sha256']) if (!/^[0-9a-f]{64}$/.test(A[k])) return { status: 'BLOCKED', stage: 'args', reason: `${k} must be a 64-hex hash` }
+  if (!/^[0-9a-f]{40}$/.test(A.design_commit)) return { status: 'BLOCKED', stage: 'args', reason: 'design_commit must be a full 40-hex commit id' }
+  if (A.base_commit !== A.design_commit) return { status: 'BLOCKED', stage: 'args', reason: `base_commit must equal design_commit under contract 2 (got ${A.base_commit}, design ${A.design_commit})` }
+  const inRepo = p => p === A.repo || p.startsWith(A.repo.replace(/\/$/, '') + '/')
+  for (const k of ['run_dir', 'frozen_dir', 'approvals_path', 'ci_failure_log_path']) if (A[k] !== undefined && inRepo(A[k])) return { status: 'BLOCKED', stage: 'args', reason: `${k} must lie outside the repo` }
 }
 // Optional repo security docs (threat model, accepted risks): absolute paths, validated like every other path arg.
 if (A.security_docs !== undefined && (!Array.isArray(A.security_docs) || A.security_docs.some(p => typeof p !== 'string' || !SAFE.test(p) || !/^([A-Za-z]:[\/\\]|\/)/.test(p)))) return { status: 'BLOCKED', reason: 'security_docs must be a list of absolute paths of safe characters (no ~, quotes, $ or backticks)' }
@@ -28,6 +66,15 @@ const MAX = A.max_fix_rounds ?? 4
 const IMPL_EFFORT = A.impl_effort || 'medium'
 const TIMEOUT_S = A.review_timeout_seconds || 1200
 const q = s => `'${s}'`
+// contract 2: every stage run uses a FRESH run_dir, made by the stage's first gp-exec block: its parent with mkdir -p
+// (the parent computed here from the normalized absolute run_dir), then the run_dir itself with a plain mkdir.
+// GP_RUN_DIR_EXISTS only when the run_dir already exists; GP_RUN_DIR_PARENT when its parent cannot be made;
+// GP_RUN_DIR_CREATE when mkdir fails for any other reason.
+const freshRunDir = run => [
+  `mkdir -p ${q(run.slice(0, run.lastIndexOf('/')) || '/')} || { echo GP_RUN_DIR_PARENT; exit 4; }`,
+  `mkdir ${q(run)} || { if [ -e ${q(run)} ] || [ -L ${q(run)} ]; then echo GP_RUN_DIR_EXISTS; else echo GP_RUN_DIR_CREATE; fi; exit 4; }`,
+]
+const runDirCode = stdout => /GP_RUN_DIR_EXISTS/.test(stdout || '') ? 'E_RUN_DIR_EXISTS' : /GP_RUN_DIR_(PARENT|CREATE)/.test(stdout || '') ? 'E_RUN_DIR' : null
 // Config values that reach shell commands must be plain tokens.
 if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 'BLOCKED', reason: 'codex_model must match [A-Za-z0-9._-]' }
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
@@ -52,18 +99,24 @@ const pinned = (rep, sha) => [
   ...dirty(rep.status_before).map(l => `dirty before: ${l}`),
   ...dirty(rep.status_after).map(l => `dirty after: ${l}`),
 ]
-const RULES = [
+const rulesFor = (liveBudgetMin, extra) => [
   `Repo: ${A.repo}. Work ONLY on branch ${A.work_branch}; never touch other branches, never push or merge the trunk.`,
   'Commit with explicit pathspecs only (never git add -A or .). Never git rm, never glob-delete, never --no-verify.',
   'Before each commit, scan the staged diff for secrets (.env, service-account json, .pem, id_rsa, API keys) and abort if any are present.',
   'Never deploy, never run Terraform, never touch production resources.',
   'Use the checkout selected by the orchestrator at the supplied repo path; an existing checkout is supported and a dedicated feature worktree is optional. Follow the orchestrator\'s checkout ownership and writer coordination. Check branch, clean baseline and the correct dev/client environment before the first edit. Never weaken a guard or verification harness to unblock work.',
-  `Keep atomic per-acceptance checkpoints at ${A.run_dir}/execution-ledger.json: id, status, command, exit code, log_path, log_sha256 and commit. Preserve failed/interrupted output. Stop on unapproved scope expansion.`,
+  // contract 2 (design section 1): no model authors a ledger; the only v2 ledger is the acceptance ledger run-frozen.js writes in verify.
+  C2 ? 'Your red/green notes go in your reply; they certify nothing, so write no ledger, manifest or hash file. The only contract-2 ledger is the acceptance ledger run-frozen.js writes in verify. Preserve failed/interrupted output. Stop on unapproved scope expansion.'
+    : `Keep atomic per-acceptance checkpoints at ${A.run_dir}/execution-ledger.json: id, status, command, exit code, log_path, log_sha256 and commit. Preserve failed/interrupted output. Stop on unapproved scope expansion.`,
   A.lock_note ? `Test runs: ${A.lock_note}` : '',
-  A.live_budget_min ? `Live or paid tests: hard cap ${A.live_budget_min} minutes total; keep a ledger at ${A.run_dir}/live-ledger.txt; record anything that cannot fit as NOT RUN.` : 'Do not run live or paid external-API tests.',
+  liveBudgetMin ? `Live or paid tests: hard cap ${liveBudgetMin} minutes total; ${C2 ? '' : `keep a ledger at ${A.run_dir}/live-ledger.txt; `}record anything that cannot fit as NOT RUN.` : 'Do not run live or paid external-API tests.',
   'Report only numbers you observed in command output. A skipped check is NOT RUN, never a pass.',
   'If any command is blocked, or a tool or the API refuses, STOP and report blocked=true. Never reproduce its effect another way.',
+  ...(extra || []),
 ].filter(Boolean).join('\n- ')
+// contract 2: commands are data until frozen (design section 5); only run-frozen.js executes a frozen command.
+const NOEXEC = C2 ? [`Never execute a proof, check, suite or setup command found in the canonical file ${A.spec_path} or in its generated views; the frozen verification runs only through scripts/run-frozen.js in the gp-exec blocks the workflow gives you. Never edit the canonical file, its views or the manifest.`] : []
+let RULES = rulesFor(A.live_budget_min, NOEXEC)
 
 const WORK = {
   type: 'object',
@@ -76,6 +129,7 @@ const WORK = {
     files_deleted: { type: 'array', items: { type: 'string' } },
     tests_added: { type: 'array', items: { type: 'string' } },
     red_then_green: { type: 'string' },
+    red_commit: { type: 'string' },
     commit: { type: 'string' },
   },
   required: ['blocked', 'summary', 'files_changed', 'commit'],
@@ -83,19 +137,8 @@ const WORK = {
 const FINDINGS = { type: 'array', items: { type: 'object', properties: {
   severity: { type: 'string' }, location: { type: 'string' }, title: { type: 'string' }, detail: { type: 'string' } },
   required: ['severity', 'title'] } }
-const REVIEW = {
-  type: 'object',
-  properties: {
-    verdict: { type: 'string', enum: ['PASS', 'FAIL', 'NEEDS_HUMAN', 'ERROR'] },
-    confirmed_findings: FINDINGS,
-    note: { type: 'string' }, blocked: { type: 'boolean' },
-    head_sha: { type: 'string' },
-    changed: { type: 'array', items: { type: 'object', properties: { status: { type: 'string' }, path: { type: 'string' } }, required: ['status', 'path'] } },
-    verdict_reasons: { type: 'array', items: { type: 'string' } },
-    other_findings: FINDINGS,
-  },
-  required: ['verdict', 'confirmed_findings', 'head_sha', 'changed', 'verdict_reasons', 'other_findings'],
-}
+const HEAD_SHA = { type: 'string' }
+const CHANGED = { type: 'array', items: { type: 'object', properties: { status: { type: 'string' }, path: { type: 'string' } }, required: ['status', 'path'] } }
 // NEEDS_HUMAN only because codex's own verdict disagreed with the runner's rule, with findings still listed: those go to
 // the fixer. Every other NEEDS_HUMAN without confirmed findings stops the stage.
 const disagreementOnly = r => r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && r.other_findings.length &&
@@ -105,14 +148,13 @@ const SEC = {
   properties: { verdict: { type: 'string', enum: ['PASS', 'FAIL', 'ERROR'] }, blocking: FINDINGS, note: { type: 'string' }, blocked: { type: 'boolean' } },
   required: ['verdict', 'blocking'],
 }
-// Codex relays also report whether codex exists here at all; the Opus stand-in uses the plain schemas.
+// The security relay also reports whether codex exists here at all; the Opus stand-in uses the plain schema.
 const relay = s => ({ ...s, properties: { ...s.properties, codex_available: { type: 'boolean' } }, required: [...s.required, 'codex_available'] })
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
 
 // Opus fallback parity with codex-review: same rubric file, severity scale and verdict rule as run-review.js
 // (computeTriggers/computeVerdict). The reviewer reports findings; the verdict is computed here, never by the model.
 const PARITY_RUBRICS = A.review_runner.replace(/[\/\\][^\/\\]+$/, '').replace(/[\/\\]scripts$/, '') + '/rubrics'
-const PARITY_ISO = new Set(['ambiguous', 'unverifiable', 'missing_acceptance_criteria', 'inconsistent', 'infeasible', 'incomplete'])
 const PARITY_SCHEMA = (extra = {}) => ({
   type: 'object',
   properties: {
@@ -131,37 +173,159 @@ const parityNote = kind => `Apply the codex-review rubric at ${PARITY_RUBRICS}/$
   'Validate every BLOCKING or MAJOR finding yourself before reporting it: re-open the cited location, and drop it if the evidence does not hold. ' +
   (kind === 'implementation' ? 'iso_property is always null. ' : 'iso_property is one of ambiguous|unverifiable|missing_acceptance_criteria|inconsistent|infeasible|incomplete, or null for other gaps. ') +
   'Report every finding in findings with location and detail (quote the evidence). Do NOT decide the verdict: the workflow applies the codex-review rule.'
-function parity(kind, f) {
-  if (!f || f.blocked) return f
-  const all = (f.findings || []).map(x => ({ ...x, confidence: Number(x.confidence) || 0 }))
-  const big = x => x.severity === 'BLOCKING' || x.severity === 'MAJOR'
-  const major = all.filter(x => x.severity === 'MAJOR')
-  const trig = kind === 'implementation'
-    ? all.filter(x => x.severity === 'BLOCKING' || (x.severity === 'MAJOR' && x.confidence >= 0.8))
-    : all.filter(x => x.severity === 'BLOCKING' || (x.severity === 'MAJOR' && (PARITY_ISO.has(x.iso_property) || major.length >= 3)))
-  // codex validates each trigger in a second pass; here the reviewer was told to re-check every BLOCKING/MAJOR and drop
-  // what does not hold, so every reported trigger counts as confirmed (codex's trigger rule, not a confidence filter).
-  const confirmed = trig
-  const rest = all.filter(x => !confirmed.includes(x))
-  const { findings, ...extra } = f
-  const out = (verdict, reasons) => ({ ...extra, verdict, confirmed_findings: confirmed, other_findings: rest, verdict_reasons: reasons })
-  if (confirmed.length) return out('FAIL', confirmed.map(x => `${x.severity} conf ${x.confidence} (${kind}): ${x.title}`))
-  const band = rest.find(x => big(x) && x.confidence >= 0.5 && x.confidence < 0.8)
-  if (band) return out('NEEDS_HUMAN', [`${band.severity} conf ${band.confidence} in 0.5-0.8 band: ${band.title}`])
-  return out('PASS', ['no triggering findings' + (rest.length ? ` (${rest.length} non-blocking reported)` : '')])
+// --- #37 gate rule: this block is the same in design.js, build.js and verify.js. ISO_SET, computeTriggers and
+// computeVerdict are byte-identical copies of codex-review's run-review.js (tests/fallback-parity.test.js checks).
+const ISO_SET = new Set(['ambiguous', 'unverifiable', 'missing_acceptance_criteria', 'inconsistent', 'infeasible', 'incomplete']);
+function computeTriggers(kind, findings) {
+  if (kind === 'implementation') {
+    return findings.filter((f) => f.severity === 'BLOCKING' || (f.severity === 'MAJOR' && f.confidence >= 0.8));
+  }
+  const major = findings.filter((f) => f.severity === 'MAJOR');
+  const byCount = major.length >= 3 ? major : [];
+  const byIso = major.filter((f) => f.iso_property && ISO_SET.has(f.iso_property));
+  const blocking = findings.filter((f) => f.severity === 'BLOCKING');
+  const byId = new Map();
+  for (const f of [...blocking, ...byIso, ...byCount]) byId.set(f.id, f);
+  return [...byId.values()];
 }
-const availNote = runner => `First check that codex is AVAILABLE in this environment: run codex --version${runner ? ` and node ${q(A.review_runner)} --help` : ''}. ` +
-  `If ${runner ? 'either' : 'it'} cannot run or exits non-zero (not installed, command not found), do NOT start the review: return codex_available=false, verdict ERROR, empty finding lists, and the observed output in note. ` +
-  'Otherwise codex_available=true. A usage cap or quota error is NOT unavailability: it stays codex_available=true with verdict ERROR.\n'
+function computeVerdict(kind, findings, modelVerdict) {
+  const reasons = [];
+  const counted = findings.filter((f) => !f.validation || f.validation.status !== 'refuted');
+  const triggers = computeTriggers(kind, counted);
+  if (triggers.length > 0) {
+    const confirmed = triggers.filter((f) => f.validation && f.validation.status === 'confirmed');
+    if (confirmed.length > 0) {
+      for (const f of confirmed) reasons.push(`${f.id} ${f.severity} conf ${f.confidence} (${kind})`);
+      return { verdict: 'FAIL', reasons };
+    }
+    if (triggers.every((f) => f.validation && f.validation.status === 'unvalidated')) {
+      reasons.push('validation_unavailable: all triggering findings unvalidated');
+      return { verdict: 'NEEDS_HUMAN', reasons };
+    }
+    reasons.push('triggering findings left in an unexpected validation state');
+    return { verdict: 'NEEDS_HUMAN', reasons };
+  }
+  const lowConf = counted.find((f) => (f.severity === 'BLOCKING' || f.severity === 'MAJOR') && f.confidence >= 0.5 && f.confidence < 0.8);
+  if (lowConf) {
+    reasons.push(`${lowConf.id} ${lowConf.severity} conf ${lowConf.confidence} in 0.5-0.8 band`);
+    return { verdict: 'NEEDS_HUMAN', reasons };
+  }
+  // Both computed from `counted` (refuted findings already excluded above), never from
+  // the raw `findings` — a refuted BLOCKING/MAJOR must never affect this comparison, the
+  // same rule every other branch above already applies.
+  const preTriggers = computeTriggers(kind, counted);
+  const preVerdict = preTriggers.length > 0 ? 'FAIL'
+    : counted.some((f) => (f.severity === 'BLOCKING' || f.severity === 'MAJOR') && f.confidence >= 0.5 && f.confidence < 0.8) ? 'NEEDS_HUMAN' : 'PASS';
+  if (modelVerdict !== preVerdict) {
+    reasons.push(`model_rule_disagreement: model said ${modelVerdict}, rule says ${preVerdict}`);
+    return { verdict: 'NEEDS_HUMAN', reasons };
+  }
+  reasons.push('no triggering findings');
+  return { verdict: 'PASS', reasons };
+}
+// Normalized finding for both reviewers: { id, severity, confidence, iso_property, validation_status, title, detail,
+// location } with location a string. The workflow decides the buckets, never the relay: confirmed_findings = every
+// validated-confirmed BLOCKING/MAJOR, other_findings = every other non-refuted finding (#37, design section 9).
+const gateBig = x => x.severity === 'BLOCKING' || x.severity === 'MAJOR'
+const gateStr = v => (v == null ? '' : String(v))
+const gateLoc = l => (l && typeof l === 'object' ? (l.file ? l.file + (l.line != null ? ':' + l.line : '') : gateStr(l.section)) : gateStr(l))
+function gateOf(kind, reply, findings, modelVerdict) {
+  const v = computeVerdict(kind, findings.map(x => ({ ...x, validation: { status: x.validation_status } })), modelVerdict)
+  const confirmed = findings.filter(x => gateBig(x) && x.validation_status === 'confirmed')
+  return { ...reply, findings, verdict: v.verdict, verdict_reasons: v.reasons, confirmed_findings: confirmed,
+    other_findings: findings.filter(x => !confirmed.includes(x) && x.validation_status !== 'refuted') }
+}
+const gateBlocked = (reply, reason) => ({ ...reply, blocked: true, reason })
+// Codex: the relay copied result.json field by field; its verdict must be the one computeVerdict gives for its findings.
+function gateCodex(kind, reply) {
+  if (!reply || reply.blocked) return reply
+  if (!Array.isArray(reply.findings) || !('model_verdict' in reply)) return gateBlocked(reply, 'relay inconsistency: the reply lacks findings or model_verdict')
+  if (reply.outcome !== 'ok' || reply.unable_to_review != null) return gateBlocked(reply, `codex-review outcome ${reply.outcome}` +
+    `${reply.unable_to_review != null ? `, unable_to_review: ${reply.unable_to_review}` : ''}, verdict ${reply.verdict}: ${(reply.verdict_reasons || []).join('; ')}`)
+  const findings = reply.findings.map(x => ({ id: gateStr(x.id), severity: x.severity, confidence: x.confidence, iso_property: x.iso_property ?? null,
+    validation_status: gateStr(x.validation_status), title: gateStr(x.claim), detail: gateStr(x.evidence), location: gateLoc(x.location) }))
+  const g = gateOf(kind, reply, findings, reply.model_verdict)
+  return g.verdict === reply.verdict ? g : gateBlocked(reply, `relay inconsistency: relayed verdict ${reply.verdict}, its findings give ${g.verdict}`)
+}
+// Opus fallback: the reviewer self-validated, so every BLOCKING/MAJOR counts as confirmed; ids F1, F2, ... in reply order.
+// The model verdict passed is the rule's own: when computeVerdict reaches its model comparison, no trigger and no
+// 0.5-0.8 finding is left, so the rule's pre-verdict there is always PASS and the fallback never disagrees with itself.
+function gateFallback(kind, reply) {
+  if (!reply || reply.blocked) return reply
+  if (!Array.isArray(reply.findings)) return gateBlocked(reply, 'relay inconsistency: the fallback reply lacks findings')
+  const findings = reply.findings.map((x, i) => ({ id: `F${i + 1}`, severity: x.severity, confidence: Number(x.confidence) || 0,
+    iso_property: kind === 'implementation' ? null : x.iso_property ?? null, validation_status: gateBig(x) ? 'confirmed' : 'not_required',
+    title: gateStr(x.title), detail: gateStr(x.detail), location: gateLoc(x.location) }))
+  return gateOf(kind, reply, findings, 'PASS')
+}
+// One item format for authors and fixers.
+const gateItem = (reviewer, x) => `[${reviewer} ${x.severity}] ${x.id} ${x.location} ${x.title}: ${x.detail}`
+// --- end of the gate rule block
+// --- review relays (plan 1b, design section 5): this block is the same in design.js, build.js and verify.js. A relay
+// runs fixed role-tagged blocks verbatim, in order: setup (availability probes, a fresh out dir made with plain mkdir,
+// so a glob or fixed name can only match this run's output), start (run_in_background), poll (in the foreground,
+// repeated while it exits 1, at most K times), cleanup (once). The Opus fallback has only setup (its own <out>-opus/)
+// and cleanup. A relay that ends its turn while codex runs in the background kills the review.
+const gpBlock = (role, body) => '```gp-exec ' + role + '\n' + body + '\n```\n'
+const gpProbe = runner => `codex --version${runner ? ` && node ${q(A.review_runner)} --help >/dev/null` : ''} || { echo GP_CODEX_UNAVAILABLE; exit 3; }`
+const gpFresh = dir => `mkdir ${q(dir)} || { echo GP_OUT_DIR_EXISTS; exit 4; }`
+const gpStart = (cmd, out) => `${cmd} & echo $! > ${q(out + '/runner.pid')}; wait $!`
+const gpPoll = target => `for i in $(seq 1 54); do ls ${target} >/dev/null 2>&1 && exit 0; sleep 10; done; exit 1`
+const gpStop = out => `P=$(cat ${q(out + '/runner.pid')} 2>/dev/null || true)\n` +
+  'if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then kill -TERM "$P"; for i in $(seq 1 20); do kill -0 "$P" 2>/dev/null || break; sleep 0.5; done; fi'
+const gpUnwt = wt => `git -C ${q(A.repo)} worktree remove --force ${q(wt)}`
+const gpList = (out, kind) => `ls -la ${q(out)}${kind ? ` ${q(out)}/${kind}-*/` : ''} 2>&1 || true` +
+  (kind ? `\nsha256sum ${q(out)}/${kind}-*/result.json 2>&1 || true` : '')
+function relaySteps({ setup, start, poll, cleanup, minutes }) {
+  const K = Math.ceil(minutes / 9)
+  return 'Run the gp-exec blocks below verbatim with the Bash tool, one Bash call per block, in this order, and read what each prints. ' +
+    'setup: in the foreground. If it exits 3, codex or the runner cannot run here: run no other block and return codex_available=false, verdict ERROR, ' +
+    'empty finding lists, null for every other result field, and the observed output in note. If it fails in any other way (exit 4: the out dir already ' +
+    'exists, so what it holds is not this run\'s), run no other block and return blocked=true with the output in note. ' +
+    `start: with the Bash tool's run_in_background; it can run for up to ~${minutes} minutes. Then WAIT IN THE FOREGROUND: ` +
+    'run the poll block as a foreground Bash call (Bash timeout 600000 ms; one bounded loop of at most 9 minutes, for i in $(seq 1 54) ...), ' +
+    `again each time it exits 1, at most ${K} times in all. NEVER return or end your turn between start and cleanup: returning kills the review process and loses the review. ` +
+    `cleanup: once, after a poll exits 0, or after the ${K}-th poll exits 1 (or when start has ended and a poll still finds no result); ` +
+    'without a poll exit 0, report verdict ERROR with the run-folder listing cleanup printed in note.\n' +
+    gpBlock('setup', setup) + gpBlock('start', start) + gpBlock('poll', poll) + gpBlock('cleanup', cleanup)
+}
+const fallbackSteps = (setup, cleanup) => 'Run the gp-exec setup block below verbatim with the Bash tool before you review (if it fails, return blocked=true ' +
+  'with its output in note), and the cleanup block once when your review is done.\n' + gpBlock('setup', setup) + gpBlock('cleanup', cleanup)
+// The relay copies result.json field by field (design section 9); the workflow, not the relay, applies the gate rule.
+const relayRead = (out, kind) => `After cleanup, read the result.json of the one run folder ${out}/${kind}-*/ and copy it with no judgement: verdict, ` +
+  'verdict_reasons, model_verdict, outcome, unable_to_review, validation_outcome (its validation.outcome; null when validation is null), run_dir (that run folder) ' +
+  'and result_sha256 (from the sha256sum line cleanup printed), and EVERY finding with its id, severity, confidence, iso_property, validation_status ' +
+  '(its validation.status), claim, evidence and location (the object as is). Do not drop, merge, re-grade or sort findings into buckets: the workflow decides. ' +
+  'If codex reports a usage cap or quota error, return verdict ERROR with that text in note (a cap is NOT unavailability: codex_available stays true).'
+const NULLABLE = { type: ['string', 'null'] }
+const RELAY_FINDING = { type: 'object', properties: {
+  id: { type: 'string' }, severity: { type: 'string', enum: ['BLOCKING', 'MAJOR', 'MINOR', 'NIT'] }, confidence: { type: 'number' }, iso_property: NULLABLE,
+  validation_status: { type: 'string', enum: ['confirmed', 'refuted', 'unvalidated', 'not_required'] }, claim: { type: 'string' }, evidence: { type: 'string' },
+  location: { type: 'object', properties: { file: NULLABLE, line: { type: ['integer', 'null'] }, section: NULLABLE } } },
+  required: ['id', 'severity', 'confidence', 'iso_property', 'validation_status', 'claim', 'evidence', 'location'] }
+const RELAY_REVIEW = (extra = {}) => ({
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['PASS', 'FAIL', 'NEEDS_HUMAN', 'ERROR'] }, verdict_reasons: { type: 'array', items: { type: 'string' } },
+    model_verdict: NULLABLE, outcome: NULLABLE, unable_to_review: NULLABLE, validation_outcome: NULLABLE, run_dir: NULLABLE, result_sha256: NULLABLE,
+    findings: { type: 'array', items: RELAY_FINDING }, note: { type: 'string' }, blocked: { type: 'boolean' }, codex_available: { type: 'boolean' }, ...extra,
+  },
+  required: ['verdict', 'verdict_reasons', 'model_verdict', 'outcome', 'unable_to_review', 'validation_outcome', 'run_dir', 'result_sha256', 'findings', 'codex_available', ...Object.keys(extra)],
+})
+// --- end of the review relay block
+// The review relay copies result.json field by field, plus the head it pinned and git's list of changed paths.
+const RELAY = RELAY_REVIEW({ head_sha: HEAD_SHA, changed: CHANGED })
 // Only "codex not available" may fall back, and only when the repo opted in; a capped codex still stops (ERROR -> BLOCKED).
 // Every review step is recorded, so an earlier Opus fallback round stays visible after a later codex PASS.
 const reviewers = []
-const disclose = o => ({ ...o, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
-async function reviewed(step, viaCodex, fallback) {
+// contract 2: the run-frozen steps recovered by a record readback (block below), disclosed in every result.
+const READBACK = []
+const disclose = o => ({ ...o, ...(C2 ? { contract: 2, readback: READBACK.slice() } : {}), build_mode: BUILD_MODE, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
+async function reviewed(step, gate, viaCodex, fallback) {
   const r = await viaCodex()
   let res
-  // An explicit relay blocker (refused command, failed setup) always stops the stage; it never falls back.
-  if (!r || r.blocked || r.codex_available !== false) res = r && { ...r, reviewer: 'codex' }
+  // An explicit relay blocker (refused command, failed setup, stale out dir) always stops the stage; it never falls back.
+  if (!r || r.blocked || r.codex_available !== false) res = r && { ...gate(r), reviewer: 'codex' }
   else if ((A.review_fallback || 'none') !== 'opus-high') res = { ...r, blocked: true, reviewer: 'none', note: `codex is not available in this environment and review_fallback is none. ${r.note || ''}` }
   else {
     const f = await fallback()
@@ -189,11 +353,219 @@ const SUITE = {
 // Known pre-existing failures are matched in code by EXACT test id, never left to an agent's judgement, and only
 // excuse a suite run that completed (no crash, timeout or collection error). A string is split on newlines only,
 // because parameterized test ids can contain commas.
-const KNOWN = (Array.isArray(A.known_failures) ? A.known_failures : String(A.known_failures || '').split('\n')).map(s => s.trim()).filter(Boolean)
+let KNOWN = (Array.isArray(A.known_failures) ? A.known_failures : String(A.known_failures || '').split('\n')).map(s => s.trim()).filter(Boolean)
 const newFailures = s => s.failures.map(f => f.trim()).filter(f => !KNOWN.includes(f))
 
-const target = A.spec_path ? `the frozen spec at ${A.spec_path}` : 'the charge below'
+const target = C2 ? `the frozen canonical feature file at ${A.spec_path} (design commit ${A.design_commit}; for prose read its generated views ${A.frozen_dir}/prd.view.md and ${A.frozen_dir}/spec.view.md)`
+  : A.spec_path ? `the frozen spec at ${A.spec_path}` : 'the charge below'
 const chargeText = A.charge ? `\n\nCHARGE:\n${A.charge}` : ''
+// contract 2: the CI failure log note, for the implementer and fixer prompts only (design 6.3); no reviewer sees it.
+let ciNote = ''
+
+// ---- contract 2: deterministic steps (design section 5) ----------------------------------------------------------
+// Each is one ```gp-exec block the agent runs verbatim in the foreground, reporting stdout and exit code; the
+// workflow reads the scripts' printed JSON lines and sha256sum lines from that stdout. Certifying scripts re-derive
+// everything later (completion), so a relay mistake BLOCKS there at the latest.
+const EXEC = { type: 'object', properties: { stdout: { type: 'string' }, exit_code: { type: 'integer' }, blocked: { type: 'boolean' }, note: { type: 'string' } }, required: ['stdout', 'exit_code'] }
+const execBlock = body => '```gp-exec\n' + body + '\n```\n'
+const EXEC_NOTE = 'Run the gp-exec block below verbatim with the Bash tool, in the foreground, as one call with Bash timeout 600000 ms (the maximum), and return its whole stdout verbatim in stdout and its exit code in exit_code. ' +
+  'Do not run anything else, and do not fix, retry or work around a failure.\n'
+// One foreground Bash call ends at 600 s at most; each frozen run inside it may take its limit plus run-frozen.js's 10 s kill
+// grace. A step that cannot finish inside one call BLOCKS before it starts (a killed call would lose its record).
+// The same bound as scripts/lib/call-limits.js (validator rule G40, which keeps such limits from being frozen); a
+// workflow cannot require a module, so tests/feature-validate.test.js keeps these copies equal to it.
+const ONE_CALL_S = 570
+const RUN_GRACE_S = 15
+const overCall = (label, seconds) => seconds > ONE_CALL_S ? `${label} can take up to ${seconds} s and cannot finish inside one foreground Bash call (600 s); shorten its frozen limit` : ''
+const jsonLines = s => String(s || '').split('\n').map(l => { try { const v = JSON.parse(l); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null } }).filter(Boolean)
+const shaOf = (s, file) => ((String(s || '').split('\n').map(l => /^([0-9a-f]{64}) [ *](.+)$/.exec(l)).find(m => m && m[2] === file)) || [])[1]
+const HEX64 = /^[0-9a-f]{64}$/
+const SCRIPT = name => q(`${V2_SCRIPTS}/${name}`)
+const writeJsonBlock = (file, value) => `node ${SCRIPT('write-json.js')} --out ${q(file)} <<'GP_JSON'\n${JSON.stringify(value)}\nGP_JSON`
+const crash = code => [124, 126, 127].includes(code) || code >= 128
+let PRE = null // the --mode design output (the preflight record), contract 2
+// The frozen manifest's allowed_paths and protected_paths, contract 2: the same entries completion's E_SCOPE check uses
+// (an entry ending in '/' is a directory prefix, any other entry one exact path).
+let SCOPE = null
+const inEntry = (file, entry) => entry.endsWith('/') ? file.startsWith(entry) : file === entry
+const outOfScope = paths => paths.filter(p => !SCOPE.allowed.some(e => inEntry(p, e)) || SCOPE.protected.some(e => inEntry(p, e)))
+let SUITE_M = null // the manifest suite, contract 2
+let CI_LOG = null // { path, sha256 } of ci_failure_log_path, contract 2
+let PLAN_IDENTITY = null
+const reviewFiles = []
+// --- record readback (design 6.4): this block is the same in build.js and verify.js. A run-frozen step whose reply
+// lacks a record line run-frozen.js prints (a relay that paraphrased its stdout) gets ONE low-effort readback agent
+// whose gp-exec block only reads: test -f, sha256sum and cat of each record (and sha256sum of a negative control's
+// patch, or cat of the ledger). It never re-runs and never writes anything. A record is accepted only when the file
+// exists, its hash is printed, its JSON names the expected target, it was made on the pinned reviewed commit with the
+// checkout clean before and after (exactly when run-frozen.js exits 0 having written it) and, for a negative control,
+// it holds integer baseline_exit_code and exit_code and a mutation_patch_sha256 equal to the printed patch hash. A
+// blocked reply, or one that shows run-frozen's own refusal (a nonzero exit with a run-frozen: line), gets no
+// readback. The workflow cannot hash, so a wrong printed record hash is caught by completion, which re-derives every
+// record from disk (hash, target, command, logs, patch, exit codes).
+const rbRefused = r => !r || r.blocked === true || (r.exit_code !== 0 && /^run-frozen: /m.test(String(r.stdout || '')))
+const rbCovered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'))
+// A porcelain v1 line's paths, read as run-frozen.js and check-completion.js read them: git C-quotes a name holding a
+// space, so `old -> new` is a rename or copy (R or C in XY) only; an unreadable line is null, never clean.
+const rbPaths = l => {
+  if (typeof l !== 'string' || l.length < 4 || l[2] !== ' ') return null
+  const t = l.slice(3).match(/"(?:[^"\\]|\\.)*"|[^ "]+| /g)
+  if (!t || t.join('') !== l.slice(3)) return null
+  const p = t.filter(x => x !== ' ').map(x => (x.startsWith('"') ? x.slice(1, -1) : x))
+  if (/[RC]/.test(l.slice(0, 2))) return t.length === 5 && t[2] === '->' ? [p[0], p[2]] : null
+  return t.length === 1 ? p : null
+}
+const rbClean = (status, entries) => Array.isArray(status) && status.every(l => { const f = rbPaths(l); return f !== null && f.every(p => rbCovered(p, entries)) })
+// The text a cat printed after a file's sha256sum line (up to the next sha256sum line), parsed as one JSON object, else null.
+function rbJsonAfter(stdout, file) {
+  const lines = String(stdout || '').split('\n')
+  const shaLine = l => /^([0-9a-f]{64}) [ *](.+)$/.exec(l)
+  const at = lines.findIndex(l => { const m = shaLine(l); return !!m && m[2] === file })
+  if (at < 0) return null
+  let end = at + 1
+  while (end < lines.length && !shaLine(lines[end])) end++
+  try { const v = JSON.parse(lines.slice(at + 1, end).join('\n')); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null }
+}
+// reads: [{ record, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
+// Returns { records: [{ record_path, record_sha256, record, printed }], files: { <path>: { sha256, value } } } or { error }.
+async function readback({ step, ph, sha, clean, reads, files = [] }) {
+  const body = [...reads.map(x => `test -f ${q(x.record)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(x.record)} && cat ${q(x.record)}`),
+    ...files.map(f => `test -f ${q(f)} && sha256sum ${q(f)} && cat ${q(f)}`)].join('\n')
+  const r = await agent(`Step ${step} ran run-frozen.js, but its reply did not carry the record line run-frozen.js prints. Read the files back: the block below only reads; ` +
+    `it never runs or writes anything. Return its stdout exactly as printed, byte for byte, with nothing added, dropped or reformatted. ${EXEC_NOTE}` + execBlock(body) + `\n- ${RULES}`,
+    { label: `readback ${step}`, phase: ph, schema: EXEC, effort: 'low' })
+  if (!r || r.blocked) return { error: 'the readback was blocked' }
+  const records = []
+  for (const x of reads) {
+    const recSha = shaOf(r.stdout, x.record)
+    const rec = rbJsonAfter(r.stdout, x.record)
+    const patchSha = x.patch ? shaOf(r.stdout, x.patch) : null
+    const bad = !HEX64.test(recSha || '') ? `no record file or no sha256 printed for ${x.record}`
+      : !rec ? `${x.record} did not print as one JSON object`
+      : rec.target !== x.target ? `${x.record} names target ${rec.target}, not ${x.target}`
+      : rec.head_before !== sha || rec.head_after !== sha || !rbClean(rec.status_before, clean) || !rbClean(rec.status_after, clean) ? `${x.record} was not made on the clean reviewed commit ${sha}`
+      : x.patch && !(Number.isInteger(rec.baseline_exit_code) && Number.isInteger(rec.exit_code) && HEX64.test(rec.mutation_patch_sha256 || '')) ? `${x.record} lacks baseline_exit_code, exit_code or mutation_patch_sha256`
+      : x.patch && patchSha !== rec.mutation_patch_sha256 ? `the patch ${x.patch} hashes to ${patchSha || 'nothing printed'}, the record says ${rec.mutation_patch_sha256}` : ''
+    if (bad) return { error: bad }
+    records.push({ record_path: x.record, record_sha256: recSha, record: rec,
+      printed: { record_path: x.record, record_sha256: recSha, exit_code: rec.exit_code ?? null, timed_out: rec.timed_out ?? false, setup_exit_code: rec.setup ? rec.setup.exit_code : null } })
+  }
+  const read = {}
+  for (const f of files) {
+    const s = shaOf(r.stdout, f)
+    const value = rbJsonAfter(r.stdout, f)
+    if (!HEX64.test(s || '') || !value) return { error: `no file, sha256 or JSON printed for ${f}` }
+    read[f] = { sha256: s, value }
+  }
+  return { records, files: read }
+}
+// --- end of the record readback block
+// Review files (design 6.3): one entry per round of each review step, every path and hash printed by a script. The Opus
+// fallback hashes its inputs before reviewing (hash-inputs.js --out) and again after (--verify, in the record block), and
+// its structured reply is written verbatim by write-json.js; a raw codex file is hashed by sha256sum in the cleanup block.
+const fbInputs = dir => (C2 ? [`node ${SCRIPT('hash-inputs.js')} --out ${q(dir + '/inputs.json')} --files ${q(dir + '/change.patch')} >/dev/null`] : [])
+const rawHash = file => (C2 ? [`sha256sum ${q(file)} 2>&1 || true`] : [])
+const RAW_NOTE = name => ` Also return raw_sha256: the hash on the sha256sum line cleanup printed for ${name} (null when there is none).`
+const RAW_RELAY = s => { const r = relay(s); return { ...r, properties: { ...r.properties, raw_sha256: { type: ['string', 'null'] } }, required: [...r.required, 'raw_sha256'] } }
+async function recordFallback({ step, round, dir, reply, inputs, ph, label }) {
+  const file = `${dir}/fallback-review.json`
+  const r = await agent(
+    `Record the Opus fallback ${step} review: ${inputs ? 're-hash its inputs (hash-inputs.js --verify fails if any changed during the review), then ' : ''}` +
+    `write its reply verbatim with the skill's write-json.js (strict JSON, written once and atomically; it prints { path, sha256 }). ${EXEC_NOTE}` +
+    execBlock(['set -e', ...(inputs ? [`node ${SCRIPT('hash-inputs.js')} --verify ${q(dir + '/inputs.json')}`] : []),
+      writeJsonBlock(file, { gate_kind: step, reviewer: FALLBACK_REVIEWER, reply }), ...(inputs ? [`sha256sum ${q(dir + '/inputs.json')}`] : [])].join('\n')) + `\n- ${RULES}`,
+    { label: `record opus ${label}`, phase: ph, schema: EXEC, effort: 'low' })
+  const w = r && !r.blocked && r.exit_code === 0 ? jsonLines(r.stdout).find(o => o.path === file && HEX64.test(o.sha256 || '')) : null
+  const inSha = r && inputs ? shaOf(r.stdout, dir + '/inputs.json') : null
+  if (!w || (inputs && !HEX64.test(inSha || ''))) return { error: `the fallback ${step} review record was not written: ${r ? r.stdout : 'no reply'}` }
+  return { entry: { step, round, reviewer: FALLBACK_REVIEWER, review_dir: dir,
+    ...(inputs ? { inputs_path: dir + '/inputs.json', inputs_sha256: inSha, fallback_review_path: file, fallback_review_sha256: w.sha256 } : { raw_path: file, raw_sha256: w.sha256 }) } }
+}
+// rawName: the raw codex file of a security/compliance step; without it the step is an implementation review (result.json).
+async function reviewFile({ step, round, out, fb, res, raw, ph, label, rawName }) {
+  if (!res || res.blocked || !['PASS', 'FAIL', 'NEEDS_HUMAN'].includes(res.verdict)) return res
+  if (res.reviewer === 'codex') {
+    if (rawName) {
+      if (!HEX64.test(res.raw_sha256 || '')) return gateBlocked(res, `relay inconsistency: no raw_sha256 for ${out}/${rawName}`)
+      reviewFiles.push({ step, round, reviewer: 'codex', review_dir: out, raw_path: `${out}/${rawName}`, raw_sha256: res.raw_sha256 })
+    } else {
+      const d = res.run_dir
+      if (typeof d !== 'string' || !d.startsWith(out + '/implementation-') || d.slice(out.length + 1).includes('/') || !HEX64.test(res.result_sha256 || '')) {
+        return gateBlocked(res, `relay inconsistency: run_dir ${d} and result_sha256 must name this run's result.json under ${out}`)
+      }
+      reviewFiles.push({ step, round, reviewer: 'codex', review_dir: out, result_path: d + '/result.json', result_sha256: res.result_sha256 })
+    }
+    return res
+  }
+  const rec = await recordFallback({ step, round, dir: fb, reply: raw, inputs: !rawName, ph, label })
+  if (rec.error) return gateBlocked(res, rec.error)
+  reviewFiles.push(rec.entry)
+  return res
+}
+
+if (C2) {
+  phase('Preflight')
+  const prePath = `${A.run_dir}/design-preflight.json`
+  const ciLog = A.ci_failure_log_path
+  const printSuite = `node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const s=m.suite;` +
+    `console.log(JSON.stringify({gp_suite:{command:s.command,known_failure_ids:s.known_failures.map(k=>k.test_id),isolated:s.isolated,setup_command:s.setup_command,timeout_min:s.timeout_min}}));` +
+    `console.log(JSON.stringify({gp_scope:{allowed_paths:m.allowed_paths,protected_paths:m.protected_paths}}))' ${q(A.manifest_path)}`
+  const pre = await agent(
+    `Preflight of the design-gated build of feature ${A.feature_id}, BEFORE anything changes: the frozen plan's design identity (check-completion.js --mode design writes it to ${prePath}), ` +
+    `the design commit as an ancestor of HEAD${ciLog ? ', and the hash of the CI failure log' : ''}. ${EXEC_NOTE}` +
+    execBlock([
+      'set -e',
+      ...freshRunDir(A.run_dir),
+      `node ${SCRIPT('check-completion.js')} --mode design --repo ${q(A.repo)} --feature-id ${q(A.feature_id)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} ` +
+        `--spec ${q(A.spec_path)} --commit ${A.design_commit} --approvals ${q(A.approvals_path)} --approvals-sha256 ${A.approvals_sha256} --out ${q(prePath)} 2>&1`,
+      `git -C ${q(A.repo)} merge-base --is-ancestor ${A.design_commit} HEAD || { echo GP_DESIGN_NOT_ANCESTOR; exit 5; }`,
+      `sha256sum ${q(prePath)}`,
+      printSuite,
+      ...(ciLog ? [`case "$(realpath ${q(ciLog)})/" in "$(realpath ${q(A.repo)})"/*) echo GP_CI_LOG_IN_REPO; exit 6;; esac`,
+        `node ${SCRIPT('hash-inputs.js')} --out ${q(A.run_dir + '/ci-failure-log.inputs.json')} ${q(ciLog)}`] : []),
+    ].join('\n')) + `\n- ${RULES}`,
+    { label: 'design preflight', phase: 'Preflight', schema: EXEC, effort: 'low' })
+  if (!pre || pre.blocked || pre.exit_code !== 0) {
+    const code = pre && runDirCode(pre.stdout)
+    return disclose({ status: 'BLOCKED', stage: 'preflight', ...(code ? { code } : {}),
+      reason: code === 'E_RUN_DIR_EXISTS' ? 'run_dir already exists (GP_RUN_DIR_EXISTS): every build run needs a fresh run_dir; nothing was changed'
+        : code ? `run_dir ${A.run_dir} could not be created: nothing was changed` : 'the design preflight failed: nothing was changed', preflight: pre })
+  }
+  const lines = jsonLines(pre.stdout)
+  const d = lines.find(o => o.mode === 'design')
+  const preSha = shaOf(pre.stdout, prePath)
+  const s = (lines.find(o => o.gp_suite) || {}).gp_suite
+  const hi = lines.find(o => Array.isArray(o.inputs))
+  const sc = (lines.find(o => o.gp_scope) || {}).gp_scope
+  const strList = v => Array.isArray(v) && v.every(x => typeof x === 'string' && x.length > 0)
+  const bad = !d ? 'no --mode design output' : d.status !== 'PASS' ? 'the design preflight did not PASS'
+    : d.design_commit !== A.design_commit || d.manifest_sha256 !== A.manifest_sha256 || d.approvals_sha256 !== A.approvals_sha256 ? 'the preflight names another design commit, manifest or approvals ledger'
+    : !d.source || !HEX64.test(d.source.sha256) || !HEX64.test(preSha || '') ? 'the preflight record or its hash is missing'
+    : !s || typeof s.command !== 'string' || !s.command || JSON.stringify(s.known_failure_ids) !== JSON.stringify(d.known_failure_ids) ? 'the manifest suite is missing or differs from the preflight'
+    : !Array.isArray(d.clean_ignore) || typeof d.unit_command !== 'string' || !Number.isInteger(d.live_budget_min) ? 'the preflight lacks the frozen suite configuration'
+    : !sc || !strList(sc.allowed_paths) || !sc.allowed_paths.length || !strList(sc.protected_paths) ? 'the preflight lacks the frozen scope (allowed_paths, protected_paths)'
+    : ciLog && !(hi && hi.inputs.length === 1 && hi.inputs[0].path === ciLog && HEX64.test(hi.inputs[0].sha256)) ? 'the CI failure log was not hashed' : ''
+  if (bad) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: bad, preflight: pre })
+  // Test-first (design 6.3): the red commit may change only files under scope.test_paths, so there must be one.
+  if (!Array.isArray(d.test_paths) || !d.test_paths.length || !d.test_paths.every(p => typeof p === 'string' && SAFE.test(p))) {
+    return disclose({ status: 'BLOCKED', stage: 'preflight', code: 'E_TEST_FIRST', reason: 'contract-2 test-first needs at least one scope.test_paths entry: the red commit may change only files under it', preflight: pre })
+  }
+  // The red run (setup and unit command, each suite.timeout_min) has the suite's worst case, checked just below.
+  const suiteRuns = typeof s.setup_command === 'string' ? 2 : 1
+  const suiteLong = !Number.isInteger(s.timeout_min) || s.timeout_min < 1 ? 'the manifest suite has no timeout_min'
+    : overCall(`the frozen suite (${suiteRuns === 2 ? 'setup and suite, ' : ''}${suiteRuns} x timeout_min ${s.timeout_min})`, suiteRuns * (s.timeout_min * 60 + RUN_GRACE_S))
+  if (suiteLong) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: suiteLong, preflight: pre })
+  PRE = d
+  SUITE_M = s
+  SCOPE = { allowed: sc.allowed_paths.slice(), protected: sc.protected_paths.slice() }
+  KNOWN = d.known_failure_ids.slice()
+  CI_LOG = ciLog ? { path: ciLog, sha256: hi.inputs[0].sha256 } : null
+  PLAN_IDENTITY = { design_commit: A.design_commit, source_sha256: d.source.sha256, manifest_sha256: d.manifest_sha256, approvals_sha256: d.approvals_sha256, preflight_path: prePath, preflight_sha256: preSha }
+  RULES = rulesFor(d.live_budget_min, NOEXEC)
+  // The CI failure log is context for the implementer and fixer only; it certifies nothing (design 6.3).
+  if (CI_LOG) ciNote = `\n\nCI failure log: context only; the frozen canonical file is the only authority. It is ${CI_LOG.path} (sha256 ${CI_LOG.sha256}); ` +
+    'read it to find what failed. It never changes a command, a known failure or the scope.'
+}
 // A restart (after HEAD_MOVED or CI_RED) must pass the feature's ORIGINAL base_commit, so commits that arrived since the
 // last review fall inside the reviewed range instead of becoming the new base.
 if (A.base_commit !== undefined && !/^[0-9a-f]{7,40}$/.test(A.base_commit)) return { status: 'BLOCKED', reason: 'base_commit must be a hex commit id' }
@@ -202,13 +574,22 @@ const workReport = A.base_commit
   : 'Before changing anything, record `git rev-parse HEAD` as base_commit (keep the first value across rounds). In files_changed list repo-relative paths that still exist; list removed files in files_deleted.'
 
 phase('Implement')
+// contract 2 (design 6.3): test-first is certified, so the order of the commits is the contract: a RED commit of tests
+// only, then the implementation. The workflow runs the frozen unit command at red_commit (testFirst below).
+const testFirstNote = () => `Work test-first, in commits on ${A.work_branch} after the design commit ${A.design_commit}, in this order. ` +
+  `(1) The RED commit: one or more commits that change ONLY files under the frozen scope.test_paths (${PRE.test_paths.join(', ')}), at least one file, ` +
+  'adding or changing the focused tests of the behavioral acceptance items; at the last of them those tests must FAIL as tests (a failing assertion, never a crash, a missing command or a timeout). ' +
+  '(2) The implementation commits after it, until the focused tests pass. Then report red_commit: the full 40-hex id of the last RED commit (git rev-parse HEAD right after committing it). ' +
+  `If this branch already holds such a red commit after ${A.design_commit} from an earlier build run of this design (a CI_RED or HEAD_MOVED rerun), make no new red commit: report that one. ` +
+  'Never amend, rebase or rewrite a commit. The workflow then runs the frozen unit command at red_commit in a throwaway worktree and BLOCKS unless it fails there. ' +
+  'Static-only items use the frozen spec\'s applicable static evidence. '
 const work = await agent(
-  `You are the implementer for feature ${A.feature_id}. Implement ${target}.${chargeText}\n\n` +
-  `Work test-first: for each behavioral acceptance item write the test, run it and see it FAIL, implement, run it and see it PASS. Static-only items use the frozen spec's applicable static evidence. ` +
-  `Run the focused tests with: ${A.unit_cmd || '(the repo\'s focused test command)'}. Keep the change minimal and in the repo's style. ` +
+  `You are the implementer for feature ${A.feature_id}. Implement ${target}.${chargeText}${ciNote}\n\n` +
+  (C2 ? testFirstNote() : `Work test-first: for each behavioral acceptance item write the test, run it and see it FAIL, implement, run it and see it PASS. Static-only items use the frozen spec's applicable static evidence. `) +
+  `Run the focused tests with: ${(C2 ? PRE.unit_command : A.unit_cmd) || '(the repo\'s focused test command)'}. Keep the change minimal and in the repo's style. ` +
   `Commit on ${A.work_branch} and push the branch. Save the red and green outputs under ${A.run_dir}/implement/. ${workReport}\n\nRules:\n- ${RULES}`,
   { label: 'implement', phase: 'Implement', schema: WORK, effort: IMPL_EFFORT })
-if (!work || work.blocked) return { status: 'BLOCKED', stage: 'implement', reason: work ? work.blocked_reason : 'implementer died' }
+if (!work || work.blocked) return disclose({ status: 'BLOCKED', stage: 'implement', reason: work ? work.blocked_reason : 'implementer died' })
 
 const base = A.base_commit || work.base_commit || ''
 const files = new Set()
@@ -226,45 +607,105 @@ const unsafe = () => [...files, ...deleted].filter(f => !NAME.test(f) || ABS.tes
   .concat(/^[0-9a-f]{7,40}$/.test(base) ? [] : ['(the implementer must report a hex base_commit)'])
 const history = [{ round: 0, work }]
 
+// contract 2 test-first (design 6.3, 6.4): run-frozen.js --target red --base <design_commit> runs the manifest's
+// suite.unit_command at red_commit in a throwaway worktree of it (never the work checkout), after refusing a range
+// design_commit..red_commit that is empty or changes a file outside scope.test_paths. RED holds only for a test failure:
+// setup exit 0 when set, not timed out, an integer exit that is nonzero, not 124/126/127 and below 128. Anything else
+// is BLOCKED at stage test-first (E_TEST_FIRST), never a fix round: the red commit is history before the implementation,
+// which no fixer may rewrite. The red run runs once per build run; fix rounds need no new red commit.
+let TEST_FIRST = null
+async function testFirst(w) {
+  const fail = (reason, report) => ({ blocked: true, reason, report })
+  const red = w.red_commit
+  if (typeof red !== 'string' || !/^[0-9a-f]{40}$/.test(red)) return fail('the implementer reported no red_commit (the full 40-hex id of the last test-only commit before the implementation)')
+  const out = `${A.run_dir}/test-first`
+  const rec = `${out}/red.record.json`
+  const rep = await agent(
+    `Test-first check of feature ${A.feature_id}: run the focused tests at the red commit ${red} through run-frozen.js. It runs exactly the frozen manifest's unit command ` +
+    `(never type a test command yourself) in a throwaway worktree of that commit, never in the work checkout, and writes a framed log and a record. ${EXEC_NOTE}` +
+    execBlock(['set -e', `git -C ${q(A.repo)} merge-base --is-ancestor ${red} HEAD || { echo GP_RED_NOT_ANCESTOR; exit 5; }`,
+      `[ "$(git -C ${q(A.repo)} rev-parse HEAD)" != ${red} ] || { echo GP_RED_IS_HEAD; exit 5; }`,
+      `node ${SCRIPT('run-frozen.js')} --repo ${q(A.repo)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} --reviewed-sha ${red} --base ${A.design_commit} --target red --out-dir ${q(out)} 2>&1`,
+      `tr -d '\\n' < ${q(rec)}; echo`].join('\n')) + `\n- ${RULES}`,
+    { label: 'test-first red', phase: 'Red', schema: EXEC, effort: 'low' })
+  if (!rep || rep.blocked) return fail('the test-first red step was blocked', rep)
+  if (/GP_RED_NOT_ANCESTOR/.test(String(rep.stdout || ''))) return fail(`red_commit ${red} is not an ancestor of the work branch HEAD`, rep)
+  // Completion needs the red commit to be a proper ancestor of the reviewed SHA (design 6.5): the same rule here.
+  if (/GP_RED_IS_HEAD/.test(String(rep.stdout || ''))) return fail(`red_commit ${red} is the work branch HEAD: no implementation commit after it`, rep)
+  const lines = jsonLines(rep.stdout)
+  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let record = lines.find(o => o.target === 'red' && o.log_path)
+  // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
+  let rb = null
+  if ((!printed || !record) && !rbRefused(rep)) {
+    rb = await readback({ step: 'test-first', ph: 'Red', sha: red, clean: PRE.clean_ignore, reads: [{ record: rec, target: 'red' }] })
+    if (!rb.error) {
+      printed = rb.records[0].printed
+      record = rb.records[0].record
+      READBACK.push({ step: 'test-first', record_path: rec })
+    }
+  }
+  const why = rb && rb.error ? ` (no printed record line with record_path ${rec}; readback: ${rb.error})` : ''
+  if (rep.exit_code !== 0 && !(rb && !rb.error)) {
+    const refusal = (String(rep.stdout || '').match(/^run-frozen: .*$/m) || [])[0]
+    return fail((refusal ? `run-frozen.js refused the red run: ${refusal.slice('run-frozen: '.length)}` : 'the red run failed, or its worktree moved or got dirty') + why, rep)
+  }
+  if (!printed || !record || record.target !== 'red' || record.head_before !== red || record.head_after !== red || record.exit_code !== printed.exit_code) {
+    return fail('the red record was not printed for the red commit' + why, rep)
+  }
+  const exit = record.exit_code
+  const setupOk = SUITE_M.setup_command === null ? record.setup === null : !!record.setup && record.setup.exit_code === 0 && record.setup.timed_out === false
+  const bad = !setupOk ? 'the setup_command failed before the red run, so the focused tests never ran'
+    : record.timed_out ? 'the red run timed out: a timeout is not a failing test'
+    : !Number.isInteger(exit) ? 'the red run has no exit code'
+    : exit === 0 ? 'the focused tests passed at red_commit (exit 0): test-first needs them to fail before the implementation'
+    : crash(exit) ? `the red run crashed (exit ${exit}): a crash, a missing command or a signal is not a failing test` : ''
+  if (bad) return fail(`RED does not hold at ${red}: ${bad}; see ${record.log_path}`, rep)
+  return { red_commit: red, record_path: printed.record_path, record_sha256: printed.record_sha256 }
+}
+if (C2) {
+  phase('Red')
+  const tf = await testFirst(work)
+  if (tf.blocked) return disclose({ status: 'BLOCKED', stage: 'test-first', code: 'E_TEST_FIRST', reason: tf.reason, ...(tf.report ? { test_first_run: tf.report } : {}), history })
+  TEST_FIRST = tf
+}
+
 // Review scope = the WHOLE change base_commit..<pinned head>, taken from git, never from the agents' file lists (an
 // unreported file must not escape review). The runner's only diff-aware mode is --uncommitted, so the change is replayed
 // as uncommitted edits (deletions included) in a throwaway worktree at base_commit.
-function scopePrep(out) {
-  const wt = `${out}/wt`
-  return `Set up the review checkout first (Bash, in order; stop and report blocked if any step fails):\n` +
-    `0. Pin the head: H=$(git -C ${q(A.repo)} rev-parse HEAD). Report it as head_sha, and use $H (never HEAD) below.\n` +
-    `1. mkdir -p ${q(out)} && git -C ${q(A.repo)} diff --binary --no-renames ${base} "$H" > ${q(out + '/change.patch')}\n` +
-    `   and report changed = every line of: git -C ${q(A.repo)} diff --name-status --no-renames ${base} "$H" (status letter + repo-relative path).\n` +
-    `2. git -C ${q(A.repo)} worktree add --detach ${q(wt)} ${base}\n` +
-    `3. git -C ${q(wt)} apply --index ${q(out + '/change.patch')}\n` +
-    `After result.json exists (or the run fails), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(wt)}\n`
+function scopePrep(dir) {
+  return [
+    `H=$(git -C ${q(A.repo)} rev-parse HEAD)`, 'echo "head_sha: $H"',
+    `git -C ${q(A.repo)} diff --binary --no-renames ${base} "$H" > ${q(dir + '/change.patch')}`,
+    `git -C ${q(A.repo)} worktree add --detach ${q(dir + '/wt')} ${base}`,
+    `git -C ${q(dir + '/wt')} apply --index ${q(dir + '/change.patch')}`,
+    'echo "changed:"', `git -C ${q(A.repo)} diff --name-status --no-renames ${base} "$H"`,
+  ].join('\n')
 }
-const scopeArgs = out => `--uncommitted --repo ${q(out + '/wt')}`
-// Wait in the FOREGROUND: a relay that ends its turn while codex runs in the background kills the review.
-const waitNote = (lsTarget, minutes) => `It can run for up to ~${minutes} minutes. Start it with the Bash tool's run_in_background, then WAIT IN THE FOREGROUND: ` +
-  `make repeated foreground Bash calls (Bash timeout 600000 ms), each a bounded loop of at most 9 minutes: ` +
-  `for i in $(seq 1 54); do ls ${lsTarget} >/dev/null 2>&1 && break; sleep 10; done ; repeat until the result exists or that total time has passed. ` +
-  'NEVER return or end your turn while the review process is still running: returning kills it and loses the review. ' +
-  'If the total time passes with no result, report ERROR with what the run folder contains.'
+const scopeNote = dir => 'Report head_sha (the head_sha: line setup printed; it pins the head, and every later step uses it, never HEAD) and changed ' +
+  `(every line setup printed after changed:, a status letter and a repo-relative path). The checkout ${dir}/wt holds the whole change ${base}..head_sha as uncommitted edits.\n`
 
 async function review(round) {
   const out = `${A.run_dir}/review-${round}`
-  return reviewed(`review ${round}`, () => agent(
-    `Run an independent codex implementation review of the CHANGE and report its verdict. Do not review the code yourself.\n${availNote(true)}${scopePrep(out)}` +
-    `Command (Bash): node ${q(A.review_runner)} --kind implementation ${scopeArgs(out)} --out-dir ${q(out)}` +
-    `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}\n` +
-    `${waitNote(`${q(out)}/*/result.json`, Math.ceil(TIMEOUT_S * 6 / 60) + 5)}\n` +
-    `Exit codes: 0 PASS, 1 FAIL, 3 NEEDS_HUMAN, 2 setup error (report ERROR). Read the result.json of the run folder THIS command created (the newest; ignore older folders). ` +
-    `Put findings whose validation.status is "confirmed" in confirmed_findings, every other non-refuted finding in other_findings, and copy result.json's verdict_reasons verbatim. ` +
-    `If codex reports a usage cap or quota error, return verdict ERROR with that text in note.\n- ${RULES}`,
-    { label: `codex review ${round}`, phase: 'Review', schema: relay(REVIEW), effort: 'low' }),
+  const fb = out + '-opus'
+  const cmd = `node ${q(A.review_runner)} --kind implementation --uncommitted --repo ${q(out + '/wt')} --out-dir ${q(out)}` +
+    `${A.codex_model ? ` --model ${q(A.codex_model)}` : ''} --effort ${A.codex_effort || 'high'} --timeout-seconds ${TIMEOUT_S}`
+  let raw = null
+  const res = await reviewed(`review ${round}`, r => gateCodex('implementation', r), () => agent(
+    `Run an independent codex implementation review of the CHANGE and report its verdict. Do not review the code yourself.\n` +
+    relaySteps({ setup: ['set -e', gpProbe(true), gpFresh(out), scopePrep(out)].join('\n'), start: gpStart(cmd, out),
+      poll: gpPoll(`${q(out)}/implementation-*/result.json`), cleanup: [gpStop(out), gpUnwt(out + '/wt'), gpList(out, 'implementation')].join('\n'),
+      minutes: Math.ceil(TIMEOUT_S * 6 / 60) + 5 }) +
+    `${scopeNote(out)}${relayRead(out, 'implementation')}\n- ${RULES}`,
+    { label: `codex review ${round}`, phase: 'Review', schema: RELAY, effort: 'low' }),
   () => agent(
     `Codex is not available in this environment, so YOU are the independent implementation reviewer of the CHANGE in its place (the repo config chose review_fallback: opus-high). ` +
-    `Do not change the work branch.\n${scopePrep(out)}` +
-    `Review the change as it stands in that checkout (git -C ${q(out + '/wt')} diff --cached is the whole change ${base}..$H; read any other file there for context) for correctness bugs, ` +
+    `Do not change the work branch.\n${fallbackSteps(['set -e', gpFresh(fb), scopePrep(fb), ...fbInputs(fb)].join('\n'), [gpUnwt(fb + '/wt'), gpList(fb)].join('\n'))}${scopeNote(fb)}` +
+    `Review the change as it stands in that checkout (git -C ${q(fb + '/wt')} diff --cached is the whole change ${base}..head_sha; read any other file there for context) for correctness bugs, ` +
     `missing or broken acceptance behaviour from ${target}, and unsafe code. Report findings ONLY in that change. ` +
-    `${parityNote('implementation')} When your review is done (there is no result.json here), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}${chargeText}\n- ${RULES}`,
-    { label: `opus review ${round} (codex unavailable)`, phase: 'Review', schema: PARITY_SCHEMA({ head_sha: REVIEW.properties.head_sha, changed: REVIEW.properties.changed }), model: 'opus', effort: 'high' }).then(f => parity('implementation', f)))
+    `${parityNote('implementation')}${chargeText}\n- ${RULES}`,
+    { label: `opus review ${round} (codex unavailable)`, phase: 'Review', schema: PARITY_SCHEMA({ head_sha: HEAD_SHA, changed: CHANGED }), model: 'opus', effort: 'high' }).then(f => { raw = f; return gateFallback('implementation', f) }))
+  return C2 ? reviewFile({ step: 'implementation', round, out, fb, res, raw, ph: 'Review', label: `review ${round}` }) : res
 }
 
 // The repo's own security docs and checklist come first; the task text is quoted into prompt.md, so it holds no double quotes.
@@ -277,24 +718,77 @@ const secTask = () => (SEC_READ.length ? `First read the repository security doc
   'Quote the code for every finding. verdict FAIL if any critical or high finding exists, else PASS.'
 async function security(round) {
   const out = `${A.run_dir}/security-${round}`
-  const isolate = `0. Create ${out}/ and an isolated checkout of the reviewed commit, so every file read is that commit's: git -C ${q(A.repo)} worktree add --detach ${q(out + '/wt')} ${reviewedSha}. `
-  return reviewed(`security ${round}`, () => agent(
-    `Run an independent codex SECURITY review of the change and report its verdict. Do not review the code yourself.\n${availNote(false)}` +
-    isolate +
-    `After security.json exists (or the run fails), remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}\n` +
-    `1. Write ${out}/prompt.md containing: "${secTask()}"\n` +
-    `2. Run under a HARD process timeout so codex can never outlive this step; if the timeout fires the process is already killed: report ERROR. ${waitNote(q(out + '/security.json'), 32)}\n` +
-    `Command: timeout --kill-after=60 1800 codex exec${A.codex_model ? ` -m ${q(A.codex_model)}` : ''} -c model_reasoning_effort=${A.codex_effort || 'high'} -s read-only -C ${q(out + '/wt')} --output-schema ${q(A.security_schema)} -o ${q(out + '/security.json')} - < ${q(out + '/prompt.md')}\n` +
-    `3. Return verdict and ONLY the critical/high findings as blocking. If codex errors, hits a usage cap, or writes no valid JSON, return ERROR with the reason in note.\n- ${RULES}`,
-    { label: `codex security ${round}`, phase: 'Review', schema: relay(SEC), effort: 'low' }),
+  const fb = out + '-opus'
+  const isolate = dir => `git -C ${q(A.repo)} worktree add --detach ${q(dir + '/wt')} ${reviewedSha}`
+  const cmd = `timeout --kill-after=60 1800 codex exec${A.codex_model ? ` -m ${q(A.codex_model)}` : ''} -c model_reasoning_effort=${A.codex_effort || 'high'} -s read-only -C ${q(out + '/wt')} --output-schema ${q(A.security_schema)} -o ${q(out + '/security.json')} - < ${q(out + '/prompt.md')}`
+  let raw = null
+  const res = await reviewed(`security ${round}`, r => r, () => agent(
+    `Run an independent codex SECURITY review of the change and report its verdict. Do not review the code yourself. ` +
+    `Every file codex reads is the reviewed commit's: setup makes an isolated checkout of it at ${out}/wt, and cleanup removes exactly that checkout.\n` +
+    `1. The setup block writes ${out}/prompt.md containing: "${secTask()}"\n` +
+    `2. Run under a HARD process timeout so codex can never outlive this step (the start block); if the timeout fires the process is already killed: report ERROR. ` +
+    relaySteps({ setup: ['set -e', gpProbe(false), gpFresh(out), isolate(out), `cat > ${q(out + '/prompt.md')} <<'GP_TASK'`, secTask(), 'GP_TASK'].join('\n'),
+      start: gpStart(cmd, out), poll: gpPoll(q(out + '/security.json')), cleanup: [gpStop(out), gpUnwt(out + '/wt'), gpList(out), ...rawHash(out + '/security.json')].join('\n'), minutes: 32 }) +
+    `3. After cleanup, read ${out}/security.json and return verdict and ONLY the critical/high findings as blocking. If codex errors, hits a usage cap, or writes no valid JSON, return ERROR with the reason in note.${C2 ? RAW_NOTE('security.json') : ''}\n- ${RULES}`,
+    { label: `codex security ${round}`, phase: 'Review', schema: C2 ? RAW_RELAY(SEC) : relay(SEC), effort: 'low' }),
   () => agent(
     `Codex is not available in this environment, so YOU are the independent SECURITY reviewer in its place (the repo config chose review_fallback: opus-high). Do not change any file.\n` +
-    isolate + `Review in that checkout. Afterwards remove exactly that checkout: git -C ${q(A.repo)} worktree remove --force ${q(out + '/wt')}\n` +
-    `1. ${secTask()}\n2. Return verdict and ONLY the critical/high findings as blocking.\n- ${RULES}`,
-    { label: `opus security ${round} (codex unavailable)`, phase: 'Review', schema: SEC, model: 'opus', effort: 'high' }))
+    fallbackSteps(['set -e', gpFresh(fb), isolate(fb)].join('\n'), [gpUnwt(fb + '/wt'), gpList(fb)].join('\n')) +
+    `Review in the isolated checkout of the reviewed commit at ${fb}/wt.\n` +
+    `1. ${secTask()}\n2. Return verdict and ONLY the critical/high findings as blocking.${C2 ? ' Give each blocking finding its severity in lower case: critical or high.' : ''}\n- ${RULES}`,
+    { label: `opus security ${round} (codex unavailable)`, phase: 'Review', schema: SEC, model: 'opus', effort: 'high' }).then(f => { raw = f; return f }))
+  return C2 ? reviewFile({ step: 'security', round, out, fb, res, raw, ph: 'Review', label: `security ${round}`, rawName: 'security.json' }) : res
+}
+
+// contract 2 suite (design 6.3): run-frozen.js --target suite runs exactly the manifest's suite (and its setup) on the pinned,
+// clean reviewed commit. completed and passed are derived from the record, never relayed; the agent reads only the
+// failing test ids and the non-test failures from the framed log. PASS needs no other failure, no timeout, setup exit 0
+// when set, and either exit 0 with no failing id, or a nonzero non-crash exit whose failing ids are all (at least one)
+// manifest known-failure ids. Anything else is a fix round.
+async function suiteV2(round) {
+  const out = `${A.run_dir}/suite-${round}`
+  const rec = `${out}/suite.record.json`
+  const rep = await agent(
+    `Run the full test suite of feature ${A.feature_id} as the LAST step, on the reviewed commit ${reviewedSha}, through run-frozen.js: it runs exactly the frozen manifest's suite ` +
+    `command (never type a suite command yourself) and writes a framed log and a record. ${EXEC_NOTE}` +
+    execBlock(['set -e', `node ${SCRIPT('run-frozen.js')} --repo ${q(A.repo)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} --reviewed-sha ${reviewedSha} --target suite --out-dir ${q(out)} 2>&1`,
+      `tr -d '\\n' < ${q(rec)}; echo`].join('\n')) +
+    `Then read the log file named by log_path in the record line (the last line of stdout) and report in failures each failing test id exactly as the runner prints it, ` +
+    'and in other_failures every failure that is not a test (coverage threshold, lint/type step, post-test command, a non-zero exit not explained by a listed test). Report only what the log shows.\n- ' + RULES,
+    { label: `suite ${round}`, phase: 'Suite', effort: 'low', schema: { ...EXEC, properties: { ...EXEC.properties, failures: { type: 'array', items: { type: 'string' } }, other_failures: { type: 'array', items: { type: 'string' } } },
+      required: [...EXEC.required, 'failures', 'other_failures'] } })
+  if (!rep || rep.blocked) return { blocked: true, reason: 'the suite step was blocked', report: rep }
+  const lines = jsonLines(rep.stdout)
+  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let record = lines.find(o => o.target === 'suite' && o.log_path)
+  // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
+  let rb = null
+  if ((!printed || !record) && !rbRefused(rep)) {
+    rb = await readback({ step: `suite ${round}`, ph: 'Suite', sha: reviewedSha, clean: PRE.clean_ignore, reads: [{ record: rec, target: 'suite' }] })
+    if (!rb.error) {
+      printed = rb.records[0].printed
+      record = rb.records[0].record
+      READBACK.push({ step: `suite ${round}`, record_path: rec })
+    }
+  }
+  const why = rb && rb.error ? ` (no printed record line with record_path ${rec}; readback: ${rb.error})` : ''
+  if (rep.exit_code !== 0 && !(rb && !rb.error)) return { blocked: true, reason: 'run-frozen.js refused or the checkout moved or got dirty during the suite' + why, report: rep }
+  if (!printed || !record || !HEX64.test(printed.record_sha256 || '') || record.exit_code !== printed.exit_code || record.head_before !== reviewedSha || record.head_after !== reviewedSha) {
+    return { blocked: true, reason: 'the suite record was not printed for the reviewed commit' + why, report: rep }
+  }
+  const failures = rep.failures.map(f => f.trim()).filter(Boolean)
+  const exit = record.exit_code
+  const setupOk = SUITE_M.setup_command === null ? record.setup === null : !!record.setup && record.setup.exit_code === 0 && record.setup.timed_out === false
+  const completed = record.timed_out === false && setupOk && Number.isInteger(exit) && !crash(exit)
+  const ok = completed && !rep.other_failures.length && ((exit === 0 && !failures.length) || (exit !== 0 && failures.length > 0 && failures.every(f => KNOWN.includes(f))))
+  return { ok, completed, passed: exit === 0, counts: `exit ${exit}${record.timed_out ? ', timed out' : ''}${record.setup ? `, setup exit ${record.setup.exit_code}` : ''}`,
+    failures, other_failures: rep.other_failures.slice(), log_path: record.log_path, log_sha256: record.log_sha256,
+    head_before: record.head_before, status_before: record.status_before, head_after: record.head_after, status_after: record.status_after,
+    record_path: printed.record_path, record_sha256: printed.record_sha256, exit_code: exit, timed_out: record.timed_out, setup_exit_code: printed.setup_exit_code }
 }
 
 let verdict = null
+const SEEN_TESTS = new Set()
 let lastSuite = null
 let lastSec = null
 let reviewedSha = ''
@@ -311,6 +805,24 @@ for (let round = 1; round <= MAX + 1; round++) {
   files.clear(); deleted.clear()
   r.changed.forEach(c => (c.status.startsWith('D') ? deleted : files).add(c.path))
   if (unsafe().length) return disclose({ status: 'BLOCKED', stage: 'review', reason: 'changed paths must be repo-relative and safe: ' + unsafe().join(', '), history })
+  // contract 2 scope (design 6.3): completion refuses a change with a path outside allowed_paths or inside protected_paths
+  // (E_SCOPE), so build never reaches PASS with one and never sends one to a fixer: removing or reverting it would be a
+  // change outside the frozen scope too (a fixer deleting a failing out-of-scope test to get green is exactly that). A
+  // path outside the scope needs a new design, and a commit the build did not make is for a human to remove.
+  if (C2) {
+    const oos = outOfScope(gitPaths)
+    if (oos.length) return disclose({ status: 'BLOCKED', stage: 'review', code: 'E_SCOPE', round,
+      reason: `the change ${base}..${r.head_sha} touches paths outside the frozen scope (allowed_paths, minus protected_paths): ${oos.join(', ')}. ` +
+        'Completion would refuse it; nothing was sent to a fixer. A scope change needs a new design; a commit this build did not make is for a human to remove.',
+      review: r, history, plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST })
+    // A test under scope.test_paths that an earlier round's change carried must not vanish later: deleting a
+    // focused test is never a fix.
+    const gone = [...SEEN_TESTS].filter(p => !files.has(p))
+    if (gone.length) return disclose({ status: 'BLOCKED', stage: 'review', code: 'E_TEST_FIRST', round,
+      reason: `a fix removed test file(s) under scope.test_paths that round ${round - 1} reviewed: ${gone.join(', ')}. Deleting a test is never a fix.`,
+      review: r, history, plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST })
+    for (const p of files) if (PRE.test_paths.some(e => inEntry(p, e))) SEEN_TESTS.add(p)
+  }
   reviewedSha = r.head_sha
   if (r.verdict === 'PASS' && r.confirmed_findings.length) r.verdict = 'FAIL'
   verdict = r
@@ -324,7 +836,21 @@ for (let round = 1; round <= MAX + 1; round++) {
     if (sec.blocking.length) sec.verdict = 'FAIL'
     if (sec.verdict === 'FAIL') log(`security pass failed in round ${round}: ${sec.blocking.length} high/critical`)
   }
-  if (r.verdict === 'PASS' && (!sec || sec.verdict === 'PASS')) {
+  if (C2 && r.verdict === 'PASS' && (!sec || sec.verdict === 'PASS')) {
+    phase('Suite')
+    suite = await suiteV2(round)
+    if (!suite || suite.blocked) return disclose({ status: 'BLOCKED', stage: 'suite', reason: suite ? suite.reason : 'the suite step died', suite, history })
+    lastSuite = suite
+    if (suite.ok) {
+      const { ok, ...shown } = suite
+      return disclose({ status: 'PASS', feature_id: A.feature_id, rounds: round, reviewed_sha: reviewedSha, review: r, security: sec, suite: shown, known_failures_seen: suite.failures.slice(),
+        base_commit: base, files: [...files], deleted: [...deleted], history, plan_identity: PLAN_IDENTITY,
+        suite_identity: { command: SUITE_M.command, known_failure_ids: SUITE_M.known_failure_ids, isolated: SUITE_M.isolated, setup_command: SUITE_M.setup_command, timeout_min: SUITE_M.timeout_min,
+          record_path: suite.record_path, record_sha256: suite.record_sha256 },
+        test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG, repo_config: { lock_note: A.lock_note || null } })
+    }
+    log(`suite failed in round ${round}: ${suite.counts}${suite.completed ? '' : ' (run did not complete)'}`)
+  } else if (r.verdict === 'PASS' && (!sec || sec.verdict === 'PASS')) {
     phase('Suite')
     const swt = `${A.run_dir}/suite-${round}/wt`
     const where = A.suite_isolated
@@ -350,19 +876,22 @@ for (let round = 1; round <= MAX + 1; round++) {
   if (round > MAX) break
   phase('Fix')
   const items = [
-    ...(r.verdict !== 'PASS' ? (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => `[${r.reviewer} ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`) : []),
+    ...(r.verdict !== 'PASS' ? (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => gateItem(r.reviewer, f)) : []),
     ...(sec && sec.verdict === 'FAIL' ? sec.blocking.map(f => `[security ${sec.reviewer} ${f.severity}] ${f.location || ''} ${f.title}: ${f.detail || ''}`) : []),
     ...(suite ? newFailures(suite).map(f => `[suite] ${f}`) : []),
     ...(suite ? suite.other_failures.map(f => `[suite, not a test] ${f}`) : []),
-    ...(suite && !suite.completed ? [`[suite] the full suite did not run to completion (${suite.counts}); see ${A.run_dir}/suite-${round}.txt`] : []),
+    ...(suite && !suite.completed ? [`[suite] the full suite did not run to completion (${suite.counts}); see ${C2 ? suite.log_path : `${A.run_dir}/suite-${round}.txt`}`] : []),
   ]
-  if (!items.length) items.push(`[suite] the suite failed without naming a test (${suite ? suite.counts : 'no result'}); see ${A.run_dir}/suite-${round}.txt`)
+  if (!items.length) items.push(`[suite] the suite failed without naming a test (${suite ? suite.counts : 'no result'}); see ${C2 && suite ? suite.log_path : `${A.run_dir}/suite-${round}.txt`}`)
   const fix = await agent(
-    `You are fixing feature ${A.feature_id} on ${A.work_branch} (implemented against ${target}).${chargeText}\n` +
-    `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. Add or adjust tests test-first. Commit and push. ${workReport}\nITEMS:\n${items.join('\n')}\n\nRules:\n- ${RULES}`,
+    `You are fixing feature ${A.feature_id} on ${A.work_branch} (implemented against ${target}).${chargeText}${ciNote}\n` +
+    `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. ` +
+    (C2 ? 'Add tests test-first. Never delete, skip or weaken a test, and never edit an existing assertion or expected value to make a test pass: a test you believe is wrong stays unchanged and you say why in summary (the build then ends FAIL or BLOCKED for a human). ' : 'Add or adjust tests test-first. ') +
+    `${C2 ? 'The RED commit of this build is fixed: make no new red commit, and never amend, rebase or rewrite a commit. ' : ''}Commit and push. ${workReport}\nITEMS:\n${items.join('\n')}\n\nRules:\n- ${RULES}`,
     { label: `fix ${round}`, phase: 'Fix', schema: WORK, effort: IMPL_EFFORT })
   if (!fix || fix.blocked) return disclose({ status: 'BLOCKED', stage: 'fix', round, reason: fix ? fix.blocked_reason : 'fixer died', history })
   track(fix)
   history.push({ round, findings: items, fix })
 }
-return disclose({ status: 'FAIL', feature_id: A.feature_id, reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history })
+return disclose({ status: 'FAIL', feature_id: A.feature_id, reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history,
+  ...(C2 ? { plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG } : {}) })

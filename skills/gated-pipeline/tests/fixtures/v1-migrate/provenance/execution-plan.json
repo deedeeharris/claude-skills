@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "feature_id": "health",
+  "spec_sha256": "3b9e15f7c9db3431b1a978bcd58a6b9f254eeb6ffa0ef6adcce16a0572d4ac0e",
+  "allowed_paths": [
+    "src/",
+    "test/"
+  ],
+  "protected_paths": [],
+  "requirements": [
+    {
+      "id": "HEALTH-001-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/health.test.js"
+    }
+  ],
+  "checks": []
+}

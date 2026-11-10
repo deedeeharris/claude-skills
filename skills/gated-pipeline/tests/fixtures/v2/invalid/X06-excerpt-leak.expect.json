@@ -1,0 +1,30 @@
+{
+  "case": "X06",
+  "variant": "ref-mode excerpt holding 40 code points of the request",
+  "base": "valid/X06-ref.feature.json",
+  "mutation": {
+    "find": "\"excerpt\": \"cap export requests per partner\"",
+    "replace": "\"excerpt\": \"add rate limiting to the partner export endpoint\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_SOURCE_LEAK"
+  ],
+  "rules": [
+    "R04"
+  ],
+  "paths": [
+    "/coverage/0/excerpt"
+  ],
+  "diagnostics": [
+    [
+      "E_SOURCE_LEAK",
+      "R04",
+      "/coverage/0/excerpt"
+    ]
+  ],
+  "args": {
+    "source_request": "valid/X06-ref.request.txt",
+    "source_mode": "ref"
+  }
+}

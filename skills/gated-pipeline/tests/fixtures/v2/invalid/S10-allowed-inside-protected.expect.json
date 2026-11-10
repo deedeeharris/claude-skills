@@ -1,0 +1,27 @@
+{
+  "case": "S10",
+  "variant": "allowed path inside protected",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"allowed_paths\": [\"src/\", \"test/\"], \"protected_paths\": []",
+    "replace": "\"allowed_paths\": [\"src/\", \"test/\", \"docs/api/\"], \"protected_paths\": [\"docs/\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROTECTED_OVERLAP"
+  ],
+  "rules": [
+    "G33"
+  ],
+  "paths": [
+    "/scope/allowed_paths/2"
+  ],
+  "diagnostics": [
+    [
+      "E_PROTECTED_OVERLAP",
+      "G33",
+      "/scope/allowed_paths/2"
+    ]
+  ],
+  "args": {}
+}

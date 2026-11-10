@@ -1,0 +1,68 @@
+{
+  "description": "v1 ids already in the v2 form: exact mapping, every section mapped, full provenance",
+  "prd": true,
+  "source_request": true,
+  "mapping": [
+    {
+      "v1_id": "AUTH-001-AC1",
+      "acceptance_id": "AUTH-001-AC1",
+      "requirement_id": "AUTH-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/login.test.js",
+      "command": "node --test test/login.test.js"
+    },
+    {
+      "v1_id": "AUTH-001-AC2",
+      "acceptance_id": "AUTH-001-AC2",
+      "requirement_id": "AUTH-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/lockout.test.js",
+      "command": "node --test test/lockout.test.js"
+    },
+    {
+      "v1_id": "AUTH-002-AC1",
+      "acceptance_id": "AUTH-002-AC1",
+      "requirement_id": "AUTH-002",
+      "kind": "static",
+      "renamed": false,
+      "v1_proof_command": "",
+      "command": null
+    }
+  ],
+  "conflicts": [],
+  "unmapped_tests": [],
+  "lost": [],
+  "provenance_missing": false,
+  "todos_include": [
+    {
+      "path": "/product/non_goals/0/statement",
+      "reason_includes": "prd.md \"Non-goals\" (line 12)"
+    },
+    {
+      "path": "/architecture/invariants/0/statement",
+      "reason_includes": "spec.md \"Invariants\" (line 14)"
+    },
+    {
+      "path": "/requirements/0/acceptance/0/negative_control/mutation",
+      "reason_includes": "AUTH-001-AC1"
+    },
+    {
+      "path": "/requirements/1/acceptance/0/verification/evidence/paths/0",
+      "reason_includes": "AUTH-002-AC1"
+    },
+    {
+      "path": "/suite/command",
+      "reason_includes": "v1 manifest has no suite"
+    },
+    {
+      "path": "/requirements/0/depends_on",
+      "reason_includes": "v1 has no dependencies"
+    },
+    {
+      "path": "/suite/known_failures",
+      "reason_includes": "tests.known_failures"
+    }
+  ]
+}

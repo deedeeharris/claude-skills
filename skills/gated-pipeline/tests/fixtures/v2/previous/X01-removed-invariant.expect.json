@@ -1,0 +1,29 @@
+{
+  "case": "X01",
+  "variant": "invariant removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n      { \"id\": \"INV-002\", \"statement\": \"Counters reset at midnight.\", \"status\": \"retired\", \"retired_rationale\": \"Contradicted DEC-001.\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/architecture/invariants"
+  ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/architecture/invariants"
+    ]
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

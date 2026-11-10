@@ -1,0 +1,25 @@
+{
+  "case": "X05",
+  "variant": "pattern",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"feature_id\": \"greet\",",
+    "replace": "\"feature_id\": \"greet!\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_PATTERN"
+  ],
+  "rules": [],
+  "paths": [
+    "/feature_id"
+  ],
+  "diagnostics": [
+    [
+      "E_PATTERN",
+      null,
+      "/feature_id"
+    ]
+  ],
+  "args": {}
+}

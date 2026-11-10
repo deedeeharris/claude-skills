@@ -1,0 +1,29 @@
+{
+  "case": "X01",
+  "variant": "accepted risk removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n        { \"id\": \"RISK-002\", \"statement\": \"Counter rows grow without bound.\", \"cites\": [], \"status\": \"retired\", \"retired_rationale\": \"Rows expire with the lock.\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/architecture/security/accepted_risks"
+  ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/architecture/security/accepted_risks"
+    ]
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

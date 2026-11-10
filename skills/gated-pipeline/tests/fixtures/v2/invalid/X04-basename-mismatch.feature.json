@@ -1,0 +1,64 @@
+{
+  "schema_version": 2,
+  "feature_id": "greeting",
+  "title": "Greeting endpoint",
+  "source_request": {
+    "text": "Add a GET /hello endpoint that returns the text hello."
+  },
+  "coverage": [
+    { "id": "SRC-001", "excerpt": "GET /hello returns hello", "disposition": "covered", "requirement_ids": ["HELLO-001"] }
+  ],
+  "product": {
+    "problem": "Clients have no way to check that the service answers.",
+    "actors": ["api client"],
+    "goals": [
+      { "id": "GOAL-001", "statement": "A client can fetch a greeting.", "source_ids": ["SRC-001"], "status": "active" }
+    ],
+    "non_goals": [],
+    "constraints": [],
+    "risks": [],
+    "success_metrics": ["GET /hello answers 200 with body hello"]
+  },
+  "architecture": {
+    "approach": "Add one route to the existing HTTP server.",
+    "decisions": [],
+    "invariants": [],
+    "components": [
+      { "id": "COMP-SERVER", "name": "HTTP server", "description": "Routes requests.", "owned_paths": ["src/"], "exclusive": true, "status": "active" }
+    ],
+    "security": {
+      "data_exposure": "None; the body is a constant.",
+      "input_validation": "No input is read.",
+      "resource_consumption": "Constant work per request.",
+      "accepted_risks": []
+    }
+  },
+  "requirements": [
+    {
+      "id": "HELLO-001",
+      "status": "active",
+      "goal_ids": ["GOAL-001"],
+      "statement": "GET /hello responds with status 200 and body hello.",
+      "priority": "P1",
+      "depends_on": [],
+      "component_ids": ["COMP-SERVER"],
+      "acceptance": [
+        {
+          "id": "HELLO-001-AC1", "status": "active",
+          "given": "the server is running",
+          "when": "a client sends GET /hello",
+          "then": "the response is 200 with body hello",
+          "verification": { "kind": "runtime", "live": false, "command": "node --test test/hello.test.js", "expected": { "exit_code": 0 } },
+          "negative_control": { "method": "isolated_mutation", "description": "Break the route body.", "mutation": "Change the body returned by the /hello route to goodbye." }
+        }
+      ]
+    }
+  ],
+  "scope": { "allowed_paths": ["src/", "test/"], "protected_paths": [], "state_paths": [], "clean_ignore": [], "test_paths": ["test/"] },
+  "suite": { "command": "node --test", "unit_command": "node --test test/hello.test.js", "known_failures": [], "isolated": false, "setup_command": null, "timeout_min": 4, "live_budget_min": 0 },
+  "limits": { "proof_timeout_s": 120, "negative_controls_total_min": 10 },
+  "checks": [
+    { "id": "CHECK-LINT", "name": "Lint", "applicable": true, "reason": "The repo has a lint script.", "command": "npm run lint", "expected": { "exit_code": 0 }, "timeout_min": 5, "budget_min": 0, "quiet": false, "effort": "low", "environment": "local shell" }
+  ],
+  "test_plan": "One focused test for the route."
+}

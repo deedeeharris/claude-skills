@@ -1,0 +1,27 @@
+{
+  "case": "S05",
+  "variant": "duplicate acceptance id",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"negative_control\": { \"method\": \"isolated_mutation\", \"description\": \"Break the route body.\", \"mutation\": \"Change the body returned by the /hello route to goodbye.\" }\n        }",
+    "replace": "\"negative_control\": { \"method\": \"isolated_mutation\", \"description\": \"Break the route body.\", \"mutation\": \"Change the body returned by the /hello route to goodbye.\" }\n        },\n        { \"id\": \"HELLO-001-AC1\", \"status\": \"active\", \"given\": \"the server is running\", \"when\": \"a client sends GET /hello\", \"then\": \"the response sets no cookie\", \"verification\": { \"kind\": \"runtime\", \"live\": false, \"command\": \"node --test test/hello-cookie.test.js\", \"expected\": { \"exit_code\": 0 } }, \"negative_control\": { \"method\": \"isolated_mutation\", \"description\": \"Set a cookie.\", \"mutation\": \"Add a Set-Cookie header to the /hello route.\" } }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_DUP_ID"
+  ],
+  "rules": [
+    "G01"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/1/id"
+  ],
+  "diagnostics": [
+    [
+      "E_DUP_ID",
+      "G01",
+      "/requirements/0/acceptance/1/id"
+    ]
+  ],
+  "args": {}
+}

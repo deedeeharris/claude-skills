@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "live command differing from its check",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"check_id\": \"CHECK-E2E\", \"command\": \"npm run e2e\"",
+    "replace": "\"check_id\": \"CHECK-E2E\", \"command\": \"npm run e2e -- --grep audit\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G21"
+  ],
+  "paths": [
+    "/requirements/1/acceptance/0/verification/command"
+  ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G21",
+      "/requirements/1/acceptance/0/verification/command"
+    ]
+  ],
+  "args": {}
+}

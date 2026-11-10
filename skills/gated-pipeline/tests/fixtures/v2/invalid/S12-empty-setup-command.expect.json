@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "empty setup command",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"setup_command\": null",
+    "replace": "\"setup_command\": \"\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G20"
+  ],
+  "paths": [
+    "/suite/setup_command"
+  ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G20",
+      "/suite/setup_command"
+    ]
+  ],
+  "args": {}
+}

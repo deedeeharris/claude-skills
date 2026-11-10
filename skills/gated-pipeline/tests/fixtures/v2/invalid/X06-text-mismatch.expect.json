@@ -1,0 +1,30 @@
+{
+  "case": "X06",
+  "variant": "text differs from the request",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "returns the text hello.\"",
+    "replace": "returns the text hi.\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_SOURCE_MISMATCH"
+  ],
+  "rules": [
+    "R01"
+  ],
+  "paths": [
+    "/source_request/text"
+  ],
+  "diagnostics": [
+    [
+      "E_SOURCE_MISMATCH",
+      "R01",
+      "/source_request/text"
+    ]
+  ],
+  "args": {
+    "source_request": "valid/S01-minimal.request.txt",
+    "source_mode": "text"
+  }
+}

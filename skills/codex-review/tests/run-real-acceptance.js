@@ -20,7 +20,7 @@ function getWorkDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'codex-review-real-'));
 }
 
-function git(cwd, args) { return spawnSync('git', args, { cwd, encoding: 'utf8' }); }
+const { gitEnv, git } = require('./git-env.js');
 
 function copyNeutral(workDir, neutralName, srcFile) {
   const dir = path.join(workDir, neutralName);
@@ -31,7 +31,7 @@ function copyNeutral(workDir, neutralName, srcFile) {
 }
 
 function runReview(args, timeoutMs) {
-  const r = spawnSync(process.execPath, [RUNNER, ...args], { encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL' });
+  const r = spawnSync(process.execPath, [RUNNER, ...args], { encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', env: gitEnv() });
   // spawnSync's own result (exit status aside) is never inspected further by a caller
   // that only reads the log file: a hard kill on this script's own timeout, or a spawn
   // failure, leaves no log line at all (the runner's `finally` never ran), so a stale

@@ -1,0 +1,27 @@
+{
+  "case": "S20",
+  "variant": "isolated_mutation with empty test_paths",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"test_paths\": [\"test/\"]",
+    "replace": "\"test_paths\": []"
+  },
+  "exit": 1,
+  "codes": [
+    "E_NEGATIVE_CONTROL"
+  ],
+  "rules": [
+    "G26"
+  ],
+  "paths": [
+    "/scope/test_paths"
+  ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G26",
+      "/scope/test_paths"
+    ]
+  ],
+  "args": {}
+}

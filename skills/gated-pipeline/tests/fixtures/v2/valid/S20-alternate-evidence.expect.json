@@ -1,0 +1,12 @@
+{
+  "case": "S20",
+  "variant": "P0 all-exempt with alternate evidence",
+  "base": null,
+  "mutation": null,
+  "exit": 0,
+  "codes": [],
+  "rules": [],
+  "paths": [],
+  "diagnostics": [],
+  "args": {}
+}

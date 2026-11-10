@@ -1,0 +1,1 @@
+Confidential: add rate limiting to the partner export endpoint so that one partner cannot exhaust the export workers.

@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "proof_timeout_s whose one proof cannot finish inside one foreground call",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"proof_timeout_s\": 120",
+    "replace": "\"proof_timeout_s\": 600"
+  },
+  "exit": 1,
+  "codes": [
+    "E_LIMIT"
+  ],
+  "rules": [
+    "G40"
+  ],
+  "paths": [
+    "/limits/proof_timeout_s"
+  ],
+  "diagnostics": [
+    [
+      "E_LIMIT",
+      "G40",
+      "/limits/proof_timeout_s"
+    ]
+  ],
+  "args": {}
+}

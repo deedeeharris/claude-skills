@@ -1,0 +1,26 @@
+{
+  "case": "X04",
+  "variant": "features_dir under .git/",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": null,
+  "exit": 1,
+  "codes": [
+    "E_SCOPE"
+  ],
+  "rules": [
+    "G38"
+  ],
+  "paths": [
+    ""
+  ],
+  "diagnostics": [
+    [
+      "E_SCOPE",
+      "G38",
+      ""
+    ]
+  ],
+  "args": {
+    "repo_path": ".git/features/greet.feature.json"
+  }
+}

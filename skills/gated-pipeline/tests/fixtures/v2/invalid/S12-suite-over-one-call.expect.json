@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "suite timeout_min whose run cannot finish inside one foreground call",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"timeout_min\": 4,",
+    "replace": "\"timeout_min\": 10,"
+  },
+  "exit": 1,
+  "codes": [
+    "E_LIMIT"
+  ],
+  "rules": [
+    "G40"
+  ],
+  "paths": [
+    "/suite/timeout_min"
+  ],
+  "diagnostics": [
+    [
+      "E_LIMIT",
+      "G40",
+      "/suite/timeout_min"
+    ]
+  ],
+  "args": {}
+}

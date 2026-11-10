@@ -1,0 +1,25 @@
+{
+  "case": "X05",
+  "variant": "minLength",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"title\": \"Greeting endpoint\",",
+    "replace": "\"title\": \"\","
+  },
+  "exit": 1,
+  "codes": [
+    "E_MIN_LENGTH"
+  ],
+  "rules": [],
+  "paths": [
+    "/title"
+  ],
+  "diagnostics": [
+    [
+      "E_MIN_LENGTH",
+      null,
+      "/title"
+    ]
+  ],
+  "args": {}
+}

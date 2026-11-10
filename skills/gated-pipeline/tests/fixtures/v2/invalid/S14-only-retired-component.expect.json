@@ -1,0 +1,27 @@
+{
+  "case": "S14",
+  "variant": "active requirement whose only component is retired",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"component_ids\": [\"COMP-STORE\"],",
+    "replace": "\"component_ids\": [\"COMP-LEGACY\"],"
+  },
+  "exit": 1,
+  "codes": [
+    "E_COVERAGE"
+  ],
+  "rules": [
+    "G14"
+  ],
+  "paths": [
+    "/requirements/1/component_ids"
+  ],
+  "diagnostics": [
+    [
+      "E_COVERAGE",
+      "G14",
+      "/requirements/1/component_ids"
+    ]
+  ],
+  "args": {}
+}

@@ -1,0 +1,27 @@
+{
+  "case": "S12",
+  "variant": "static acceptance with command",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"kind\": \"static\", \"evidence\"",
+    "replace": "\"kind\": \"static\", \"command\": \"cat src/auth/compare.js\", \"evidence\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G19"
+  ],
+  "paths": [
+    "/requirements/2/acceptance/0/verification/command"
+  ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G19",
+      "/requirements/2/acceptance/0/verification/command"
+    ]
+  ],
+  "args": {}
+}

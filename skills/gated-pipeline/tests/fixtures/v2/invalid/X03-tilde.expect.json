@@ -1,0 +1,27 @@
+{
+  "case": "X03",
+  "variant": "tilde",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"protected_paths\": []",
+    "replace": "\"protected_paths\": [\"~/secrets\"]"
+  },
+  "exit": 1,
+  "codes": [
+    "E_UNSAFE_PATH"
+  ],
+  "rules": [
+    "G32"
+  ],
+  "paths": [
+    "/scope/protected_paths/0"
+  ],
+  "diagnostics": [
+    [
+      "E_UNSAFE_PATH",
+      "G32",
+      "/scope/protected_paths/0"
+    ]
+  ],
+  "args": {}
+}

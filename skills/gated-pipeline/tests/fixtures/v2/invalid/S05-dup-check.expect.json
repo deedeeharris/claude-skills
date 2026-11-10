@@ -1,0 +1,27 @@
+{
+  "case": "S05",
+  "variant": "duplicate check id",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "{ \"id\": \"CHECK-LINT\", \"name\": \"Lint\", \"applicable\": true, \"reason\": \"The repo has a lint script.\", \"command\": \"npm run lint\", \"expected\": { \"exit_code\": 0 }, \"timeout_min\": 5, \"budget_min\": 0, \"quiet\": false, \"effort\": \"low\", \"environment\": \"local shell\" }",
+    "replace": "{ \"id\": \"CHECK-LINT\", \"name\": \"Lint\", \"applicable\": true, \"reason\": \"The repo has a lint script.\", \"command\": \"npm run lint\", \"expected\": { \"exit_code\": 0 }, \"timeout_min\": 5, \"budget_min\": 0, \"quiet\": false, \"effort\": \"low\", \"environment\": \"local shell\" },\n    { \"id\": \"CHECK-LINT\", \"name\": \"Format\", \"applicable\": true, \"reason\": \"The repo has a format script.\", \"command\": \"npm run format\", \"expected\": { \"exit_code\": 0 }, \"timeout_min\": 5, \"budget_min\": 0, \"quiet\": false, \"effort\": \"low\", \"environment\": \"local shell\" }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_DUP_ID"
+  ],
+  "rules": [
+    "G01"
+  ],
+  "paths": [
+    "/checks/1/id"
+  ],
+  "diagnostics": [
+    [
+      "E_DUP_ID",
+      "G01",
+      "/checks/1/id"
+    ]
+  ],
+  "args": {}
+}

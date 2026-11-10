@@ -1,0 +1,150 @@
+{
+  "schema_version": 2,
+  "feature_id": "auth-lockout",
+  "title": "Login lockout",
+  "source_request": {
+    "text": "Lock an account for 15 minutes after 5 failed logins, tell the user when it unlocks, and keep an audit trail. Password reset by SMS can wait."
+  },
+  "coverage": [
+    { "id": "SRC-001", "excerpt": "lock the account after repeated failed logins", "disposition": "covered", "requirement_ids": ["AUTH-001", "AUTH-002"] },
+    { "id": "SRC-002", "excerpt": "keep an audit trail", "disposition": "covered", "requirement_ids": ["AUTH-002"] },
+    { "id": "SRC-003", "excerpt": "password reset by SMS", "disposition": "excluded", "rationale": "The request defers it to a later release." }
+  ],
+  "product": {
+    "problem": "Attackers can guess passwords without limit.",
+    "actors": ["end user", "operator"],
+    "goals": [
+      { "id": "GOAL-001", "statement": "Repeated guessing is stopped.", "source_ids": ["SRC-001", "SRC-002"], "status": "active" },
+      { "id": "GOAL-002", "statement": "Users can reset by SMS.", "source_ids": ["SRC-001"], "status": "retired" }
+    ],
+    "non_goals": [
+      { "id": "NG-001", "statement": "No CAPTCHA.", "rationale": "Not requested.", "status": "active" },
+      { "id": "NG-002", "statement": "No IP blocking.", "rationale": "Handled by the proxy.", "status": "retired", "retired_rationale": "Merged into NG-001 review notes." }
+    ],
+    "constraints": ["Use the existing user store."],
+    "risks": ["A shared office IP can lock many users."],
+    "success_metrics": ["No account accepts a sixth wrong password within 15 minutes."]
+  },
+  "architecture": {
+    "approach": "Count failures per account in the store and check the count before verifying a password.",
+    "decisions": [
+      { "id": "DEC-001", "decision": "Lock for 15 minutes after 5 failures.", "rationale": "Taken from the request.", "status": "active" },
+      { "id": "DEC-002", "decision": "Lock for 10 minutes.", "rationale": "First draft value.", "status": "retired", "retired_rationale": "Replaced by DEC-001." }
+    ],
+    "invariants": [
+      { "id": "INV-001", "statement": "A locked account never verifies a password.", "status": "active" },
+      { "id": "INV-002", "statement": "Counters reset at midnight.", "status": "retired", "retired_rationale": "Contradicted DEC-001." }
+    ],
+    "components": [
+      { "id": "COMP-AUTH", "name": "Login handler", "description": "Checks credentials.", "owned_paths": ["src/auth/"], "exclusive": true, "status": "active" },
+      { "id": "COMP-STORE", "name": "User store", "description": "Persists counters.", "owned_paths": ["src/store/"], "exclusive": true, "status": "active" },
+      { "id": "COMP-LEGACY", "name": "Old session code", "description": "Removed earlier.", "owned_paths": ["src/legacy/"], "exclusive": false, "status": "retired", "retired_rationale": "Code was deleted." }
+    ],
+    "security": {
+      "data_exposure": "The lock message reveals that the account exists.",
+      "input_validation": "Usernames are length-checked before lookup.",
+      "resource_consumption": "One counter row per account.",
+      "accepted_risks": [
+        { "id": "RISK-001", "statement": "Account existence is revealed by the lock message.", "cites": ["DEC-001"], "status": "active" },
+        { "id": "RISK-002", "statement": "Counter rows grow without bound.", "cites": [], "status": "retired", "retired_rationale": "Rows expire with the lock." }
+      ]
+    }
+  },
+  "requirements": [
+    {
+      "id": "AUTH-001",
+      "status": "active",
+      "goal_ids": ["GOAL-001"],
+      "statement": "After 5 failed logins the account is locked for 15 minutes.",
+      "priority": "P1",
+      "depends_on": ["AUTH-002"],
+      "component_ids": ["COMP-AUTH"],
+      "acceptance": [
+        {
+          "id": "AUTH-001-AC1", "status": "active",
+          "given": "an account with 4 failed logins",
+          "when": "a fifth wrong password is sent",
+          "then": "the next correct password is refused for 15 minutes",
+          "verification": { "kind": "runtime", "live": false, "command": "node --test test/login.test.js", "expected": { "exit_code": 0 } },
+          "negative_control": { "method": "isolated_mutation", "description": "Disable the lock check.", "mutation": "Make the lock check in src/auth/login.js always return false." }
+        },
+        {
+          "id": "AUTH-001-AC2", "status": "retired", "retired_rationale": "Merged into AUTH-001-AC1.",
+          "given": "a locked account",
+          "when": "15 minutes pass",
+          "then": "login works again",
+          "verification": { "kind": "runtime", "live": false, "command": "node --test test/unlock.test.js", "expected": { "exit_code": 0 } },
+          "negative_control": { "method": "exempt", "description": "Covered elsewhere.", "exemption_reason": "Retired before any control was written." }
+        }
+      ]
+    },
+    {
+      "id": "AUTH-002",
+      "status": "active",
+      "goal_ids": ["GOAL-001"],
+      "statement": "Every failed login is written to the audit log.",
+      "priority": "P1",
+      "depends_on": [],
+      "component_ids": ["COMP-STORE"],
+      "acceptance": [
+        {
+          "id": "AUTH-002-AC1", "status": "active",
+          "given": "the staging audit sink",
+          "when": "a wrong password is sent",
+          "then": "an audit record appears in the sink",
+          "verification": { "kind": "runtime", "live": true, "check_id": "CHECK-E2E", "command": "npm run e2e", "expected": { "exit_code": 0 } },
+          "negative_control": { "method": "exempt", "description": "Live sink, no isolated copy.", "exemption_reason": "The audit sink cannot run in a throwaway worktree." }
+        }
+      ]
+    },
+    {
+      "id": "AUTH-003",
+      "status": "active",
+      "goal_ids": ["GOAL-001"],
+      "statement": "Passwords are compared in constant time.",
+      "priority": "P0",
+      "depends_on": ["AUTH-001"],
+      "component_ids": ["COMP-AUTH"],
+      "derived_rationale": "Lockout is pointless if timing leaks the password.",
+      "acceptance": [
+        {
+          "id": "AUTH-003-AC1", "status": "active",
+          "given": "the login handler source",
+          "when": "a reviewer reads the comparison",
+          "then": "it uses crypto.timingSafeEqual",
+          "verification": { "kind": "static", "evidence": { "paths": ["src/auth/compare.js"], "description": "The comparison call." } },
+          "negative_control": { "method": "exempt", "description": "Static evidence.", "exemption_reason": "A static reading has no runtime proof to break.", "alternate_evidence": { "paths": ["docs/timing-review.md"], "description": "Timing review notes." } }
+        }
+      ]
+    },
+    {
+      "id": "OLD-001",
+      "status": "retired",
+      "retired_rationale": "Split into AUTH-001 and AUTH-002.",
+      "goal_ids": [],
+      "statement": "Accounts are protected against guessing.",
+      "priority": "P2",
+      "depends_on": [],
+      "component_ids": [],
+      "acceptance": [
+        {
+          "id": "OLD-001-AC1", "status": "retired", "retired_rationale": "Requirement retired.",
+          "given": "any account",
+          "when": "many guesses arrive",
+          "then": "they are slowed down",
+          "verification": { "kind": "runtime", "live": false, "command": "node --test test/old.test.js", "expected": { "exit_code": 0 } },
+          "negative_control": { "method": "exempt", "description": "Retired.", "exemption_reason": "Retired before implementation." }
+        }
+      ]
+    }
+  ],
+  "scope": { "allowed_paths": ["src/", "test/"], "protected_paths": ["config/secrets/"], "state_paths": ["var/state/"], "clean_ignore": ["tmp/"], "test_paths": ["test/"] },
+  "suite": { "command": "node --test", "unit_command": "node --test test/login.test.js", "known_failures": [{ "test_id": "test/flaky-clock.test.js", "reason": "Fails near DST changes; tracked upstream." }], "isolated": true, "setup_command": "npm ci", "timeout_min": 4, "live_budget_min": 5 },
+  "limits": { "proof_timeout_s": 120, "negative_controls_total_min": 15 },
+  "checks": [
+    { "id": "CHECK-LINT", "name": "Lint", "applicable": true, "reason": "The repo has a lint script.", "command": "npm run lint", "expected": { "exit_code": 0 }, "timeout_min": 5, "budget_min": 0, "quiet": false, "effort": "low", "environment": "local shell" },
+    { "id": "CHECK-E2E", "name": "Staging end to end", "applicable": true, "reason": "The audit sink only exists in staging.", "command": "npm run e2e", "expected": { "exit_code": 0 }, "timeout_min": 10, "budget_min": 5, "quiet": true, "effort": "medium", "environment": "staging sandbox" },
+    { "id": "CHECK-MANUAL", "name": "Phone check", "applicable": false, "reason": "Needs a human with a phone.", "budget_min": 0, "quiet": false, "effort": "low", "environment": "" }
+  ],
+  "test_plan": "Unit tests for the counter and lock, one staging run for the audit sink, a static reading of the comparison."
+}

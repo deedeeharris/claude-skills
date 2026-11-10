@@ -1,0 +1,27 @@
+{
+  "case": "X07",
+  "variant": "MIGRATION-TODO in a statement",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"statement\": \"GET /hello responds with status 200 and body hello.\"",
+    "replace": "\"statement\": \"MIGRATION-TODO: state the behaviour.\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_MIGRATION_TODO"
+  ],
+  "rules": [
+    "G39"
+  ],
+  "paths": [
+    "/requirements/0/statement"
+  ],
+  "diagnostics": [
+    [
+      "E_MIGRATION_TODO",
+      "G39",
+      "/requirements/0/statement"
+    ]
+  ],
+  "args": {}
+}

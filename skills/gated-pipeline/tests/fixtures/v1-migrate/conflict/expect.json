@@ -1,0 +1,56 @@
+{
+  "description": "an id only in spec.md, an id only in the manifest, a proof command that differs",
+  "prd": false,
+  "source_request": false,
+  "mapping": [
+    {
+      "v1_id": "AUTH-001-AC1",
+      "acceptance_id": "AUTH-001-AC1",
+      "requirement_id": "AUTH-001",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/auth.test.js",
+      "command": "node --test test/auth.test.js"
+    },
+    {
+      "v1_id": "AUTH-002-AC1",
+      "acceptance_id": "AUTH-002-AC1",
+      "requirement_id": "AUTH-002",
+      "kind": "runtime",
+      "renamed": false,
+      "v1_proof_command": "node --test test/session.test.js",
+      "command": "node --test test/session.test.js"
+    }
+  ],
+  "conflicts": [
+    {
+      "kind": "proof_command_differs",
+      "id": "AUTH-001-AC1",
+      "line": 4,
+      "manifest": "node --test test/auth.test.js",
+      "spec": [
+        "npm test -- auth"
+      ]
+    },
+    {
+      "kind": "only_in_manifest",
+      "id": "AUTH-002-AC1"
+    },
+    {
+      "kind": "only_in_spec",
+      "id": "AUTH-003-AC1",
+      "line": 5
+    }
+  ],
+  "unmapped_tests": [
+    {
+      "path": "test/logout.test.js",
+      "sources": [
+        "spec.md:5"
+      ]
+    }
+  ],
+  "lost": [],
+  "provenance_missing": true,
+  "todos_include": []
+}

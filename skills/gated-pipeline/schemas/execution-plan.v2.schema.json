@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gated-pipeline:execution-plan:2",
+  "title": "gated-pipeline execution plan, manifest version 2",
+  "description": "docs/v2-design.md section 4. Written only by scripts/compile-feature.js from a valid canonical feature file; never authored by hand or by a model. Uses only the schema-lite keyword subset. Cross-field facts (static acceptances have proof_command \"\", live false and check_id null; a control carries mutation or exemption_reason by its method; ids map one-to-one onto the active canonical acceptances and the checks) are compiler properties, asserted by tests/feature-compile.test.js.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "feature_id", "schema_version", "compiler_version", "source", "spec_sha256",
+    "allowed_paths", "protected_paths", "state_paths", "clean_ignore", "test_paths",
+    "components", "requirements", "suite", "limits", "checks", "views"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 2 },
+    "feature_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+    "schema_version": { "type": "integer", "const": 2 },
+    "compiler_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^[^/].*\\.feature\\.json$" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "spec_sha256": { "$ref": "#/$defs/sha256" },
+    "allowed_paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/path" } },
+    "protected_paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/path" } },
+    "state_paths": { "type": "array", "items": { "$ref": "#/$defs/path" } },
+    "clean_ignore": { "type": "array", "items": { "$ref": "#/$defs/path" } },
+    "test_paths": { "type": "array", "items": { "$ref": "#/$defs/path" } },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "owned_paths"],
+        "properties": {
+          "id": { "$ref": "#/$defs/component_id" },
+          "owned_paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/path" } }
+        }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id", "requirement_id", "component_ids", "kind", "live", "check_id", "proof_command", "expected",
+          "evidence_paths", "alternate_evidence_paths", "negative_control"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]{3}-AC[0-9]+$" },
+          "requirement_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]{3}$" },
+          "component_ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/component_id" } },
+          "kind": { "type": "string", "enum": ["runtime", "static"] },
+          "live": { "type": "boolean" },
+          "check_id": { "type": ["string", "null"], "pattern": "^CHECK-[A-Z0-9][A-Z0-9-]*$" },
+          "proof_command": { "type": "string" },
+          "expected": { "type": ["object", "null"], "additionalProperties": false, "required": ["exit_code"], "properties": { "exit_code": { "type": "integer", "const": 0 } } },
+          "evidence_paths": { "type": "array", "items": { "$ref": "#/$defs/path" } },
+          "alternate_evidence_paths": { "type": "array", "items": { "$ref": "#/$defs/path" } },
+          "negative_control": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["method", "description"],
+            "properties": {
+              "method": { "type": "string", "enum": ["isolated_mutation", "exempt"] },
+              "description": { "type": "string", "minLength": 1 },
+              "mutation": { "type": "string", "minLength": 1 },
+              "exemption_reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "unit_command", "known_failures", "isolated", "setup_command", "timeout_min", "live_budget_min"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "unit_command": { "type": "string", "minLength": 1 },
+        "known_failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["test_id", "reason"],
+            "properties": {
+              "test_id": { "type": "string", "minLength": 1 },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "isolated": { "type": "boolean" },
+        "setup_command": { "type": ["string", "null"], "minLength": 1 },
+        "timeout_min": { "type": "integer", "minimum": 1 },
+        "live_budget_min": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proof_timeout_s", "negative_controls_total_min"],
+      "properties": {
+        "proof_timeout_s": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "negative_controls_total_min": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "applicable", "reason", "command", "expected", "timeout_min", "budget_min", "quiet", "effort", "environment"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^CHECK-[A-Z0-9][A-Z0-9-]*$" },
+          "name": { "type": "string", "minLength": 1 },
+          "applicable": { "type": "boolean" },
+          "reason": { "type": "string", "minLength": 1 },
+          "command": { "type": ["string", "null"] },
+          "expected": { "type": ["object", "null"], "additionalProperties": false, "required": ["exit_code"], "properties": { "exit_code": { "type": "integer", "const": 0 } } },
+          "timeout_min": { "type": ["integer", "null"], "minimum": 1 },
+          "budget_min": { "type": "integer", "minimum": 0 },
+          "quiet": { "type": "boolean" },
+          "effort": { "type": "string", "enum": ["low", "medium", "high"] },
+          "environment": { "type": "string" }
+        }
+      }
+    },
+    "views": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prd_projection_sha256", "prd_view_sha256", "spec_view_sha256"],
+      "properties": {
+        "prd_projection_sha256": { "$ref": "#/$defs/sha256" },
+        "prd_view_sha256": { "$ref": "#/$defs/sha256" },
+        "spec_view_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "component_id": { "type": "string", "pattern": "^COMP-[A-Z0-9][A-Z0-9-]*$" },
+    "path": { "type": "string", "minLength": 1 }
+  }
+}

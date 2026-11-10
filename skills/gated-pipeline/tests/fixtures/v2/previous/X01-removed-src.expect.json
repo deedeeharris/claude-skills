@@ -1,0 +1,29 @@
+{
+  "case": "X01",
+  "variant": "SRC removed",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": ",\n    { \"id\": \"SRC-003\", \"excerpt\": \"password reset by SMS\", \"disposition\": \"excluded\", \"rationale\": \"The request defers it to a later release.\" }",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REMOVED"
+  ],
+  "rules": [
+    "P01"
+  ],
+  "paths": [
+    "/coverage"
+  ],
+  "diagnostics": [
+    [
+      "E_ID_REMOVED",
+      "P01",
+      "/coverage"
+    ]
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

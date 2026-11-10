@@ -1,0 +1,27 @@
+{
+  "case": "S06",
+  "variant": "runtime acceptance without command",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"live\": false, \"command\": \"node --test test/hello.test.js\", \"expected\"",
+    "replace": "\"live\": false, \"expected\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_PROOF"
+  ],
+  "rules": [
+    "G18"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/verification/command"
+  ],
+  "diagnostics": [
+    [
+      "E_PROOF",
+      "G18",
+      "/requirements/0/acceptance/0/verification/command"
+    ]
+  ],
+  "args": {}
+}

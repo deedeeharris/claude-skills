@@ -1,0 +1,29 @@
+{
+  "case": "X01",
+  "variant": "retired non-goal active again",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"status\": \"retired\", \"retired_rationale\": \"Merged into NG-001 review notes.\"",
+    "replace": "\"status\": \"active\", \"retired_rationale\": \"Merged into NG-001 review notes.\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_ID_REACTIVATED"
+  ],
+  "rules": [
+    "P02"
+  ],
+  "paths": [
+    "/product/non_goals/1/status"
+  ],
+  "diagnostics": [
+    [
+      "E_ID_REACTIVATED",
+      "P02",
+      "/product/non_goals/1/status"
+    ]
+  ],
+  "args": {
+    "previous": "valid/medium.feature.json"
+  }
+}

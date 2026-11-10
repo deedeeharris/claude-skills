@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "feature_id": "search",
+  "spec_sha256": "8be03cd2d59a0ee9836ff6449961438f8187f3e2992bd1dfb0740a087cb14d4e",
+  "allowed_paths": [
+    "src/",
+    "test/"
+  ],
+  "protected_paths": [],
+  "requirements": [
+    {
+      "id": "SEARCH-001-AC1",
+      "kind": "runtime",
+      "proof_command": "node --test test/search.test.js"
+    }
+  ],
+  "checks": []
+}

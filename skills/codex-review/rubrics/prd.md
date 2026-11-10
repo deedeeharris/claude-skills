@@ -11,6 +11,11 @@ unambiguous, consistent, complete, singular, feasible, traceable, verifiable.
   (at least MAJOR).
 - Two requirements conflict with each other -> `inconsistent`.
 - An impossible or self-contradictory constraint -> `infeasible`.
+- Two active requirements (or acceptance items) that state the same rule, even in
+  other words (a paraphrase, the same scenario with renamed terms): not necessary and
+  not singular, `iso_property: null`, at least MAJOR. The fix names the one to retire
+  (`status: retired` with a rationale) or how to merge them; a duplicate must never be
+  frozen with both active.
 - A goal with no requirement backing it, an undefined actor or trigger, or personal
   data handled with no stated protection requirement -> `incomplete`.
 
@@ -19,6 +24,15 @@ unambiguous, consistent, complete, singular, feasible, traceable, verifiable.
 Not singular (a requirement bundling more than one need), not traceable, no
 out-of-scope section, an unnamed dependency. These are real findings; they are just
 outside the six-value ISO mapping above.
+
+## Checks
+
+- **Coverage of the reference request** named by `--against` (the original request the
+  PRD was written from), when one is given: every item of the reference request is
+  covered by a requirement or explicitly excluded with a reason, and every derived
+  requirement's rationale holds. A request item that is neither covered nor excluded
+  with a reason -> `incomplete`. A derived requirement (no request item behind it)
+  whose stated rationale does not hold is not necessary -> `iso_property: null`.
 
 ## Location and evidence
 

@@ -1,0 +1,25 @@
+{
+  "case": "S20",
+  "variant": "negative control without description",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "\"description\": \"Break the route body.\", ",
+    "replace": ""
+  },
+  "exit": 1,
+  "codes": [
+    "E_REQUIRED"
+  ],
+  "rules": [],
+  "paths": [
+    "/requirements/0/acceptance/0/negative_control/description"
+  ],
+  "diagnostics": [
+    [
+      "E_REQUIRED",
+      null,
+      "/requirements/0/acceptance/0/negative_control/description"
+    ]
+  ],
+  "args": {}
+}

@@ -1,0 +1,27 @@
+{
+  "case": "S05",
+  "variant": "duplicate goal id",
+  "base": "valid/S01-minimal.feature.json",
+  "mutation": {
+    "find": "{ \"id\": \"GOAL-001\", \"statement\": \"A client can fetch a greeting.\", \"source_ids\": [\"SRC-001\"], \"status\": \"active\" }",
+    "replace": "{ \"id\": \"GOAL-001\", \"statement\": \"A client can fetch a greeting.\", \"source_ids\": [\"SRC-001\"], \"status\": \"active\" },\n      { \"id\": \"GOAL-001\", \"statement\": \"A client sees that the service is up.\", \"source_ids\": [\"SRC-001\"], \"status\": \"active\" }"
+  },
+  "exit": 1,
+  "codes": [
+    "E_DUP_ID"
+  ],
+  "rules": [
+    "G01"
+  ],
+  "paths": [
+    "/product/goals/1/id"
+  ],
+  "diagnostics": [
+    [
+      "E_DUP_ID",
+      "G01",
+      "/product/goals/1/id"
+    ]
+  ],
+  "args": {}
+}
