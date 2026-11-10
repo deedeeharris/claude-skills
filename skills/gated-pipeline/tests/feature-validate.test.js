@@ -25,7 +25,7 @@ const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const uniqSorted = list => [...new Set(list)].sort();
 
 // Copied by hand from docs/v2-design.md section 3 (the parse, version and schema code lists, the rule tables
-// G01-G41, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
+// G01-G42, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
 // change to the contract shows up here; the lists are never imported from the validator.
 const DESIGN_CODES = [
   'E_PARSE', 'E_DUP_KEY', 'E_FORBIDDEN_KEY', 'E_SCHEMA_VERSION',
@@ -37,7 +37,7 @@ const DESIGN_CODES = [
   'E_SOURCE_MISMATCH', 'E_SOURCE_LEAK', 'E_ID_REMOVED', 'E_ID_REACTIVATED',
 ];
 const DESIGN_RULES = [
-  ...Array.from({ length: 41 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
+  ...Array.from({ length: 42 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
   'R01', 'R02', 'R03', 'R04', 'P01', 'P02',
 ];
 
@@ -389,6 +389,17 @@ test('rule branches: overlap rules fold case, G36 compares exactly', () => {
   assert.deepEqual(check('s01', f => { f.architecture.components[0].owned_paths = ['SRC/']; }), ['G36 E_OWNERSHIP /architecture/components/0/owned_paths/0'], 'owned "SRC/" is not inside allowed "src/"');
 });
 
+// G42 (design section 3): two active acceptance items with the same normalized given/when/then are the same rule
+// stated twice; a design must not freeze with both active. Retired items, and a scenario that differs in one part, pass.
+test('rule branches: G42 identical acceptance scenarios between active items are rejected', () => {
+  const copy = (f, from, to) => { const a = f.requirements[from].acceptance[0], b = f.requirements[to].acceptance[0]; b.given = a.given; b.when = a.when; b.then = a.then; };
+  assert.deepEqual(check('medium', f => { copy(f, 1, 2); }), ['G42 E_DUP_STATEMENT /requirements/2/acceptance/0']);
+  assert.deepEqual(check('medium', f => { copy(f, 1, 2); f.requirements[2].acceptance[0].then = ' ' + f.requirements[1].acceptance[0].then.toUpperCase() + '!'; }),
+    ['G42 E_DUP_STATEMENT /requirements/2/acceptance/0'], 'case, punctuation and whitespace are normalized');
+  assert.deepEqual(check('medium', f => { copy(f, 1, 2); f.requirements[2].acceptance[0].then += ' and a header'; }), [], 'a different outcome is another scenario');
+  assert.deepEqual(check('medium', f => { const a = f.requirements[0].acceptance, r = f.requirements[0].acceptance[1]; r.given = a[0].given; r.when = a[0].when; r.then = a[0].then; }), [], 'a retired acceptance item is not compared');
+});
+
 // G41 (design sections 3 and 6.3): contract-2 test-first commits the RED commit under scope.test_paths, so a
 // design with none is rejected before it is frozen; G26 alone reports the case where an isolated_mutation exists.
 test('rule branches: G41 an empty scope.test_paths is rejected at design; G26 reports it alone when an isolated_mutation exists', () => {
@@ -408,7 +419,7 @@ test('rule branches: G13, G14 count active goals and components; G25 needs every
   const mixed = f => {
     const r = f.requirements[2];
     delete r.acceptance[0].negative_control.alternate_evidence;
-    r.acceptance.push(Object.assign(JSON.parse(JSON.stringify(f.requirements[0].acceptance[0])), { id: 'AUTH-003-AC2' }));
+    r.acceptance.push(Object.assign(JSON.parse(JSON.stringify(f.requirements[0].acceptance[0])), { id: 'AUTH-003-AC2', then: 'the response also names AUTH-003' }));
   };
   assert.deepEqual(check('medium', mixed), [], 'a P0 requirement with one exempt and one isolated_mutation acceptance needs no alternate_evidence');
   assert.deepEqual(check('medium', f => { mixed(f); f.requirements[2].acceptance[1].status = 'retired'; f.requirements[2].acceptance[1].retired_rationale = 'x'; }),

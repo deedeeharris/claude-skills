@@ -1043,6 +1043,46 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.equal(fs.existsSync(redRecordOf(b)), false, 'no red run without an implementation after the red commit');
   });
 
+  // Scope at build (design 6.3): every path git shows in base..head must be inside the frozen allowed_paths and outside
+  // protected_paths, the same rule as completion's E_SCOPE. A change outside it is BLOCKED at once and never sent to a
+  // fixer (E2E-H1: a fixer deleted a failing out-of-scope test to get green). A test a round reviewed must not vanish.
+  test('scope: a commit after the implementation that adds a file outside allowed_paths -> BLOCKED at review (E_SCOPE), no fixer, no suite', async (t) => {
+    const c = frozenRepo(t);
+    const withForeign = () => {
+      const w = implement(c)();
+      c.write('README.md', 'a foreign commit\n');
+      c.git('add', '--', 'README.md');
+      c.git('commit', '-qm', 'Add a readme');
+      c.reviewedSha = head(c);
+      return { ...w, commit: c.reviewedSha };
+    };
+    const b = await buildV2(c, { implement: withForeign });
+    const r = b.result;
+    assert.equal(r.status, 'BLOCKED', JSON.stringify(r).slice(0, 2000));
+    assert.equal(r.stage, 'review');
+    assert.equal(r.code, 'E_SCOPE');
+    assert.match(r.reason, /outside the frozen scope .*: README\.md\./);
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1']);
+  });
+
+  test('scope: a fix that deletes a focused test the previous round reviewed -> BLOCKED at the next review (E_TEST_FIRST), never PASS', async (t) => {
+    const c = frozenRepo(t);
+    const deleter = () => {
+      fs.rmSync(path.join(c.repo, 'test/live.test.js'));
+      c.git('add', '--', 'test/live.test.js');
+      c.git('commit', '-qm', 'Remove a test');
+      return { blocked: false, summary: 'removed a test', files_changed: [], files_deleted: ['test/live.test.js'], commit: head(c), base_commit: c.designCommit };
+    };
+    const b = await buildV2(c, { findings1: [MAJOR], table: { 'fix 1': deleter } });
+    const r = b.result;
+    assert.equal(r.status, 'BLOCKED', JSON.stringify(r).slice(0, 2000));
+    assert.equal(r.stage, 'review');
+    assert.equal(r.code, 'E_TEST_FIRST');
+    assert.equal(r.round, 2);
+    assert.match(r.reason, /a fix removed test file\(s\) under scope\.test_paths that round 1 reviewed: test\/live\.test\.js/);
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1', 'fix 1', 'codex review 2']);
+  });
+
   // An empty scope.test_paths leaves the red commit nowhere to go: the validator rejects it at design (G41), so it is
   // never frozen, and build's preflight BLOCKS it as a second line (here a preflight whose output names no test path).
   test('test-first: the validator refuses a design with an empty scope.test_paths (G41), so design cannot freeze it', (t) => {

@@ -384,6 +384,11 @@ const SCRIPT = name => q(`${V2_SCRIPTS}/${name}`)
 const writeJsonBlock = (file, value) => `node ${SCRIPT('write-json.js')} --out ${q(file)} <<'GP_JSON'\n${JSON.stringify(value)}\nGP_JSON`
 const crash = code => [124, 126, 127].includes(code) || code >= 128
 let PRE = null // the --mode design output (the preflight record), contract 2
+// The frozen manifest's allowed_paths and protected_paths, contract 2: the same entries completion's E_SCOPE check uses
+// (an entry ending in '/' is a directory prefix, any other entry one exact path).
+let SCOPE = null
+const inEntry = (file, entry) => entry.endsWith('/') ? file.startsWith(entry) : file === entry
+const outOfScope = paths => paths.filter(p => !SCOPE.allowed.some(e => inEntry(p, e)) || SCOPE.protected.some(e => inEntry(p, e)))
 let SUITE_M = null // the manifest suite, contract 2
 let CI_LOG = null // { path, sha256 } of ci_failure_log_path, contract 2
 let PLAN_IDENTITY = null
@@ -503,7 +508,8 @@ if (C2) {
   const prePath = `${A.run_dir}/design-preflight.json`
   const ciLog = A.ci_failure_log_path
   const printSuite = `node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const s=m.suite;` +
-    `console.log(JSON.stringify({gp_suite:{command:s.command,known_failure_ids:s.known_failures.map(k=>k.test_id),isolated:s.isolated,setup_command:s.setup_command,timeout_min:s.timeout_min}}))' ${q(A.manifest_path)}`
+    `console.log(JSON.stringify({gp_suite:{command:s.command,known_failure_ids:s.known_failures.map(k=>k.test_id),isolated:s.isolated,setup_command:s.setup_command,timeout_min:s.timeout_min}}));` +
+    `console.log(JSON.stringify({gp_scope:{allowed_paths:m.allowed_paths,protected_paths:m.protected_paths}}))' ${q(A.manifest_path)}`
   const pre = await agent(
     `Preflight of the design-gated build of feature ${A.feature_id}, BEFORE anything changes: the frozen plan's design identity (check-completion.js --mode design writes it to ${prePath}), ` +
     `the design commit as an ancestor of HEAD${ciLog ? ', and the hash of the CI failure log' : ''}. ${EXEC_NOTE}` +
@@ -530,11 +536,14 @@ if (C2) {
   const preSha = shaOf(pre.stdout, prePath)
   const s = (lines.find(o => o.gp_suite) || {}).gp_suite
   const hi = lines.find(o => Array.isArray(o.inputs))
+  const sc = (lines.find(o => o.gp_scope) || {}).gp_scope
+  const strList = v => Array.isArray(v) && v.every(x => typeof x === 'string' && x.length > 0)
   const bad = !d ? 'no --mode design output' : d.status !== 'PASS' ? 'the design preflight did not PASS'
     : d.design_commit !== A.design_commit || d.manifest_sha256 !== A.manifest_sha256 || d.approvals_sha256 !== A.approvals_sha256 ? 'the preflight names another design commit, manifest or approvals ledger'
     : !d.source || !HEX64.test(d.source.sha256) || !HEX64.test(preSha || '') ? 'the preflight record or its hash is missing'
     : !s || typeof s.command !== 'string' || !s.command || JSON.stringify(s.known_failure_ids) !== JSON.stringify(d.known_failure_ids) ? 'the manifest suite is missing or differs from the preflight'
     : !Array.isArray(d.clean_ignore) || typeof d.unit_command !== 'string' || !Number.isInteger(d.live_budget_min) ? 'the preflight lacks the frozen suite configuration'
+    : !sc || !strList(sc.allowed_paths) || !sc.allowed_paths.length || !strList(sc.protected_paths) ? 'the preflight lacks the frozen scope (allowed_paths, protected_paths)'
     : ciLog && !(hi && hi.inputs.length === 1 && hi.inputs[0].path === ciLog && HEX64.test(hi.inputs[0].sha256)) ? 'the CI failure log was not hashed' : ''
   if (bad) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: bad, preflight: pre })
   // Test-first (design 6.3): the red commit may change only files under scope.test_paths, so there must be one.
@@ -548,6 +557,7 @@ if (C2) {
   if (suiteLong) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: suiteLong, preflight: pre })
   PRE = d
   SUITE_M = s
+  SCOPE = { allowed: sc.allowed_paths.slice(), protected: sc.protected_paths.slice() }
   KNOWN = d.known_failure_ids.slice()
   CI_LOG = ciLog ? { path: ciLog, sha256: hi.inputs[0].sha256 } : null
   PLAN_IDENTITY = { design_commit: A.design_commit, source_sha256: d.source.sha256, manifest_sha256: d.manifest_sha256, approvals_sha256: d.approvals_sha256, preflight_path: prePath, preflight_sha256: preSha }
@@ -778,6 +788,7 @@ async function suiteV2(round) {
 }
 
 let verdict = null
+const SEEN_TESTS = new Set()
 let lastSuite = null
 let lastSec = null
 let reviewedSha = ''
@@ -794,6 +805,24 @@ for (let round = 1; round <= MAX + 1; round++) {
   files.clear(); deleted.clear()
   r.changed.forEach(c => (c.status.startsWith('D') ? deleted : files).add(c.path))
   if (unsafe().length) return disclose({ status: 'BLOCKED', stage: 'review', reason: 'changed paths must be repo-relative and safe: ' + unsafe().join(', '), history })
+  // contract 2 scope (design 6.3): completion refuses a change with a path outside allowed_paths or inside protected_paths
+  // (E_SCOPE), so build never reaches PASS with one and never sends one to a fixer: removing or reverting it would be a
+  // change outside the frozen scope too (a fixer deleting a failing out-of-scope test to get green is exactly that). A
+  // path outside the scope needs a new design, and a commit the build did not make is for a human to remove.
+  if (C2) {
+    const oos = outOfScope(gitPaths)
+    if (oos.length) return disclose({ status: 'BLOCKED', stage: 'review', code: 'E_SCOPE', round,
+      reason: `the change ${base}..${r.head_sha} touches paths outside the frozen scope (allowed_paths, minus protected_paths): ${oos.join(', ')}. ` +
+        'Completion would refuse it; nothing was sent to a fixer. A scope change needs a new design; a commit this build did not make is for a human to remove.',
+      review: r, history, plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST })
+    // A test under scope.test_paths that an earlier round's change carried must not vanish later: deleting a
+    // focused test is never a fix.
+    const gone = [...SEEN_TESTS].filter(p => !files.has(p))
+    if (gone.length) return disclose({ status: 'BLOCKED', stage: 'review', code: 'E_TEST_FIRST', round,
+      reason: `a fix removed test file(s) under scope.test_paths that round ${round - 1} reviewed: ${gone.join(', ')}. Deleting a test is never a fix.`,
+      review: r, history, plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST })
+    for (const p of files) if (PRE.test_paths.some(e => inEntry(p, e))) SEEN_TESTS.add(p)
+  }
   reviewedSha = r.head_sha
   if (r.verdict === 'PASS' && r.confirmed_findings.length) r.verdict = 'FAIL'
   verdict = r

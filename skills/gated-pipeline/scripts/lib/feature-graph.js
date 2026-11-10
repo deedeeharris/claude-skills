@@ -1,7 +1,7 @@
 'use strict';
 
 // Graph and cross-field rules of the v2 canonical feature file: docs/v2-design.md section 3, tables
-// 4 (G01-G41), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
+// 4 (G01-G42), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
 // { code, rule, path, id, message }; path is a JSON Pointer into the checked file (for P01 the collection in
 // the checked file where the missing id belongs). The functions assume a schema-valid file (validate-feature.js
 // runs them only after schema-lite passed) and never execute or evaluate any string of the file.
@@ -108,7 +108,7 @@ const folded = p => segs(p.toLowerCase());
 const overlap = (a, b) => { const x = folded(a), y = folded(b); return isPrefix(x, y) || isPrefix(y, x); }; // case folded
 const inside = (a, b) => isPrefix(segs(b), segs(a)); // a equal to or inside b, exact case
 
-// ---- G01-G41 -------------------------------------------------------------------------------------------
+// ---- G01-G42 -------------------------------------------------------------------------------------------
 
 function checkRepoPath(f, repoPath) {
   const out = [];
@@ -157,6 +157,19 @@ function graphRules(f, { repoPath }) {
     const n = norm(r.statement);
     if (statements.has(n)) out.push(diag('E_DUP_STATEMENT', 'G04', `/requirements/${i}/statement`, r.id, `statement of ${r.id} equals that of ${statements.get(n)} after normalization`));
     else statements.set(n, r.id);
+  });
+  // G42 identical normalized acceptance scenarios (given, when and then all equal) between active acceptance items of
+  // active requirements: the same rule stated twice is never frozen with both active (retire one or merge them).
+  const scenarios = new Map();
+  reqs.forEach((r, i) => {
+    if (r.status !== 'active') return;
+    r.acceptance.forEach((a, j) => {
+      // A migration todo is G39's: a draft whose scenarios are all the marker reports only that.
+      if (a.status !== 'active' || [a.given, a.when, a.then].some(x => String(x).includes(MARKER))) return;
+      const n = [a.given, a.when, a.then].map(norm).join('\u0000');
+      if (scenarios.has(n)) out.push(diag('E_DUP_STATEMENT', 'G42', `/requirements/${i}/acceptance/${j}`, a.id, `acceptance scenario of ${a.id} equals that of ${scenarios.get(n)} after normalization (given, when and then): retire one requirement or merge them`));
+      else scenarios.set(n, a.id);
+    });
   });
   // G05 dangling references, G06 depends_on retired
   const goalIds = new Set(f.product.goals.map(g => g.id));

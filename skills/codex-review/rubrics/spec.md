@@ -11,6 +11,11 @@ consistent, complete, singular, feasible, traceable, verifiable.
   (at least MAJOR).
 - Two requirements conflict with each other -> `inconsistent`.
 - An impossible or self-contradictory constraint -> `infeasible`.
+- Two active requirements (or acceptance items) that state the same rule, even in
+  other words (a paraphrase, the same scenario with renamed terms): not necessary and
+  not singular, `iso_property: null`, at least MAJOR. The fix names the one to retire
+  (`status: retired` with a rationale) or how to merge them; a duplicate must never be
+  frozen with both active.
 - A goal with no requirement backing it, an undefined actor or trigger, or personal
   data handled with no stated protection requirement -> `incomplete`.
 

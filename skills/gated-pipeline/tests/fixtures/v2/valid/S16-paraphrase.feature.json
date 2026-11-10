@@ -78,9 +78,9 @@
         {
           "id": "PW-001-AC1",
           "status": "active",
-          "given": "the server is running",
-          "when": "a client sends GET /hello",
-          "then": "the response is 200 with body hello",
+          "given": "the server is running and the user alice exists",
+          "when": "a client posts alice with a wrong password to /login",
+          "then": "the response is 401",
           "verification": {
             "kind": "runtime",
             "live": false,
@@ -113,9 +113,9 @@
         {
           "id": "PW-002-AC1",
           "status": "active",
-          "given": "the server is running",
-          "when": "a client sends GET /hello",
-          "then": "the response is 200 with body hello",
+          "given": "alice is a registered user and the service is up",
+          "when": "a login request for alice carries an incorrect password",
+          "then": "the login is refused with status 401",
           "verification": {
             "kind": "runtime",
             "live": false,

@@ -421,7 +421,7 @@ test(`${MOCKED}: L3.3 a revision that deletes a requirement is BLOCKED before re
   const r2 = clone(f2.requirements[0]);
   r2.id = 'HELLO-002';
   r2.statement = 'hello() never throws.';
-  r2.acceptance = [{ ...clone(f2.requirements[0].acceptance[2]), id: 'HELLO-002-AC1' }];
+  r2.acceptance = [{ ...clone(f2.requirements[0].acceptance[2]), id: 'HELLO-002-AC1', when: 'hello() is called with no argument' }];
   f2.requirements.push(r2);
   f2.coverage[0].requirement_ids.push('HELLO-002');
   const c = fixture(t, { feature: f2 });

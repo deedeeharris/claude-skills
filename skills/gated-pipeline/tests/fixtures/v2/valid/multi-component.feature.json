@@ -177,7 +177,7 @@
           "id": "API-001-AC1",
           "status": "active",
           "given": "the server is running",
-          "when": "a client sends GET /hello",
+          "when": "a client sends GET /hello twice in a row",
           "then": "the response is 200 with body hello",
           "verification": {
             "kind": "runtime",
@@ -215,7 +215,7 @@
           "id": "API-002-AC1",
           "status": "active",
           "given": "the server is running",
-          "when": "a client sends GET /hello",
+          "when": "a client sends GET /hello with an Accept header of text/plain",
           "then": "the response is 200 with body hello",
           "verification": {
             "kind": "runtime",

@@ -1,0 +1,280 @@
+{
+  "schema_version": 2,
+  "feature_id": "orders",
+  "title": "Order history",
+  "source_request": {
+    "text": "Show a user their past orders, newest first, from the orders table."
+  },
+  "coverage": [
+    {
+      "id": "SRC-001",
+      "excerpt": "show past orders newest first",
+      "disposition": "covered",
+      "requirement_ids": [
+        "API-001",
+        "API-002"
+      ]
+    },
+    {
+      "id": "SRC-002",
+      "excerpt": "read from the orders table",
+      "disposition": "covered",
+      "requirement_ids": [
+        "DB-001"
+      ]
+    }
+  ],
+  "product": {
+    "problem": "Clients have no way to check that the service answers.",
+    "actors": [
+      "api client"
+    ],
+    "goals": [
+      {
+        "id": "GOAL-001",
+        "statement": "A user sees their order history.",
+        "source_ids": [
+          "SRC-001"
+        ],
+        "status": "active"
+      },
+      {
+        "id": "GOAL-002",
+        "statement": "History comes from the system of record.",
+        "source_ids": [
+          "SRC-002"
+        ],
+        "status": "active"
+      }
+    ],
+    "non_goals": [],
+    "constraints": [],
+    "risks": [],
+    "success_metrics": [
+      "GET /hello answers 200 with body hello"
+    ]
+  },
+  "architecture": {
+    "approach": "Add one route to the existing HTTP server.",
+    "decisions": [
+      {
+        "id": "DEC-001",
+        "decision": "Sort in SQL, not in the route.",
+        "rationale": "Keeps pagination stable.",
+        "status": "active"
+      }
+    ],
+    "invariants": [
+      {
+        "id": "INV-001",
+        "statement": "A user never sees another user's orders.",
+        "status": "active"
+      }
+    ],
+    "components": [
+      {
+        "id": "COMP-API",
+        "name": "HTTP API",
+        "description": "Order routes.",
+        "owned_paths": [
+          "src/api/"
+        ],
+        "exclusive": true,
+        "status": "active"
+      },
+      {
+        "id": "COMP-DB",
+        "name": "Data access",
+        "description": "Order queries.",
+        "owned_paths": [
+          "src/db/"
+        ],
+        "exclusive": true,
+        "status": "active"
+      },
+      {
+        "id": "COMP-SHARED-A",
+        "name": "Shared helpers",
+        "description": "Formatting helpers.",
+        "owned_paths": [
+          "src/shared/"
+        ],
+        "exclusive": false,
+        "status": "active"
+      },
+      {
+        "id": "COMP-SHARED-B",
+        "name": "Shared date helpers",
+        "description": "Date helpers.",
+        "owned_paths": [
+          "src/shared/date/"
+        ],
+        "exclusive": false,
+        "status": "active"
+      }
+    ],
+    "security": {
+      "data_exposure": "None; the body is a constant.",
+      "input_validation": "No input is read.",
+      "resource_consumption": "Constant work per request.",
+      "accepted_risks": []
+    }
+  },
+  "requirements": [
+    {
+      "id": "DB-001",
+      "status": "active",
+      "goal_ids": [
+        "GOAL-002"
+      ],
+      "statement": "Orders are read for one user id only.",
+      "priority": "P1",
+      "depends_on": [],
+      "component_ids": [
+        "COMP-DB",
+        "COMP-SHARED-B"
+      ],
+      "acceptance": [
+        {
+          "id": "DB-001-AC1",
+          "status": "active",
+          "given": "the server is running",
+          "when": "a client sends GET /hello",
+          "then": "the response is 200 with body hello",
+          "verification": {
+            "kind": "runtime",
+            "live": false,
+            "command": "node --test test/db.test.js",
+            "expected": {
+              "exit_code": 0
+            }
+          },
+          "negative_control": {
+            "method": "isolated_mutation",
+            "description": "Break the route body.",
+            "mutation": "Break DB-001 in its owned code."
+          }
+        }
+      ]
+    },
+    {
+      "id": "API-001",
+      "status": "active",
+      "goal_ids": [
+        "GOAL-001"
+      ],
+      "statement": "GET /orders lists the caller's orders.",
+      "priority": "P1",
+      "depends_on": [
+        "DB-001"
+      ],
+      "component_ids": [
+        "COMP-API",
+        "COMP-SHARED-A"
+      ],
+      "acceptance": [
+        {
+          "id": "API-001-AC1",
+          "status": "active",
+          "given": "the server is running",
+          "when": "a client sends GET /hello",
+          "then": "the response is 200 with body hello",
+          "verification": {
+            "kind": "runtime",
+            "live": false,
+            "command": "node --test test/api.test.js",
+            "expected": {
+              "exit_code": 0
+            }
+          },
+          "negative_control": {
+            "method": "isolated_mutation",
+            "description": "Break the route body.",
+            "mutation": "Break API-001 in its owned code."
+          }
+        }
+      ]
+    },
+    {
+      "id": "API-002",
+      "status": "active",
+      "goal_ids": [
+        "GOAL-001"
+      ],
+      "statement": "GET /orders lists newest orders first.",
+      "priority": "P1",
+      "depends_on": [
+        "API-001",
+        "DB-001"
+      ],
+      "component_ids": [
+        "COMP-API"
+      ],
+      "acceptance": [
+        {
+          "id": "API-002-AC1",
+          "status": "active",
+          "given": "the server is running",
+          "when": "a client sends GET /hello with an Accept header of text/plain",
+          "then": "the response is 200 with body hello",
+          "verification": {
+            "kind": "runtime",
+            "live": false,
+            "command": "node --test test/api-order.test.js",
+            "expected": {
+              "exit_code": 0
+            }
+          },
+          "negative_control": {
+            "method": "isolated_mutation",
+            "description": "Break the route body.",
+            "mutation": "Break API-002 in its owned code."
+          }
+        }
+      ]
+    }
+  ],
+  "scope": {
+    "allowed_paths": [
+      "src/",
+      "test/"
+    ],
+    "protected_paths": [],
+    "state_paths": [],
+    "clean_ignore": [],
+    "test_paths": [
+      "test/"
+    ]
+  },
+  "suite": {
+    "command": "node --test",
+    "unit_command": "node --test test/hello.test.js",
+    "known_failures": [],
+    "isolated": false,
+    "setup_command": null,
+    "timeout_min": 4,
+    "live_budget_min": 0
+  },
+  "limits": {
+    "proof_timeout_s": 120,
+    "negative_controls_total_min": 10
+  },
+  "checks": [
+    {
+      "id": "CHECK-LINT",
+      "name": "Lint",
+      "applicable": true,
+      "reason": "The repo has a lint script.",
+      "command": "npm run lint",
+      "expected": {
+        "exit_code": 0
+      },
+      "timeout_min": 5,
+      "budget_min": 0,
+      "quiet": false,
+      "effort": "low",
+      "environment": "local shell"
+    }
+  ],
+  "test_plan": "One focused test for the route."
+}

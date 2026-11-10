@@ -201,6 +201,7 @@ string from the file (proof commands are data).
    | G39 | the literal `MIGRATION-TODO` anywhere (section 8) | `E_MIGRATION_TODO` |
    | G40 | a frozen run whose worst case cannot finish inside one foreground Bash call (section 6.4: 570 s, each run counted as its limit + 15 s; `scripts/lib/call-limits.js`): the suite (setup and suite when `setup_command` is set, each `suite.timeout_min`), an applicable check (`budget_min` when > 0, else `timeout_min`), one runtime proof (`proof_timeout_s`, when an active runtime acceptance with `live: false` exists), a negative control (setup when set, baseline and mutated run, each `proof_timeout_s`, capped by `negative_controls_total_min`, when an active `isolated_mutation` exists and one proof fits) | `E_LIMIT` |
    | G41 | `scope.test_paths` empty while no `isolated_mutation` exists (G26 reports that case): contract-2 test-first commits the RED commit under it (section 6.3), so a design without one could never build and is rejected before it is frozen | `E_COVERAGE` |
+   | G42 | two active acceptance items of active requirements with identical normalized `given`, `when` and `then` (the G04 normalization): the same rule stated twice, which a design must not freeze with both active (retire one or merge them); paraphrased statements with distinct scenarios stay a review job | `E_DUP_STATEMENT` |
 5. `--source-request <file>` (the design stage always passes it, with `--source-mode`, default
    `text`):
 
@@ -493,6 +494,17 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   manifest known-failure ids (at least one). `completed` and `passed` are derived from these
   fields, never relayed. Anything else is a fix round (a nonzero exit naming no test gets the
   "failed without naming a test" item).
+- Scope at build: the preflight also prints the manifest's `allowed_paths` and `protected_paths`
+  (BLOCKED when missing). In every review round, every path git shows in `base_commit..head_sha`
+  must lie inside an `allowed_paths` entry and outside every `protected_paths` entry (an entry
+  ending in `/` is a directory prefix, any other entry one exact path), the rule completion
+  applies (`E_SCOPE`, 6.5). A path outside it is BLOCKED at stage `review` with code `E_SCOPE`
+  at once and never sent to a fixer: undoing it would be a change outside the frozen scope too
+  (a fixer deleting a failing out-of-scope test to get green, E2E-H1). A scope change needs a
+  new design; a commit the build did not make is for a human to remove. A file under
+  `scope.test_paths` that an earlier round's change carried and that is gone from a later
+  round's change is BLOCKED at stage `review` with code `E_TEST_FIRST` ("deleting a test is
+  never a fix").
 - Test-first is a certified property of a `contract: 2` build (the plan's "red log at a commit
   before the implementation", made provable). The implementer commits on `work_branch`, after
   `design_commit`, first the RED commit: one or more commits whose tree at the last of them

@@ -8,7 +8,7 @@
 // id, message } ] } with errors sorted by (path, code, rule); exit 0 valid, 1 invalid, 2 usage/setup error
 // (the reason goes to stderr and nothing to stdout).
 // Order: 1. parse (strict-json), 2. version (schema_version must be 2; nothing else is reported otherwise),
-// 3. schema (schema-lite against --schema), 4. graph rules G01-G41, 5. --source-request rules R01-R04,
+// 3. schema (schema-lite against --schema), 4. graph rules G01-G42, 5. --source-request rules R01-R04,
 // 6. --previous rules P01-P02. Steps 4-6 run only on a schema-valid file, because they rely on its shape.
 // --previous must itself parse, carry schema_version 2 and pass the schema, else exit 2.
 // The source request file must be valid UTF-8 (both modes), else exit 2.
