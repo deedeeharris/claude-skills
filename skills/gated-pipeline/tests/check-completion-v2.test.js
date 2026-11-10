@@ -806,6 +806,91 @@ test('suite identity: a timed-out suite record whose failures are all known is e
   blocked(c.completion(), 'E_SUITE', /timed out/);
 });
 
+// test-first (design 6.3, 6.5): the red record binds a failing frozen unit run to a test-only commit before the implementation.
+test('test-first: a complete run certifies its red commit; the proof carries test_first', t => {
+  const c = completeRun(t);
+  passed(c.completion());
+  const proof = JSON.parse(fs.readFileSync(c.out, 'utf8'));
+  assert.equal(proof.test_first.red_commit, c.redCommit);
+  assert.equal(proof.test_first.record_sha256, c.build.test_first.record_sha256);
+  assert.equal(proof.test_first.exit_code, 1);
+  assert.deepEqual(proof.test_first.red_paths, ['test/hello.test.js', 'test/live.test.js']);
+  assert.equal(proof.test_first.command, 'node test/hello.test.js');
+});
+
+test('test-first: a build result without test_first, or with extra fields, is exit 1', t => {
+  const c = completeRun(t);
+  const tf = c.build.test_first;
+  delete c.build.test_first;
+  blocked(c.completion(), 'E_TEST_FIRST', /test_first/);
+  c.build.test_first = { ...tf, extra: 1 };
+  blocked(c.completion(), 'E_TEST_FIRST', /test_first/);
+});
+
+test('test-first: a hand-made build result with a forged red record hash is exit 1 (E_HASH)', t => {
+  const c = completeRun(t);
+  c.build.test_first.record_sha256 = '0'.repeat(64);
+  blocked(c.completion(), 'E_HASH', /red record/);
+});
+
+test('test-first: a red record edited to exit 0 (re-hashed, footer rewritten) is exit 1: RED needs a failing run', t => {
+  const c = completeRun(t);
+  const tf = c.build.test_first;
+  const rec = JSON.parse(fs.readFileSync(tf.record_path, 'utf8'));
+  const logSha = c.setFooter(rec.log_path, { exit_code: 0, signal: null, elapsed_s: rec.elapsed_s });
+  c.editRecord(tf, r => { r.exit_code = 0; r.log_sha256 = logSha; });
+  blocked(c.completion(), 'E_TEST_FIRST', /exit 0/);
+});
+
+test('test-first: a red record with exit 127 (re-hashed, footer rewritten) is exit 1: a crash is not a failing test', t => {
+  const c = completeRun(t);
+  const tf = c.build.test_first;
+  const rec = JSON.parse(fs.readFileSync(tf.record_path, 'utf8'));
+  const logSha = c.setFooter(rec.log_path, { exit_code: 127, signal: null, elapsed_s: rec.elapsed_s });
+  c.editRecord(tf, r => { r.exit_code = 127; r.log_sha256 = logSha; });
+  blocked(c.completion(), 'E_TEST_FIRST', /127/);
+});
+
+test('test-first: a red commit that is not an ancestor of reviewed_sha is exit 1, even with its own valid red record', t => {
+  const c = completeRun(t);
+  // a test-only commit on another branch from the design commit, with a real (failing) red run of its own
+  c.git('checkout', '-q', '-b', 'side', c.designCommit);
+  c.write('test/hello.test.js', require('./helpers/v2-repo.js').IMPL_FILES['test/hello.test.js']);
+  c.git('add', '--', 'test/hello.test.js');
+  c.git('commit', '-qm', 'red on another branch');
+  const side = c.git('rev-parse', 'HEAD');
+  c.git('checkout', '-q', 'feature/greet');
+  const r = c.runFrozen('red', { sha: side, base: c.designCommit, outDir: path.join(c.run, 'side-red') });
+  assert.equal(r.status, 0, r.stderr);
+  const printed = JSON.parse(r.stdout);
+  assert.equal(printed.exit_code, 1);
+  c.build.test_first = { red_commit: side, record_path: printed.record_path, record_sha256: printed.record_sha256 };
+  blocked(c.completion(), 'E_TEST_FIRST', /not a proper ancestor of the reviewed SHA/);
+});
+
+test('test-first: a red commit equal to reviewed_sha, or to the design commit, is exit 1', t => {
+  const c = completeRun(t);
+  c.build.test_first.red_commit = c.reviewedSha;
+  blocked(c.completion(), 'E_TEST_FIRST', /not a proper ancestor of the reviewed SHA/);
+  c.build.test_first.red_commit = c.designCommit;
+  blocked(c.completion(), 'E_TEST_FIRST', /not a proper descendant of the design commit/);
+});
+
+test('test-first: a red commit whose range design_commit..red_commit touches src/ is exit 1', t => {
+  // the "red" commit holds the code and one test; the other test comes after it
+  const c = completeRun(t, { redFiles: ['src/hello.js', 'test/live.test.js'], red: false });
+  c.build.test_first = { red_commit: c.redCommit, record_path: path.join(c.run, 'build', 'test-first', 'red.record.json'), record_sha256: '0'.repeat(64) };
+  blocked(c.completion(), 'E_TEST_FIRST', /outside scope\.test_paths: src\/hello\.js/);
+});
+
+test('test-first: a red record of another target or another command is exit 1', t => {
+  const c = completeRun(t);
+  // the suite record is a frozen run too, but not the red one
+  c.build.test_first.record_path = c.build.suite_identity.record_path;
+  c.build.test_first.record_sha256 = c.build.suite_identity.record_sha256;
+  blocked(c.completion(), 'E_RECORD', /target suite is not red/);
+});
+
 // reviews (design 6.5; L3.4, L3.7)
 test('reviews: a final review verdict that drops a confirmed finding of its result.json is exit 1', t => {
   const c = completeRun(t);

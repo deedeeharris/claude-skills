@@ -439,6 +439,70 @@ test('negative: is refused for an exempt acceptance, without --patch, and --patc
   assert.equal(c.runFrozen('check:CHECK-UI').status, 1, 'a not-applicable check never runs');
 });
 
+// --- red (test-first, design 6.3/6.4) ------------------------------------------------------------------------
+const redRun = (c, o = {}) => c.runFrozen('red', { sha: c.redCommit, base: c.designCommit, outDir: path.join(c.run, 'test-first'), ...o });
+
+test('red: runs the frozen unit command in a throwaway worktree of the red commit, never the work checkout, and records the failing run', t => {
+  const c = frozenRepo(t);
+  assert.ok(/^[0-9a-f]{40}$/.test(c.redCommit) && c.redCommit !== c.reviewedSha, 'the helper made a red commit before the implementation');
+  const r = redRun(c);
+  assert.equal(r.status, 0, r.stderr);
+  const rec = record(r);
+  const wt = path.join(c.run, 'test-first', 'red-wt');
+  assert.equal(out(r).record_path, path.join(c.run, 'test-first', 'red.record.json'));
+  assert.equal(out(r).record_sha256, sha256(fs.readFileSync(out(r).record_path)));
+  assert.equal(rec.target, 'red');
+  assert.equal(rec.command, 'node test/hello.test.js', 'the manifest suite.unit_command');
+  assert.equal(rec.cwd, wt);
+  assert.equal(rec.head_before, c.redCommit);
+  assert.equal(rec.head_after, c.redCommit);
+  assert.deepEqual(rec.status_before, []);
+  assert.equal(rec.base_commit, c.designCommit);
+  assert.deepEqual(rec.red_paths, ['test/hello.test.js', 'test/live.test.js']);
+  assert.equal(rec.exit_code, 1, 'the focused test fails before the implementation');
+  assert.equal(rec.timed_out, false);
+  assert.equal(rec.setup, null);
+  assert.equal(rec.timeout_s, 120, 'limit suite.timeout_min');
+  const log = framed(fs.readFileSync(rec.log_path, 'utf8'));
+  assert.deepEqual(log.header, { target: 'red', command: 'node test/hello.test.js', cwd: wt, head: c.redCommit });
+  assert.match(log.body, /AssertionError/);
+  assert.equal(fs.existsSync(wt), false, 'the worktree is removed');
+  assert.equal(c.git('worktree', 'list', '--porcelain').split('\n').filter(l => l.startsWith('worktree ')).length, 1);
+  assert.equal(c.git('rev-parse', 'HEAD'), c.reviewedSha, 'the work checkout never moved');
+});
+
+test('red: setup_command runs first in the worktree; a failed setup skips the unit command (exit_code null)', t => {
+  const ok = frozenRepo(t, f => { f.suite.setup_command = 'echo setup-ran'; });
+  const rec = record(redRun(ok));
+  assert.equal(rec.setup.exit_code, 0);
+  assert.match(fs.readFileSync(rec.setup.log_path, 'utf8'), /setup-ran/);
+  assert.equal(framed(fs.readFileSync(rec.setup.log_path, 'utf8')).header.target, 'red.setup');
+  assert.equal(rec.exit_code, 1);
+  const bad = frozenRepo(t, f => { f.suite.setup_command = 'exit 3'; });
+  const failed = record(redRun(bad));
+  assert.equal(failed.setup.exit_code, 3);
+  assert.equal(failed.exit_code, null);
+});
+
+test('red: refused without --base or with --base elsewhere; refused when the range is empty, not a descendant, or touches a file outside test_paths', t => {
+  const c = frozenRepo(t);
+  const dir = path.join(c.run, 'test-first');
+  assert.equal(c.runFrozen('red', { sha: c.redCommit, outDir: dir }).status, 2, 'red needs --base');
+  assert.equal(c.runFrozen('suite', { base: c.designCommit, outDir: path.join(c.run, 'x') }).status, 2, '--base is only for red');
+  const cases = [
+    ['the implementation commit (src/hello.js in the range)', { sha: c.reviewedSha }, /outside scope\.test_paths: src\/hello\.js/],
+    ['the design commit itself (an empty range)', { sha: c.designCommit }, /not a proper ancestor|no file/],
+    ['a base that is not an ancestor', { base: c.reviewedSha }, /not a proper ancestor/],
+  ];
+  for (const [name, o, re] of cases) {
+    const r = redRun(c, o);
+    assert.equal(r.status, 1, name + ': ' + r.stderr);
+    assert.match(r.stderr, re, name);
+    assert.equal(fs.existsSync(path.join(dir, 'red.record.json')), false, name + ': no record');
+  }
+  assert.equal(redRun(c).status, 0, 'the real red commit still runs');
+});
+
 // --- script-stub.js ------------------------------------------------------------------------------------------
 test('script-stub runs the gp-exec blocks of a prompt verbatim and replies with their real stdout and exit code (mocked boundary)', t => {
   const c = frozenRepo(t);

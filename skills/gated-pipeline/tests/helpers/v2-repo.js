@@ -255,10 +255,23 @@ function makeRepo(t, opts = {}) {
 
   // ---- build/verify side ----------------------------------------------------------------------------------
   // `executable` lists files committed with mode 100755 (an owned bin/*.sh script).
-  c.implement = (files = IMPL_FILES, executable = []) => {
+  // Test-first (design 6.3): the files under the feature's scope.test_paths are committed first, as the RED commit
+  // (c.redCommit), and the others after it; o.redFiles names the red commit's files instead, o.red === false makes
+  // one commit (c.redCommit null). A red commit is made only when both commits would be nonempty.
+  c.implement = (files = IMPL_FILES, executable = [], o = {}) => {
     for (const [rel, content] of Object.entries(files)) c.write(rel, content);
     for (const rel of executable) fs.chmodSync(path.join(repo, rel), 0o755);
-    c.git('add', '--', ...Object.keys(files));
+    const testPaths = (c.feature && c.feature.scope && c.feature.scope.test_paths) || [];
+    const under = rel => testPaths.some(t => rel === t.replace(/\/$/, '') || rel.startsWith(t.endsWith('/') ? t : t + '/'));
+    const red = o.red === false ? [] : (o.redFiles || Object.keys(files).filter(under));
+    const rest = Object.keys(files).filter(rel => !red.includes(rel));
+    c.redCommit = null;
+    if (red.length && rest.length) {
+      c.git('add', '--', ...red);
+      c.git('commit', '-qm', 'red: focused tests');
+      c.redCommit = c.git('rev-parse', 'HEAD');
+    }
+    c.git('add', '--', ...(c.redCommit ? rest : Object.keys(files)));
     c.git('commit', '-qm', 'implementation');
     c.reviewedSha = c.git('rev-parse', 'HEAD');
     return c.reviewedSha;
@@ -269,6 +282,7 @@ function makeRepo(t, opts = {}) {
     const args = ['--repo', o.repo || repo, '--frozen-dir', o.frozenDir || c.frozenDir, '--manifest-sha256', o.manifestSha || c.manifestSha,
       '--reviewed-sha', o.sha || c.reviewedSha, '--target', target, '--out-dir', o.outDir || c.frozenRuns];
     if (o.patch) args.push('--patch', o.patch);
+    if (o.base) args.push('--base', o.base);
     if (o.ledger !== false && /^(proof|live):/.test(target)) args.push('--ledger', o.ledger || c.ledgerPath);
     return c.node('run-frozen.js', args, { env: o.env ? cleanEnv({ ...o.env }) : env });
   };
@@ -296,13 +310,16 @@ function makeRepo(t, opts = {}) {
 function completeRun(t, opts = {}) {
   const c = makeRepo(t, opts);
   c.freeze(opts.freeze || {});
-  c.implement(opts.implFiles, opts.executable);
+  c.implement(opts.implFiles, opts.executable, opts.redFiles ? { redFiles: opts.redFiles } : {});
   const ok = (r, what) => { assert.equal(r.status, 0, `${what}: ${r.stdout}${r.stderr}`); return r.json(); };
   const preflightPath = path.join(c.run, 'build', 'design-preflight.json');
   fs.mkdirSync(path.dirname(preflightPath), { recursive: true });
   ok(c.design({ out: preflightPath }), 'build preflight');
   const suite = ok(c.runFrozen('suite', { outDir: path.join(c.run, 'build', 'suite') }), 'suite');
   const suiteRecord = JSON.parse(fs.readFileSync(suite.record_path));
+  // The test-first red run (design 6.3/6.4): the frozen unit command at the red commit, in a throwaway worktree.
+  // opts.red === false skips it (a test then writes build.test_first by hand).
+  const red = opts.red === false ? null : ok(c.runFrozen('red', { sha: c.redCommit, base: c.designCommit, outDir: path.join(c.run, 'build', 'test-first') }), 'red');
   const checks = ['CHECK-LINT', 'CHECK-LIVE'].map(id => ({ check_id: id, ...pick(ok(c.runFrozen('check:' + id), id), ['record_path', 'record_sha256']) }));
   ok(c.runFrozen('proof:HELLO-001-AC1'), 'proof');
   ok(c.runFrozen('live:HELLO-001-AC2'), 'live');
@@ -343,6 +360,7 @@ function completeRun(t, opts = {}) {
     security: { verdict: 'PASS', blocking: [] },
     suite: { completed: true, passed: true, failures: [], other_failures: [], log_path: suiteRecord.log_path, log_sha256: suiteRecord.log_sha256, ...state() },
     known_failures_seen: [],
+    test_first: red ? { red_commit: c.redCommit, record_path: red.record_path, record_sha256: red.record_sha256 } : null,
     review_files: [reviewFile('implementation', 1, 'result'), reviewFile('security', 1, 'security')],
     reviewers: [{ step: 'review 1', reviewer: 'codex' }, { step: 'security 1', reviewer: 'codex' }], fallback_used: false,
     files: ['src/hello.js', 'test/hello.test.js', 'test/live.test.js'], deleted: [],

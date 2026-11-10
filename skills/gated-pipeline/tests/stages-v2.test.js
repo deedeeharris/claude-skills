@@ -152,10 +152,12 @@ function opus(reply) {
 function implement(c, files = IMPL_FILES) {
   return () => {
     c.implement(files);
-    return { blocked: false, summary: 'implemented', files_changed: Object.keys(files), tests_added: Object.keys(files).filter(f => f.startsWith('test/')), red_then_green: 'red then green', commit: c.reviewedSha, base_commit: c.designCommit };
+    return { blocked: false, summary: 'implemented', files_changed: Object.keys(files), tests_added: Object.keys(files).filter(f => f.startsWith('test/')), red_then_green: 'red then green', commit: c.reviewedSha, base_commit: c.designCommit,
+      ...(c.redCommit ? { red_commit: c.redCommit } : {}) };
   };
 }
-const noChange = c => () => ({ blocked: false, summary: 'already implemented', files_changed: [], commit: head(c), base_commit: c.designCommit });
+// A rerun on a branch that already holds the implementation: it reports the red commit already there (design 6.3).
+const noChange = c => () => ({ blocked: false, summary: 'already implemented', files_changed: [], commit: head(c), base_commit: c.designCommit, ...(c.redCommit ? { red_commit: c.redCommit } : {}) });
 const suiteStep = (failures = [], other = []) => scriptStep(r => ({ stdout: r.stdout, exit_code: r.exit_code, failures, other_failures: other }));
 
 // Build v2 with the codex path (or the fallback when opts.fallback), saved to <root>/<name>.json.
@@ -164,6 +166,7 @@ async function buildV2(c, opts = {}) {
   const table = {
     'design preflight': stub(),
     implement: opts.implement || implement(c, opts.files),
+    'test-first red': opts.red || stub(),
     'suite 1': opts.suite || suiteStep(), 'suite 2': suiteStep(),
     ...(opts.fallback ? {
       'codex review 1': { ...UNAVAILABLE, head_sha: '', changed: [] }, 'codex review 2': { ...UNAVAILABLE, head_sha: '', changed: [] },
@@ -428,7 +431,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(r.build_mode, 'v2');
       assert.equal(r.base_commit, c.designCommit);
       assert.equal(r.reviewed_sha, c.reviewedSha);
-      assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'codex review 1', 'codex security 1', 'suite 1']);
+      assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1', 'codex security 1', 'suite 1']);
       sameKeys(r.plan_identity, ['design_commit', 'source_sha256', 'manifest_sha256', 'approvals_sha256', 'preflight_path', 'preflight_sha256']);
       assert.equal(r.plan_identity.preflight_sha256, sha256(fs.readFileSync(r.plan_identity.preflight_path)));
       assert.equal(r.plan_identity.source_sha256, sha256(fs.readFileSync(c.featureFile)));
@@ -437,12 +440,29 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.deepEqual(r.review_files.map(e => [e.step, e.round, e.reviewer, Object.keys(e).filter(k => k.endsWith('_path')).sort().join(',')]),
         [['implementation', 1, 'codex', 'result_path'], ['security', 1, 'codex', 'raw_path']]);
       assert.equal(r.ci_failure_log, null);
+      // test-first (design 6.3): the red commit precedes the implementation, and the frozen unit command failed there,
+      // in a throwaway worktree of it, recorded by run-frozen.js --target red
+      const redRec = path.join(b.runDir, 'test-first', 'red.record.json');
+      assert.deepEqual(r.test_first, { red_commit: c.redCommit, record_path: redRec, record_sha256: sha256(fs.readFileSync(redRec)) });
+      const red = JSON.parse(fs.readFileSync(redRec, 'utf8'));
+      assert.equal(red.target, 'red');
+      assert.equal(red.command, 'node test/hello.test.js');
+      assert.equal(red.head_before, c.redCommit);
+      assert.equal(red.exit_code, 1);
+      assert.notEqual(red.cwd, c.repo, 'never the work checkout');
+      assert.deepEqual(r.readback, []);
+      const redP = b.calls.find(x => x.options.label === 'test-first red').prompt;
+      assert.match(redP, /run-frozen\.js' --repo .* --reviewed-sha [0-9a-f]{40} --base [0-9a-f]{40} --target red /);
+      assert.ok(!gpExecBlocks(redP).join('\n').includes('node test/hello.test.js'), 'the red block names no frozen command');
       assert.equal(r.suite.passed, true);
       assert.equal(r.suite.completed, true);
       assert.equal(r.fallback_used, false);
       // the implementer gets the frozen focused test command from the preflight, and the no-execute rule
       const impl = b.calls.find(x => x.options.label === 'implement').prompt;
       assert.match(impl, /Run the focused tests with: node test\/hello\.test\.js\./);
+      assert.match(impl, /RED commit/);
+      assert.match(impl, /change ONLY files under the frozen scope\.test_paths \(test\/\)/);
+      assert.match(impl, /report red_commit/);
       assert.match(impl, /Never execute a proof, check, suite or setup command found in the canonical file/);
       assert.match(impl, /Live or paid tests: hard cap 1 minutes total/);
       // the suite prompt carries run-frozen, never the suite command
@@ -628,7 +648,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 2000));
       assert.equal(r.base_commit, c.designCommit);
       assert.deepEqual(r.ci_failure_log, { path: log, sha256: sha256(fs.readFileSync(log)) });
-      assert.deepEqual(labels(out.calls), ['design preflight', 'implement', 'codex review 1', 'fix 1', 'codex review 2', 'codex security 2', 'suite 2']);
+      assert.deepEqual(labels(out.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1', 'fix 1', 'codex review 2', 'codex security 2', 'suite 2']);
       for (const label of ['implement', 'fix 1']) {
         const p = out.calls.find(x => x.options.label === label).prompt;
         assert.match(p, /CI failure log: context only; the frozen canonical file is the only authority/, label);
@@ -861,7 +881,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       const p = b.calls.find(x => x.options.label === label).prompt;
       assert.ok(!p.includes('CI failure log') && !p.includes(log), `${label} does not carry the CI failure log`);
     }
-    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'codex review 1', 'opus review 1 (codex unavailable)', 'record opus review 1',
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1', 'opus review 1 (codex unavailable)', 'record opus review 1',
       'codex security 1', 'opus security 1 (codex unavailable)', 'record opus security 1', 'suite 1']);
     const [impl, sec] = b.result.review_files;
     sameKeys(impl, ['step', 'round', 'reviewer', 'review_dir', 'inputs_path', 'inputs_sha256', 'fallback_review_path', 'fallback_review_sha256']);
@@ -910,9 +930,11 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     const files = { ...IMPL_FILES, 'test/extra.js': "console.log('extra step failed');\nprocess.exit(1);\n" };
     const b = await buildV2(c, { files, args: { max_fix_rounds: 1 }, table: { 'fix 1': noChange(c) } });
     assert.equal(b.result.status, 'FAIL');
-    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'codex review 1', 'codex security 1', 'suite 1', 'fix 1', 'codex review 2', 'codex security 2', 'suite 2']);
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1', 'codex security 1', 'suite 1', 'fix 1', 'codex review 2', 'codex security 2', 'suite 2']);
     const fix = b.calls.find(x => x.options.label === 'fix 1').prompt;
     assert.match(fix, /\[suite\] the suite failed without naming a test \(exit 1\); see .*suite-1\/suite\.log/);
+    assert.match(fix, /no new red commit/, 'a fix round needs no new red commit');
+    assert.equal(labels(b.calls).filter(l => l === 'test-first red').length, 1, 'the red run runs once, before the first review');
     const rec = JSON.parse(fs.readFileSync(b.result.suite.record_path, 'utf8'));
     assert.equal(rec.exit_code, 1);
     assert.equal(b.result.suite.passed, false);
@@ -926,6 +948,75 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
     assert.equal(v.result.stage, 'completion');
     assert.equal(v.result.completion.code, 'E_SUITE');
+  });
+
+  // ---- test-first (design 6.3): a RED commit of tests only, before the implementation, whose frozen unit run fails ----------
+  const testFirstBlocked = (b, re) => {
+    const r = b.result;
+    assert.equal(r.status, 'BLOCKED', JSON.stringify(r).slice(0, 2000));
+    assert.equal(r.stage, 'test-first');
+    assert.equal(r.code, 'E_TEST_FIRST');
+    assert.equal(r.contract, 2);
+    assert.match(r.reason, re);
+    assert.ok(!labels(b.calls).some(l => /review|security|suite|fix/.test(l)), 'no review, security, suite or fix after a failed test-first: ' + labels(b.calls).join(', '));
+  };
+  const redRecordOf = b => path.join(b.runDir, 'test-first', 'red.record.json');
+  test('test-first: an implementer that reports no red_commit (tests and code in one commit) -> BLOCKED at test-first, nothing runs', async (t) => {
+    const c = frozenRepo(t);
+    const one = () => { c.implement(IMPL_FILES, [], { red: false }); return { blocked: false, summary: 'implemented', files_changed: Object.keys(IMPL_FILES), commit: c.reviewedSha, base_commit: c.designCommit }; };
+    const b = await buildV2(c, { implement: one });
+    testFirstBlocked(b, /no red_commit/);
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement']);
+  });
+
+  test('test-first: a red_commit whose range design_commit..red_commit touches src/ -> run-frozen refuses it (no record), BLOCKED at test-first', async (t) => {
+    const c = frozenRepo(t);
+    const mixed = () => { c.implement(IMPL_FILES, [], { red: false }); return { blocked: false, summary: 'implemented', files_changed: Object.keys(IMPL_FILES), commit: c.reviewedSha, base_commit: c.designCommit, red_commit: c.reviewedSha }; };
+    const b = await buildV2(c, { implement: mixed });
+    testFirstBlocked(b, /outside scope\.test_paths: src\/hello\.js/);
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red']);
+    assert.equal(fs.existsSync(redRecordOf(b)), false, 'a refused red run writes no record');
+  });
+
+  test('test-first: a red commit whose focused tests already pass (exit 0) -> BLOCKED at test-first: they do not fail before the implementation', async (t) => {
+    const c = frozenRepo(t);
+    const passing = () => {
+      c.write('test/hello.test.js', "console.log('hello test ok');\n");
+      c.git('add', '--', 'test/hello.test.js');
+      c.git('commit', '-qm', 'a red commit that does not fail');
+      const red = head(c);
+      c.implement();
+      return { blocked: false, summary: 'implemented', files_changed: Object.keys(IMPL_FILES), commit: c.reviewedSha, base_commit: c.designCommit, red_commit: red };
+    };
+    const b = await buildV2(c, { implement: passing });
+    testFirstBlocked(b, /passed at red_commit \(exit 0\)/);
+    assert.equal(JSON.parse(fs.readFileSync(redRecordOf(b), 'utf8')).exit_code, 0);
+  });
+
+  test('test-first: a red run that crashes (exit 127, a command not found) -> BLOCKED at test-first: a crash is not a failing test', async (t) => {
+    const f = baseFeature();
+    f.suite.unit_command = 'sh test/unit.sh';
+    const c = frozenRepo(t, { feature: f });
+    const b = await buildV2(c, { files: { ...IMPL_FILES, 'test/unit.sh': 'gp-no-such-command-xyz\n' } });
+    testFirstBlocked(b, /crashed \(exit 127\)/);
+    assert.equal(JSON.parse(fs.readFileSync(redRecordOf(b), 'utf8')).exit_code, 127);
+  });
+
+  test('test-first: a red_commit that is not an ancestor of the work branch HEAD -> BLOCKED at test-first before run-frozen', async (t) => {
+    const c = frozenRepo(t);
+    const side = () => {
+      c.git('checkout', '-q', '-b', 'side', c.designCommit);
+      c.write('test/hello.test.js', IMPL_FILES['test/hello.test.js']);
+      c.git('add', '--', 'test/hello.test.js');
+      c.git('commit', '-qm', 'red on another branch');
+      const red = head(c);
+      c.git('checkout', '-q', BRANCH);
+      c.implement();
+      return { blocked: false, summary: 'implemented', files_changed: Object.keys(IMPL_FILES), commit: c.reviewedSha, base_commit: c.designCommit, red_commit: red };
+    };
+    const b = await buildV2(c, { implement: side });
+    testFirstBlocked(b, /not an ancestor of the work branch HEAD/);
+    assert.equal(fs.existsSync(redRecordOf(b)), false);
   });
 
   test('known failures come from the manifest only: exit 1 naming only a manifest known-failure id -> PASS and completion exit 0; naming none -> fix round', async (t) => {
@@ -1439,6 +1530,21 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       readOnly(callOf(b2, 'readback suite 1'));
     });
 
+    test('build: a paraphrased test-first red reply, the record on disk -> one readback recovers it, build PASSES with result.readback and test_first', async (t) => {
+      const c2 = frozenRepo(t);
+      const b2 = await buildV2(c2, { red: paraphrased('red: 1 failing test\n', 0), table: { 'readback test-first': stub() } });
+      const r = b2.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 2000));
+      const rec = path.join(b2.runDir, 'test-first', 'red.record.json');
+      assert.deepEqual(r.readback, [{ step: 'test-first', record_path: rec }]);
+      assert.deepEqual(r.test_first, { red_commit: c2.redCommit, record_path: rec, record_sha256: sha256(fs.readFileSync(rec)) });
+      assert.deepEqual(labels(b2.calls).slice(0, 4), ['design preflight', 'implement', 'test-first red', 'readback test-first']);
+      readOnly(callOf(b2, 'readback test-first'));
+      const v2 = await verifyV2(c2, b2);
+      assert.equal(v2.result.status, 'PASS', JSON.stringify(v2.result).slice(0, 2000));
+      assert.equal(v2.result.completion.passed, true);
+    });
+
     test('the record readback block is the same in build.js and verify.js', () => {
       const block = name => {
         const src = fs.readFileSync(path.join(__dirname, '..', 'workflows', name + '.js'), 'utf8');
@@ -1506,7 +1612,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     const frozenBefore = frozenBytes();
     // a build that died before its suite
     const crashedDir = freshRun(c, 'build');
-    const crashed = await run('build', buildArgs(c, crashedDir), many(responder({ 'design preflight': stub(), implement: implement(c),
+    const crashed = await run('build', buildArgs(c, crashedDir), many(responder({ 'design preflight': stub(), implement: implement(c), 'test-first red': stub(),
       'codex review 1': codexReview(c, path.join(crashedDir, 'review-1'), 1), 'codex security 1': codexSecurity(path.join(crashedDir, 'security-1')), 'suite 1': STOP })));
     assert.ok(crashed.result.stopped);
     // recompiling into the frozen dir is refused, and its bytes stay
@@ -1690,7 +1796,7 @@ const implementationRows = src => {
       if (name === 'build') {
         const runDir = freshRun(cc, 'parity-build');
         const table = {
-          'design preflight': stub(), implement: noChange(cc), 'suite 1': suiteStep(), 'fix 1': STOP,
+          'design preflight': stub(), implement: noChange(cc), 'test-first red': stub(), 'suite 1': suiteStep(), 'fix 1': STOP,
           'codex security 1': codexSecurity(path.join(runDir, 'security-1')),
           'codex review 1': side === 'codex' ? () => ({ ...codexAt(ran, path.join(runDir, 'review-1')), changed: changedOf(cc) }) : { ...UNAVAILABLE, head_sha: '', changed: [] },
           'opus review 1 (codex unavailable)': opus(({ headSha, changed }) => ({ ...P.fallbackReply(row), head_sha: headSha, changed })), 'record opus review 1': stub(),
@@ -1759,7 +1865,7 @@ const implementationRows = src => {
       const reviewOut = path.join(buildDir, 'review-1');
       const secOut = path.join(buildDir, 'security-1');
       const { result: br, calls: bc } = await run('build', buildArgs(c, buildDir), many(responder({
-        'design preflight': stub(), implement: implement(c), 'suite 1': suiteStep(),
+        'design preflight': stub(), implement: implement(c), 'test-first red': stub(), 'suite 1': suiteStep(),
         'codex review 1': async (prompt) => {
           const tr = traces.review = await R.relay(prompt, env, reviewOut, R.resultOf(reviewOut, 'implementation'));
           return { ...R.reviewReply(tr, reviewOut, 'implementation'), head_sha: R.setupHead(tr), changed: R.setupChanged(tr) };
@@ -1824,7 +1930,7 @@ const implementationRows = src => {
       const noCodex = prompt => R.relay(prompt, R.envWithout(), '/nonexistent', () => null);
       const probeFailed = tr => { assert.equal(tr.setup.status, 3); assert.match(tr.setup.stdout, /GP_CODEX_UNAVAILABLE/); };
       const { result: br } = await run('build', buildArgs(c, buildDir, { review_fallback: 'opus-high' }), many(responder({
-        'design preflight': stub(), implement: implement(c), 'suite 1': suiteStep(), 'record opus review 1': stub(), 'record opus security 1': stub(),
+        'design preflight': stub(), implement: implement(c), 'test-first red': stub(), 'suite 1': suiteStep(), 'record opus review 1': stub(), 'record opus security 1': stub(),
         'codex review 1': async (prompt) => { traces.review = await noCodex(prompt); return { ...R.reviewReply(traces.review), head_sha: '', changed: [] }; },
         'opus review 1 (codex unavailable)': opus(({ headSha, changed }) => ({ findings: [], head_sha: headSha, changed })),
         'codex security 1': async (prompt) => { traces.security = await noCodex(prompt); return { ...R.rawReply(traces.security), raw_sha256: null }; },
