@@ -1065,6 +1065,14 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1']);
   });
 
+  test('contract 2 fix prompt forbids deleting, skipping or weakening a test; contract 1 keeps "adjust tests"', async (t) => {
+    const c = frozenRepo(t);
+    const b = await buildV2(c, { findings1: [MAJOR], table: { 'fix 1': () => ({ blocked: false, summary: 'fixed', files_changed: [], commit: head(c), base_commit: c.designCommit }) } });
+    const p = b.calls.find(x => x.options.label === 'fix 1').prompt;
+    assert.match(p, /Never delete, skip or weaken a test, and never edit an existing assertion or expected value to make a test pass/);
+    assert.doesNotMatch(p, /Add or adjust tests/);
+  });
+
   test('scope: a fix that deletes a focused test the previous round reviewed -> BLOCKED at the next review (E_TEST_FIRST), never PASS', async (t) => {
     const c = frozenRepo(t);
     const deleter = () => {

@@ -885,7 +885,8 @@ for (let round = 1; round <= MAX + 1; round++) {
   if (!items.length) items.push(`[suite] the suite failed without naming a test (${suite ? suite.counts : 'no result'}); see ${C2 && suite ? suite.log_path : `${A.run_dir}/suite-${round}.txt`}`)
   const fix = await agent(
     `You are fixing feature ${A.feature_id} on ${A.work_branch} (implemented against ${target}).${chargeText}${ciNote}\n` +
-    `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. Add or adjust tests test-first. ` +
+    `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. ` +
+    (C2 ? 'Add tests test-first. Never delete, skip or weaken a test, and never edit an existing assertion or expected value to make a test pass: a test you believe is wrong stays unchanged and you say why in summary (the build then ends FAIL or BLOCKED for a human). ' : 'Add or adjust tests test-first. ') +
     `${C2 ? 'The RED commit of this build is fixed: make no new red commit, and never amend, rebase or rewrite a commit. ' : ''}Commit and push. ${workReport}\nITEMS:\n${items.join('\n')}\n\nRules:\n- ${RULES}`,
     { label: `fix ${round}`, phase: 'Fix', schema: WORK, effort: IMPL_EFFORT })
   if (!fix || fix.blocked) return disclose({ status: 'BLOCKED', stage: 'fix', round, reason: fix ? fix.blocked_reason : 'fixer died', history })
