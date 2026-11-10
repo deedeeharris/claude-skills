@@ -221,6 +221,48 @@ test('the checkout must be at reviewed_sha and clean before anything runs', t =>
   assert.match(moved.stderr, /not reviewed_sha/);
 });
 
+// The old -> new form of a status line is a rename or copy only (review B2): git quotes a name holding a space, so a
+// file named "tmp -> tmp" is one untracked path, never a rename of tmp into tmp.
+test('a dirty file named "tmp -> tmp" is not clean under clean_ignore tmp/', t => {
+  const f = baseFeature();
+  f.scope.clean_ignore = ['tmp/'];
+  const c = makeRepo(t, { feature: f, pipelineYaml: 'tests:\n  known_failures: []\n  clean_ignore: ["tmp/"]\nstate:\n  paths: []\n' });
+  c.freeze();
+  c.implement();
+  fs.mkdirSync(path.join(c.repo, 'tmp'));
+  fs.writeFileSync(path.join(c.repo, 'tmp', 'scratch'), 'ignored\n');
+  const clean = c.runFrozen('check:CHECK-LINT', { outDir: path.join(c.run, 'clean') });
+  assert.equal(clean.status, 0, clean.stderr);
+  fs.writeFileSync(path.join(c.repo, 'tmp -> tmp'), 'not ignored\n');
+  const dirty = c.runFrozen('check:CHECK-LINT', { outDir: path.join(c.run, 'dirty') });
+  assert.equal(dirty.status, 1);
+  assert.match(dirty.stderr, /not clean/);
+});
+
+// After a timeout the cleanup deadline counts from the SIGTERM, not from the direct child's exit (review B1): a
+// direct child that ignores SIGTERM exits only at the SIGKILL, and an unreaped zombie left in its process group
+// (its parent left the group with setsid and never waits) keeps the group alive until that deadline.
+test('a timed-out run with a zombie in its group ends at limit + grace + 2 s, not grace later', t => {
+  const f = baseFeature();
+  const c = makeRepo(t, { feature: f });
+  const pidFile = path.join(c.root, 'outsider.pid');
+  f.checks[0].command = `trap '' TERM; sh -c 'echo $$ > ${pidFile}; sleep 1000 & exec setsid sleep 30' & wait`;
+  f.checks[0].timeout_min = 1;
+  c.writeFeature(f);
+  c.freeze();
+  c.implement();
+  t.after(() => { try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL'); } catch { /* gone */ } });
+  const grace = 4;
+  const t0 = Date.now();
+  const r = c.runFrozen('check:CHECK-LINT', { env: { GP_RUN_FROZEN_SECONDS_PER_MINUTE: '1', GP_RUN_FROZEN_KILL_GRACE_S: String(grace) } });
+  const wall = (Date.now() - t0) / 1000;
+  assert.equal(r.status, 0, r.stderr);
+  const rec = record(r);
+  assert.equal(rec.timed_out, true);
+  assert.ok(rec.elapsed_s >= 1 + grace - 0.5, `the direct child exits at the SIGKILL: ${rec.elapsed_s}`);
+  assert.ok(wall < 1 + grace + 2 + 1.5, `run-frozen took ${wall} s, more than limit + grace + 2 s`);
+});
+
 const NEGATIVE_PATCHES = {
   rename: 'diff --git a/src/hello.js b/src/greet.js\nsimilarity index 100%\nrename from src/hello.js\nrename to src/greet.js\n',
   delete: "diff --git a/src/hello.js b/src/hello.js\ndeleted file mode 100644\n--- a/src/hello.js\n+++ /dev/null\n@@ -1 +0,0 @@\n-module.exports = () => 'hello';\n",

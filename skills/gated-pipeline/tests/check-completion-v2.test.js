@@ -114,7 +114,7 @@ require(${JSON.stringify(path.join(__dirname, 'check-completion.test.js'))}); co
   console.log(JSON.stringify({ original_tests: names.length, extra_cases: CASES.length - originals.length }));
 });
 
-test('v1: a build result stamped build_mode "charge-only" is rejected (the only v1 addition); c186e5f accepted it', t => {
+test('v1: a build result stamped build_mode "charge-only" is rejected (a documented v1 addition); c186e5f accepted it', t => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gp-v1-charge-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const f = fixture(root);
@@ -127,6 +127,29 @@ test('v1: a build result stamped build_mode "charge-only" is rejected (the only 
   assert.equal(now.status, 1);
   assert.match(now.stderr, /charge-only/);
   assert.equal(fs.existsSync(f.out), false);
+});
+
+test('v1: a build result stamped build_mode "v2" is rejected (a documented v1 addition): a design-gated build certifies only under contract 2; c186e5f accepted it', t => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gp-v1-v2build-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const f = fixture(root);
+  f.build.build_mode = 'v2';
+  f.save();
+  const run = script => spawnSync(process.execPath, [script, ...f.argv()], { encoding: 'utf8', env: cleanEnv() });
+  assert.equal(run(OLD_CHECKER).status, 0, 'the baseline certified a v2 build under contract 1');
+  fs.unlinkSync(f.out);
+  const now = run(CHECKER);
+  assert.equal(now.status, 1);
+  assert.match(now.stderr, /build_mode "v2"/);
+  assert.match(now.stderr, /contract 2/);
+  assert.equal(fs.existsSync(f.out), false);
+  // the stamps v1 builds carry still certify
+  for (const mode of ['v1', undefined]) {
+    const g = fixture(fs.mkdtempSync(path.join(root, 'ok-')));
+    if (mode) g.build.build_mode = mode; else delete g.build.build_mode;
+    g.save();
+    assert.equal(spawnSync(process.execPath, [CHECKER, ...g.argv()], { encoding: 'utf8', env: cleanEnv() }).status, 0, String(mode));
+  }
 });
 
 // ---- helpers for the contract-2 rows -----------------------------------------------------------------------------
@@ -1169,6 +1192,40 @@ test('negative controls: a patch file that changed after the run is rejected', t
   const rec = JSON.parse(fs.readFileSync(negEntry(c).record_path, 'utf8'));
   fs.appendFileSync(rec.mutation_patch_path, '\n');
   blocked(c.completion(), 'E_HASH', /patch/);
+});
+
+// run-frozen records bind the frozen manifest they ran from (review B5)
+test('records: a check, suite, red or negative-control record stamped with another manifest_sha256 is exit 1', t => {
+  const other = 'a'.repeat(64);
+  for (const [name, entry, code] of [
+    ['check', c => c.verify.check_records.find(x => x.check_id === 'CHECK-LINT'), 'E_RECORD'],
+    ['suite', c => c.build.suite_identity, 'E_RECORD'],
+    ['red', c => c.build.test_first, 'E_RECORD'],
+    ['negative', c => negEntry(c), 'E_NEGATIVE_CONTROL'],
+  ]) {
+    const c = completeRun(t);
+    c.editRecord(entry(c), r => { r.manifest_sha256 = other; });
+    blocked(c.completion(), code, /manifest_sha256/);
+  }
+});
+
+// status lines of a record: the old -> new form is a rename or copy only (review B2)
+test('records: a dirty file named "tmp -> tmp" is not read as a rename into clean_ignore; real renames inside it stay clean', t => {
+  const feature = boundFeature(f => { f.scope.clean_ignore = ['tmp/']; });
+  const pipelineYaml = 'tests:\n  known_failures: []\n  clean_ignore: ["tmp/"]\nstate:\n  paths: []\n';
+  for (const [lines, ok] of [
+    [['?? "tmp -> tmp"'], false],
+    [[' M "tmp -> tmp"'], false],
+    [['R  plain -> "tmp -> tmp"'], false],
+    [['R  tmp/a -> tmp/b'], true],
+    [['?? tmp/x', '?? "tmp/a b"'], true],
+    [['R  src/a -> tmp/b'], false],
+  ]) {
+    const c = completeRun(t, { feature, pipelineYaml });
+    c.editRecord(c.verify.check_records.find(x => x.check_id === 'CHECK-LINT'), r => { r.status_before = lines; });
+    if (ok) passed(c.completion());
+    else blocked(c.completion(), 'E_RECORD', /clean|status/);
+  }
 });
 
 test('completion v2: a previous proof from another design is refused; an unchanged one revalidates', t => {

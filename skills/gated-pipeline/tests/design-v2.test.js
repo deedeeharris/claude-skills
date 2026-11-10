@@ -539,6 +539,103 @@ test(`${MOCKED}: L3.10 a checkout on another branch at the same SHA is BLOCKED b
   assert.ok(!fs.existsSync(c.lockFile), 'no lock taken');
 });
 
+// ---- a v1 migration draft never reaches a model: a human resolves its todos (design 8, issue invariant 10) -------
+test(`${MOCKED}: a migrate-v1 draft as seed_feature_path is BLOCKED at start (E_MIGRATION_TODO) before any author or repair call: no run_dir, no lock, no copy`, async t => {
+  const c = fixture(t);
+  const F = path.join(__dirname, 'fixtures', 'v1-migrate', 'exact');
+  const draft = path.join(c.root, 'migrated.feature.json');
+  const m = spawnSync(process.execPath, [path.join(SCRIPTS, 'migrate-v1.js'), '--manifest', path.join(F, 'execution-plan.json'), '--spec', path.join(F, 'spec.md'),
+    '--prd', path.join(F, 'prd.md'), '--feature-id', 'login', '--out', draft], { encoding: 'utf8' });
+  assert.equal(m.status, 0, m.stderr);
+  assert.match(fs.readFileSync(draft, 'utf8'), /MIGRATION-TODO/);
+  const lock = path.join(c.repo, '.git', 'gp-design-login.lock');
+  const { result, labels } = await design(c, c.args({ feature_id: 'login', seed_feature_path: draft }), {});
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.stage, 'start');
+  assert.equal(result.code, 'E_MIGRATION_TODO');
+  assert.match(result.reason, /MIGRATION-TODO/);
+  assert.deepEqual(labels, ['start'], 'no author, repair or review call');
+  assert.ok(!fs.existsSync(c.designRun), 'no run_dir was made');
+  assert.ok(!fs.existsSync(lock), 'no lock');
+  assert.ok(!fs.existsSync(path.join(c.repo, '.pipeline', 'features', 'login.feature.json')), 'the draft was not copied into the repo');
+  assert.equal(tip(c), c.startHead, 'no design commit');
+});
+
+test(`${MOCKED}: a MIGRATION-TODO in the working file is never repaired by the author: a typed todo (E_TYPE first) and an escaped one (E_MIGRATION_TODO) both BLOCK at the snapshot`, async t => {
+  for (const [name, write] of [
+    ['typed', x => { const f = baseFeature(); f.requirements[0].depends_on = 'MIGRATION-TODO'; fs.writeFileSync(x.featureFile, featureBytes(f)); }],
+    ['escaped', x => { const f = baseFeature(); f.product.problem = 'MIGRATION-TODO'; fs.writeFileSync(x.featureFile, featureBytes(f).toString('utf8').replace('"MIGRATION-TODO"', '"MIGRATION\\u002dTODO"')); }],
+  ]) {
+    const c = fixture(t);
+    const { result, labels } = await design(c, c.args({ seed_feature_path: undefined }), {
+      draft: x => { fs.mkdirSync(path.dirname(x.featureFile), { recursive: true }); write(x); },
+      repairs: [() => assert.fail('a repair was asked to fill a migration todo')],
+    });
+    assert.equal(result.status, 'BLOCKED', name);
+    assert.equal(result.code, 'E_MIGRATION_TODO', name + ': ' + JSON.stringify(result).slice(0, 800));
+    assert.deepEqual(labels, ['start', 'draft', 'snapshot 1', 'release lock'], name);
+    assert.ok(!fs.existsSync(c.lockFile), name + ': the lock is released');
+    assert.equal(tip(c), c.startHead, name + ': no design commit');
+  }
+});
+
+// ---- one design lock per feature for every worktree of the repo (design 6.2) -------------------------------------
+test(`${MOCKED}: the design lock lives in the common git dir: a run in a linked worktree takes the lock a main-worktree run holds, and is BLOCKED by it`, async t => {
+  const c = fixture(t);
+  const wt = path.join(c.root, 'wt-b');
+  c.git('worktree', 'add', '-q', '-b', 'feature/greet-b', wt, 'HEAD');
+  // a run from the main worktree that stops after its start block holds the lock
+  const first = await design(c, c.args(), { stop: label => label === 'snapshot 1' });
+  assert.equal(first.result, STOPPED);
+  assert.equal(fs.readFileSync(c.lockFile, 'utf8'), c.designRun + '\n', 'the main-worktree run holds the common lock');
+  const other = path.join(c.root, 'design-run-b');
+  const second = await design(c, c.args({ repo: wt, work_branch: 'feature/greet-b', run_dir: other }), {});
+  assert.equal(second.result.status, 'BLOCKED');
+  assert.equal(second.result.code, 'E_LOCK_HELD');
+  assert.deepEqual(second.labels, ['start']);
+  assert.equal(fs.readFileSync(c.lockFile, 'utf8'), c.designRun + '\n', 'the held lock is untouched');
+  assert.deepEqual(fs.readdirSync(path.join(c.repo, '.git', 'worktrees', 'wt-b')).filter(n => /^gp-design-/.test(n)), [], 'no per-worktree lock');
+  // with the lock gone, the worktree run takes the same common lock and releases it at freeze
+  fs.rmSync(c.lockFile);
+  const third = await design(c, c.args({ repo: wt, work_branch: 'feature/greet-b', run_dir: path.join(c.root, 'design-run-c') }), {
+    reviews: { prd: [[]], spec: [[]] },
+    before: { 'snapshot 1': () => assert.equal(fs.readFileSync(c.lockFile, 'utf8'), path.join(c.root, 'design-run-c') + '\n') },
+  });
+  assert.equal(third.result.status, 'PASS', JSON.stringify(third.result).slice(0, 1500));
+  assert.ok(!fs.existsSync(c.lockFile), 'released');
+});
+
+// ---- the repo and the run_dir by their physical paths (design 6.1) ----------------------------------------------
+test(`${MOCKED}: a repo or source_request_path spelled with .. is BLOCKED with zero calls; a run_dir or request reached through a symlink into the repo is BLOCKED at start, before the lock`, async t => {
+  const c = fixture(t);
+  for (const [over, reason] of [
+    [{ repo: path.join(c.root, 'x') + '/../repo' }, /repo must be a normalized absolute POSIX path/],
+    [{ source_request_path: path.join(c.root, 'x') + '/../req.txt' }, /source_request_path must be a normalized absolute POSIX path/],
+    [{ repo: c.repo + '/./' }, /repo must be a normalized absolute POSIX path/],
+  ]) {
+    const { result, calls } = await run('design', c.args(over), []);
+    assert.equal(result.status, 'BLOCKED', JSON.stringify(over));
+    assert.match(result.reason, reason, JSON.stringify(over));
+    assert.equal(calls.length, 0);
+  }
+  const link = path.join(c.root, 'into-repo');
+  fs.symlinkSync(c.repo, link);
+  const viaLink = await design(c, c.args({ run_dir: path.join(link, 'design-run') }), {});
+  assert.equal(viaLink.result.status, 'BLOCKED');
+  assert.equal(viaLink.result.code, 'E_RUN_DIR');
+  assert.match(viaLink.result.reason, /GP_RUN_DIR_IN_REPO/);
+  assert.deepEqual(viaLink.labels, ['start']);
+  assert.ok(!fs.existsSync(path.join(c.repo, 'design-run')), 'the run_dir made inside the repo is removed again');
+  assert.ok(!fs.existsSync(c.lockFile), 'no lock');
+  const req = path.join(link, 'README.md');
+  const reqLink = await design(c, c.args({ source_request_path: req }), {});
+  assert.equal(reqLink.result.status, 'BLOCKED');
+  assert.equal(reqLink.result.code, 'E_SOURCE_IN_REPO');
+  assert.deepEqual(reqLink.labels, ['start']);
+  assert.ok(!fs.existsSync(c.lockFile), 'no lock');
+  assert.equal(c.git('status', '--porcelain'), '', 'the repo is untouched');
+});
+
 // ---- rev-0 and previous_design (6.2, 6.7) -------------------------------------------------------------------------
 test(`${MOCKED}: rev-0: the start_head blob binds the next revision (an id removed is E_ID_REMOVED); previous_design is rev-0; a second predecessor is BLOCKED`, async t => {
   // a first design, frozen
