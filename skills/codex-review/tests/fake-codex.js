@@ -17,6 +17,9 @@
 // relays' raw `codex exec`) writes a PASS document of that shape (FAKE_CODEX_RAW: JSON to
 // write instead) and is counted apart from review/validate. Every exec call writes its
 // pid to FAKE_CODEX_STATE/<call>-<index>.pid.
+// Scenario "timeout" spawns a detached grandchild and writes its pid to
+// FAKE_CODEX_STATE/timeout-child-pid (the latest) and timeout-child-<call>-<index>.pid;
+// FAKE_CODEX_GRANDCHILD_IGNORE_TERM=1 makes that grandchild ignore SIGTERM.
 // - FAKE_CODEX_TOUCH: a file the review call appends one line to before answering (a review
 //   input that changes while the run is in flight).
 
@@ -132,8 +135,14 @@ function respond({ scenario, call, callIndex, outPath, state }) {
 
   if (scenario === 'timeout') {
     const sleepMs = 60000;
-    const grandchild = require('child_process').spawn(process.execPath, ['-e', `setTimeout(()=>{}, ${sleepMs})`], { detached: true, stdio: 'ignore' });
+    // The grandchild is detached (its own session and process group), so a kill of the
+    // codex process group alone does not reach it. FAKE_CODEX_GRANDCHILD_IGNORE_TERM=1 makes
+    // it ignore SIGTERM, so only SIGKILL stops it.
+    const body = process.env.FAKE_CODEX_GRANDCHILD_IGNORE_TERM === '1'
+      ? `process.on('SIGTERM',()=>{});setTimeout(()=>{}, ${sleepMs})` : `setTimeout(()=>{}, ${sleepMs})`;
+    const grandchild = require('child_process').spawn(process.execPath, ['-e', body], { detached: true, stdio: 'ignore' });
     if (state) fs.writeFileSync(path.join(state, 'timeout-child-pid'), String(grandchild.pid), 'utf8');
+    if (state) fs.writeFileSync(path.join(state, `timeout-child-${call}-${callIndex}.pid`), String(grandchild.pid), 'utf8');
     grandchild.unref();
     setTimeout(() => {}, sleepMs);
     return;

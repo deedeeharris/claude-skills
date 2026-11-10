@@ -27,6 +27,27 @@ function check(label, cond, detail) {
   if (cond) { passCount++; console.log(`  ok - ${label}`); } else { failCount++; console.log(`  FAIL - ${label}${detail ? `: ${detail}` : ''}`); }
 }
 
+// A process counts as alive if it answers kill(pid, 0) and, on Linux, is not a zombie:
+// where PID 1 does not reap orphans (some containers), a killed, reparented grandchild
+// stays a zombie (state Z in /proc/<pid>/stat) that still answers kill(pid, 0).
+function processAlive(pid) {
+  try { process.kill(pid, 0); } catch { return false; }
+  if (process.platform !== 'linux') return true;
+  let stat;
+  try { stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8'); } catch { return false; }
+  return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0] !== 'Z';
+}
+
+function processState(pid) {
+  try { const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8'); return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0]; } catch { return 'gone'; }
+}
+
+// Every grandchild pid the timeout scenario recorded (one per codex attempt).
+function grandchildPids(stateDir) {
+  return fs.readdirSync(stateDir).filter((f) => /^timeout-child-.+\.pid$/.test(f))
+    .map((f) => Number(fs.readFileSync(path.join(stateDir, f), 'utf8')));
+}
+
 function getWorkDir() {
   const idx = process.argv.indexOf('--work-dir');
   if (idx >= 0) return path.resolve(process.argv[idx + 1]);
@@ -205,12 +226,75 @@ function main() {
     const pidFile = path.join(state, 'timeout-child-pid');
     if (fs.existsSync(pidFile)) {
       const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-      let alive = true;
-      try { process.kill(pid, 0); } catch { alive = false; }
-      check('grandchild process no longer alive', !alive);
+      check('grandchild process no longer alive', !processAlive(pid), `pid ${pid} state ${processState(pid)}`);
     } else {
       check('grandchild pid file written', false, 'pid file missing');
     }
+    const pids = grandchildPids(state);
+    check('one detached grandchild per attempt recorded', pids.length === 2, `got ${pids.length}`);
+    const alive = pids.filter(processAlive);
+    check('no attempt leaves its detached grandchild running', pids.length > 0 && alive.length === 0, alive.map((p) => `${p}:${processState(p)}`).join(' '));
+  }
+
+  if (process.platform === 'linux') {
+    console.log('== case 4a: the liveness check treats a zombie as dead, a running process as alive ==');
+    // sh starts a short child it never waits for, then execs a sleep: the child stays a zombie.
+    const zdir = nextDir('zombie');
+    fs.mkdirSync(zdir, { recursive: true });
+    const zfile = path.join(zdir, 'pid');
+    const sh = require('child_process').spawn('sh', ['-c', `sleep 0 & echo $! > '${zfile}'; exec sleep 5`], { stdio: 'ignore' });
+    const nap = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    let zombiePid = 0;
+    for (let i = 0; i < 60 && !(zombiePid && processState(zombiePid) === 'Z'); i++) {
+      nap(50);
+      try { zombiePid = Number(fs.readFileSync(zfile, 'utf8').trim()) || 0; } catch { /* not yet */ }
+    }
+    let kill0 = true; try { process.kill(zombiePid, 0); } catch { kill0 = false; }
+    check('the zombie still answers kill(pid, 0)', zombiePid > 0 && processState(zombiePid) === 'Z' && kill0, `pid ${zombiePid} state ${processState(zombiePid)}`);
+    check('processAlive() says the zombie is dead', zombiePid > 0 && !processAlive(zombiePid));
+    check('processAlive() says a running process is alive', processAlive(sh.pid), `state ${processState(sh.pid)}`);
+    sh.kill('SIGKILL');
+  }
+
+  console.log('== case 4b: timeout SIGKILLs a detached grandchild that ignores SIGTERM ==');
+  {
+    const out = nextDir('out');
+    const state = nextDir('state');
+    fs.mkdirSync(state, { recursive: true });
+    const repo = makeRepo(workDir, `repo-${caseIndex}`);
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hi');
+    const env = gitEnv({
+      PATH: bin + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'timeout', FAKE_CODEX_STATE: state,
+      FAKE_CODEX_GRANDCHILD_IGNORE_TERM: '1',
+    });
+    const r = spawnSync(process.execPath, [RUNNER, '--kind', 'implementation', '--out-dir', out, '--uncommitted', '--repo', repo, '--timeout-seconds', '1'],
+      { encoding: 'utf8', timeout: 40000, env });
+    check('exit 3', r.status === 3, `exit=${r.status} signal=${r.signal}`);
+    const log = readLastLog(out);
+    check('outcome timeout', log && log.outcome === 'timeout');
+    const pids = grandchildPids(state);
+    check('one detached grandchild per attempt recorded', pids.length === 2, `got ${pids.length}`);
+    const alive = pids.filter(processAlive);
+    check('no SIGTERM-ignoring grandchild is left running', pids.length > 0 && alive.length === 0, alive.map((p) => `${p}:${processState(p)}`).join(' '));
+  }
+
+  console.log('== case 4c: SIGTERM to the runner also stops a detached grandchild ==');
+  {
+    const out = nextDir('out');
+    const state = nextDir('state');
+    fs.mkdirSync(state, { recursive: true });
+    const repo = makeRepo(workDir, `repo-${caseIndex}`);
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hi');
+    const env = gitEnv({ PATH: bin + path.delimiter + process.env.PATH, FAKE_CODEX_SCENARIO: 'timeout', FAKE_CODEX_STATE: state });
+    const r = spawnSync(process.execPath, [RUNNER, '--kind', 'implementation', '--out-dir', out, '--uncommitted', '--repo', repo, '--timeout-seconds', '600'],
+      { encoding: 'utf8', timeout: 2500, killSignal: 'SIGTERM', env });
+    check('exit 3 after SIGTERM', r.status === 3, `status=${r.status} signal=${r.signal}`);
+    const log = readLastLog(out);
+    check('outcome interrupted', log && log.outcome === 'interrupted');
+    const pids = grandchildPids(state);
+    check('the detached grandchild was recorded', pids.length === 1, `got ${pids.length}`);
+    const alive = pids.filter(processAlive);
+    check('the detached grandchild is gone after the runner exits', pids.length > 0 && alive.length === 0, alive.map((p) => `${p}:${processState(p)}`).join(' '));
   }
 
   console.log('== case 5/6/7: invalid output shapes ==');
