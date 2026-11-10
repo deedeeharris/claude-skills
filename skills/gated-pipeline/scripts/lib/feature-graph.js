@@ -1,7 +1,7 @@
 'use strict';
 
 // Graph and cross-field rules of the v2 canonical feature file: docs/v2-design.md section 3, tables
-// 4 (G01-G40), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
+// 4 (G01-G41), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
 // { code, rule, path, id, message }; path is a JSON Pointer into the checked file (for P01 the collection in
 // the checked file where the missing id belongs). The functions assume a schema-valid file (validate-feature.js
 // runs them only after schema-lite passed) and never execute or evaluate any string of the file.
@@ -13,7 +13,8 @@
 // - G03 matches the listed segments case-insensitively, only when followed by the end or a non-alphanumeric
 //   character, on every `id`, on `feature_id` and on `title`; `-rev<n>` takes any digits, `-v2` is literal;
 // - G04 compares every pair of requirements (active or retired); G07 reports one diagnostic per cycle, at the
-//   depends_on of the cycle's smallest id; G26 reports once, at /scope/test_paths;
+//   depends_on of the cycle's smallest id; G26 reports once, at /scope/test_paths, and G41 (same path) only
+//   when G26 does not, so an empty test_paths gives one diagnostic;
 // - G38 rejects a `.git` segment anywhere in the features_dir, and a feature_id made only of dots (`.`, `..`:
 //   the schema pattern admits them, but later stages use feature_id as a path segment);
 // - G32 also rejects a `.git` segment (any case) in every scope, owned and evidence path, so no write scope
@@ -107,7 +108,7 @@ const folded = p => segs(p.toLowerCase());
 const overlap = (a, b) => { const x = folded(a), y = folded(b); return isPrefix(x, y) || isPrefix(y, x); }; // case folded
 const inside = (a, b) => isPrefix(segs(b), segs(a)); // a equal to or inside b, exact case
 
-// ---- G01-G40 -------------------------------------------------------------------------------------------
+// ---- G01-G41 -------------------------------------------------------------------------------------------
 
 function checkRepoPath(f, repoPath) {
   const out = [];
@@ -293,6 +294,9 @@ function graphRules(f, { repoPath }) {
     }
   });
   if (isolatedSeen && !f.scope.test_paths.length) out.push(diag('E_NEGATIVE_CONTROL', 'G26', '/scope/test_paths', null, 'an isolated_mutation exists while scope.test_paths is empty'));
+  // G41 contract-2 test-first (design 6.3): the RED commit changes only files under scope.test_paths, so a design with
+  // none could never build; rejected here so it is never frozen. G26 alone reports the isolated_mutation case.
+  else if (!f.scope.test_paths.length) out.push(diag('E_COVERAGE', 'G41', '/scope/test_paths', null, 'scope.test_paths is empty: contract-2 test-first commits the RED commit under it, so it needs at least one entry'));
   // G27-G30 checks, known failures, limits
   f.checks.forEach((c, i) => {
     const p = `/checks/${i}`;

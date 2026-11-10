@@ -97,7 +97,7 @@ requirements[] (minItems 1) {
   }
 }
 scope: { allowed_paths[] (>=1), protected_paths[], state_paths[], clean_ignore[],
-         test_paths[] (>=1 when any isolated_mutation exists) }
+         test_paths[] (>=1: contract-2 test-first, G41; G26 when an isolated_mutation exists) }
 suite: { command (single line), unit_command (single line),
          known_failures[] { test_id, reason }, isolated: bool,
          setup_command (single line) | null, timeout_min: int >= 1, live_budget_min: int >= 0 }
@@ -200,6 +200,7 @@ string from the file (proof commands are data).
    | G38 | `--repo-path` basename/feature_id mismatch, or `features_dir` unsafe or under `.git/` | `E_SCOPE` |
    | G39 | the literal `MIGRATION-TODO` anywhere (section 8) | `E_MIGRATION_TODO` |
    | G40 | a frozen run whose worst case cannot finish inside one foreground Bash call (section 6.4: 570 s, each run counted as its limit + 15 s; `scripts/lib/call-limits.js`): the suite (setup and suite when `setup_command` is set, each `suite.timeout_min`), an applicable check (`budget_min` when > 0, else `timeout_min`), one runtime proof (`proof_timeout_s`, when an active runtime acceptance with `live: false` exists), a negative control (setup when set, baseline and mutated run, each `proof_timeout_s`, capped by `negative_controls_total_min`, when an active `isolated_mutation` exists and one proof fits) | `E_LIMIT` |
+   | G41 | `scope.test_paths` empty while no `isolated_mutation` exists (G26 reports that case): contract-2 test-first commits the RED commit under it (section 6.3), so a design without one could never build and is rejected before it is frozen | `E_COVERAGE` |
 5. `--source-request <file>` (the design stage always passes it, with `--source-mode`, default
    `text`):
 
@@ -490,13 +491,17 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   "failed without naming a test" item).
 - Test-first is a certified property of a `contract: 2` build (the plan's "red log at a commit
   before the implementation", made provable). The implementer commits on `work_branch`, after
-  `design_commit`, first the RED commit: one or more commits that change ONLY files under the
-  frozen `scope.test_paths` (at least one file), adding or changing the focused tests; the
-  implementation commits come after it. It reports `red_commit`, the full id of the last red
+  `design_commit`, first the RED commit: one or more commits whose tree at the last of them
+  differs from the design commit's ONLY in files under the frozen `scope.test_paths` (at least
+  one file), adding or changing the focused tests; the implementation commits come after it.
+  What is certified is that tree difference (`design_commit..red_commit` as one diff), not each
+  commit of the range. It reports `red_commit`, the full id of the last red
   commit (a CI_RED or HEAD_MOVED rerun on a branch that already holds one reports that one and
-  makes none); it never amends, rebases or rewrites a commit. The preflight BLOCKS
+  makes none); it never amends, rebases or rewrites a commit. The validator rejects an empty
+  `test_paths` at design (G41), so such a plan is never frozen; the preflight still BLOCKS
   (`E_TEST_FIRST`) when `test_paths` is empty. After the implementer and before the first
-  review, one `gp-exec` block checks `git merge-base --is-ancestor <red_commit> HEAD` and runs
+  review, one `gp-exec` block checks `git merge-base --is-ancestor <red_commit> HEAD` and that
+  `red_commit` is not HEAD (an implementation commit must follow it, as completion requires) and runs
   `run-frozen.js --target red --reviewed-sha <red_commit> --base <design_commit>` (6.4), which
   runs the manifest's `suite.unit_command` in a throwaway worktree of `red_commit`, never the
   work checkout. The unit command is always the one used: the v2 manifest schema requires
@@ -505,7 +510,8 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   only for a test failure: setup exit 0 when `setup_command` is set, not timed out, and an
   integer `exit_code` that is nonzero, not 124/126/127 and below 128. Anything else is BLOCKED
   at stage `test-first` with code `E_TEST_FIRST` and a reason naming it: no 40-hex
-  `red_commit`, a `red_commit` that is not an ancestor of HEAD, a run-frozen refusal (an empty
+  `red_commit`, a `red_commit` that is not an ancestor of HEAD or is HEAD itself (no
+  implementation commit after it), a run-frozen refusal (an empty
   range, a base that is not a proper ancestor, a file outside `test_paths`), exit 0 ("the
   focused tests passed at red_commit"), a crash, a timeout or a failed setup. It is never a fix
   round: the red commit is history before the implementation, which no fixer may rewrite; a
@@ -668,7 +674,8 @@ All v1 checks, except that runtime evidence comes from the acceptance ledger (be
 - test-first: `build.test_first` is exactly `{ red_commit, record_path, record_sha256 }` with a
   40-hex `red_commit` that resolves; `red_commit` is a proper descendant of `design_commit` and a
   proper ancestor of `reviewed_sha` (the implementation comes after it); `design_commit..red_commit`
-  changes at least one file and only files under `test_paths`; the record hashes as recorded,
+  (the tree difference, `git diff`, not each commit of the range) changes at least one file and
+  only files under `test_paths`; the record hashes as recorded,
   has target `red`, the manifest's `suite.unit_command` as its command, head = `red_commit`
   before and after, a clean worktree, a framed log, a `cwd` outside the work checkout,
   `base_commit` = `design_commit` and `red_paths` equal to git's list, a limit within
@@ -766,13 +773,16 @@ not derive marked with the literal `MIGRATION-TODO` (the validator rejects that 
 manifest and proof commands that differ between them; `unmapped_tests` lists test files named
 by `spec.md` or a manifest command that map to no acceptance; `lost` lists `spec.md`/`prd.md`
 sections with no v2 field; `provenance_missing` is true when there is no `prd.md` or no
-original request. The draft never validates until a human or authorized review fills it;
+original request. `scope.test_paths` is always a todo (`/scope/test_paths/0`), with or without
+an `isolated_mutation`: contract-2 test-first needs at least one test path (G41). The draft
+never validates until a human or authorized review fills it;
 exit 0 means "draft written", never "certified".
 
 ## 9. What stays exactly as it was
 
 Cross-family review with disclosed fallback (`reviewers`, `fallback_used`), foreground relay
-waits, base..reviewed whole-change review in a throwaway worktree, test-first build, security
+waits, base..reviewed whole-change review in a throwaway worktree, test-first build (contract 1;
+contract 2 certifies it, 6.3), security
 pass, suite last on the pinned commit, clean-tree/HEAD pinning, known-failure qualification,
 completion proof revalidated by land with `--previous-proof`, CI handling, human merge.
 
@@ -828,7 +838,8 @@ FAIL and a fix round (stops for a human instead).
   read-only readback (6.4) and disclosed in `readback[]`; the readback is itself relayed, so the
   record it names counts only once completion has re-derived it from disk like any other.
 - Test-first: a script-verified commit order and exit code. Completion proves that a commit
-  touching only `test_paths` sits between the design commit and the reviewed SHA, and that the
+  whose tree differs from the design commit's only under `test_paths` sits between the design
+  commit and the reviewed SHA (the commits inside that range are not checked one by one), and that the
   frozen unit command, run by run-frozen.js in a throwaway worktree of that commit, exited as a
   test failure (nonzero, not a crash code). Which test failed, and whether it fails because the
   acceptance behaviour is missing rather than for an unrelated reason (a test that always

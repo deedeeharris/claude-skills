@@ -604,11 +604,14 @@ async function testFirst(w) {
     `Test-first check of feature ${A.feature_id}: run the focused tests at the red commit ${red} through run-frozen.js. It runs exactly the frozen manifest's unit command ` +
     `(never type a test command yourself) in a throwaway worktree of that commit, never in the work checkout, and writes a framed log and a record. ${EXEC_NOTE}` +
     execBlock(['set -e', `git -C ${q(A.repo)} merge-base --is-ancestor ${red} HEAD || { echo GP_RED_NOT_ANCESTOR; exit 5; }`,
+      `[ "$(git -C ${q(A.repo)} rev-parse HEAD)" != ${red} ] || { echo GP_RED_IS_HEAD; exit 5; }`,
       `node ${SCRIPT('run-frozen.js')} --repo ${q(A.repo)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} --reviewed-sha ${red} --base ${A.design_commit} --target red --out-dir ${q(out)} 2>&1`,
       `tr -d '\\n' < ${q(rec)}; echo`].join('\n')) + `\n- ${RULES}`,
     { label: 'test-first red', phase: 'Red', schema: EXEC, effort: 'low' })
   if (!rep || rep.blocked) return fail('the test-first red step was blocked', rep)
   if (/GP_RED_NOT_ANCESTOR/.test(String(rep.stdout || ''))) return fail(`red_commit ${red} is not an ancestor of the work branch HEAD`, rep)
+  // Completion needs the red commit to be a proper ancestor of the reviewed SHA (design 6.5): the same rule here.
+  if (/GP_RED_IS_HEAD/.test(String(rep.stdout || ''))) return fail(`red_commit ${red} is the work branch HEAD: no implementation commit after it`, rep)
   const lines = jsonLines(rep.stdout)
   let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
   let record = lines.find(o => o.target === 'red' && o.log_path)

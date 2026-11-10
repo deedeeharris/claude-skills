@@ -971,7 +971,16 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
 
   test('test-first: a red_commit whose range design_commit..red_commit touches src/ -> run-frozen refuses it (no record), BLOCKED at test-first', async (t) => {
     const c = frozenRepo(t);
-    const mixed = () => { c.implement(IMPL_FILES, [], { red: false }); return { blocked: false, summary: 'implemented', files_changed: Object.keys(IMPL_FILES), commit: c.reviewedSha, base_commit: c.designCommit, red_commit: c.reviewedSha }; };
+    // One commit holds tests and code; a later implementation commit follows it, so only the red range is wrong.
+    const mixed = () => {
+      c.implement(IMPL_FILES, [], { red: false });
+      const red = c.reviewedSha;
+      c.write('src/extra.js', "module.exports = 1;\n");
+      c.git('add', '--', 'src/extra.js');
+      c.git('commit', '-qm', 'implementation after the mixed commit');
+      c.reviewedSha = head(c);
+      return { blocked: false, summary: 'implemented', files_changed: [...Object.keys(IMPL_FILES), 'src/extra.js'], commit: c.reviewedSha, base_commit: c.designCommit, red_commit: red };
+    };
     const b = await buildV2(c, { implement: mixed });
     testFirstBlocked(b, /outside scope\.test_paths: src\/hello\.js/);
     assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red']);

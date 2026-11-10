@@ -331,8 +331,8 @@ function migrate({ manifest: m, specText, specSha, prdText, requestText }) {
     requirements,
     scope: {
       allowed_paths: [...m.allowed_paths], protected_paths: [...m.protected_paths], state_paths: [...(m.state_paths || [])], clean_ignore: [...(m.clean_ignore || [])],
-      test_paths: requirements.some(q => q.acceptance.some(a => a.negative_control.method === 'isolated_mutation'))
-        ? [todo('/scope/test_paths/0', 'where the tests live (outside every owned path); isolated mutations need at least one')] : [],
+      // contract-2 test-first commits the RED commit under scope.test_paths, so every draft needs one (G41).
+      test_paths: [todo('/scope/test_paths/0', 'where the tests live (outside every owned path); contract-2 test-first commits the RED commit under it, so at least one is needed')],
     },
     suite: {
       command: todo('/suite/command', 'the v1 manifest has no suite: the full suite command (v1 kept it in pipeline.yaml tests.suite_cmd)'),
