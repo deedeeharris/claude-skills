@@ -956,7 +956,7 @@ of what happened at their SHA.
 | 3349d9d, 4333ebc | fixes from the second whole-change review (11.2) |
 | 33c5e9e | from the live runs (11.4): the build scope guard (`E_SCOPE` per review round; `E_TEST_FIRST` for a focused test removed by a fix), validator rule G42 (identical acceptance scenarios, `E_DUP_STATEMENT`), the PRD/spec rubric line on paraphrased duplicates, and the SKILL.md rule "pass configured stage args as written" |
 | 28adfc5 | from the live runs: a contract-2 fixer adds tests only; it never deletes, skips or weakens a test or edits an assertion |
-| 095a70f | the evidence bundle (11.5) |
+| 095a70f and the next commit | the evidence bundle (11.5), added and then removed from the tree by owner decision |
 
 ### 11.2 Second whole-change code review (Opus 5.5 high, two lenses, not cross-family)
 
@@ -1041,14 +1041,23 @@ Two planned paths were not exercised live: the security pass FAILing on a high f
 
 ### 11.5 Evidence bundle and offline replay
 
-`tests/v2-evidence/` holds byte-exact copies of the A3 chain: the design, build and recovery verify-3 run dirs, the
-design and build results, and verify-3's pre-land proof. Verify's own output is restored; land's rewritten proof is
-kept beside it, not restored. 212 files, each listed with its sha256 in `index.json`. `toy-repo.bundle` holds the
-toy repo's `main`, `feat/session-login-r3` and `previous-design/session-login-a2` (b533e04, A3's
-`previous_design`): 5 commits, all by `gp-v2 toy` with an empty email, 0 trailer lines. The older remote branches
-with session trailers are not in the bundle.
+By owner decision, the evidence data is not published in the repository; only the tools are (`redact-scan.js`,
+`redact-patterns.json`, `make-tables.js`, `replay.sh`).
 
-`replay.sh`, run with a private tmpfs over `/srv/gp-v2` (so the live root is untouched), exit 0:
+The bundle was built from byte-exact copies of the A3 chain:
+- the design, build and recovery verify-3 run dirs;
+- the design and build results;
+- verify-3's pre-land proof (land's rewritten proof was kept beside it, not restored).
+
+That is 212 files, each with its sha256 in `index.json`. A git bundle of the toy repo held `main`,
+`feat/session-login-r3` and `previous-design/session-login-a2` (b533e04, A3's `previous_design`): 5 commits, all by
+`gp-v2 toy` with an empty email, 0 trailer lines.
+
+Commit 095a70f added the bundle and the next commit removed it, so it is not in the final tree. Its copy in 095a70f
+is incomplete: the repository's `.gitignore` drops `*.log`, so 86 run logs were never committed. The replay below
+read the complete copy on disk, which is kept with the live runs outside the repository.
+
+`replay.sh`, run against that complete copy with a private tmpfs over `/srv/gp-v2` (so the live root is untouched), exit 0:
 
 ```
 replay approvals: exit 0   {"status":"PASS","mode":"approvals","approvals_sha256":"f12021a0...","rule":"same-revision"}
@@ -1059,15 +1068,23 @@ result: CLEAN
 replay: all steps passed
 ```
 
-Along with that output, the 212 hash lines were `ok` and 211 files were restored. Every validator ran offline from the bundle alone.
+All 212 hash lines were `ok` and 211 files were restored. Every validator ran offline from the bundle alone.
 
 ### 11.6 Level 0 at the final code
 
 | Suite | Result |
 |---|---|
-| gated-pipeline, all files (`node --test skills/gated-pipeline/tests/*.test.js`) at 095a70f | 832 tests, 832 pass, 0 fail, exit 0 |
+| gated-pipeline, all files (`node --test skills/gated-pipeline/tests/*.test.js`) at the final commit | 833 tests, 833 pass, 0 fail, exit 0 (832 plus the #46 regression test) |
 | codex-review fake runner (`node skills/codex-review/tests/run-fake-tests.js`) | 214 passed, 0 failed, exit 0 |
 
 Validator rule set: G01-G42, R01-R04, P01-P02. The validator still reports `validator_version` 1.1.0: G42 adds a
 rejection without changing any existing output, so the existing A3 and earlier frozen designs revalidate unchanged
 (the replay in 11.5 runs at this code).
+
+### 11.7 Folded in: PR #46
+
+The contract-1 compliance task said "Do not execute commands". Under `codex exec -s read-only` the only way to read a
+file is a command, so the trace read nothing and returned FAIL with no requirements. It now says to inspect files
+only with read-only commands and never run tests, builds or anything that writes. The regression test from #46 is
+in `workflows.test.js`; it fails without the fix (39/1) and passes with it (40/40). The contract-2 task already
+allowed reading.

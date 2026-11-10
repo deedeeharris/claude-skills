@@ -522,3 +522,13 @@ test('unsafe security config returns BLOCKED before any agent runs', async () =>
     assert.equal(calls.length, 0, name);
   }
 });
+
+// From PR #46: under `codex exec -s read-only` the only way to read a file is a command, so "Do not execute commands"
+// made the v1 compliance trace read nothing and FAIL with no requirements. It may inspect, never run or write.
+test('the compliance trace may read files with read-only commands but never run tests or builds', async () => {
+  const { calls } = await run('verify', verifyArgs, [preflight, proofs, { ...finalReview, codex_available: true }, { ...compliance, codex_available: true }, gate]);
+  const relay = calls.find(c => c.options.label === 'codex spec compliance');
+  assert.ok(relay.prompt.includes('Inspect files only with read-only commands (cat, sed, grep, ls, git diff, git show, git log)'));
+  assert.ok(relay.prompt.includes('never run tests, builds or anything that writes'));
+  assert.ok(!relay.prompt.includes('Do not execute commands'));
+});

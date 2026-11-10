@@ -1,9 +1,0 @@
-{
-  "inputs": [
-    {
-      "role": "files",
-      "path": "/srv/gp-v2/state/session-login/a3/g/verify-3/final-review-opus/change.patch",
-      "sha256": "6264e630b0dcae42b7601fa2427fcc8bf16d619289d3b070c46c91cc31e5a711"
-    }
-  ]
-}
