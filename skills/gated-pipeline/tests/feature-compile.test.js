@@ -606,3 +606,64 @@ test('S13 and S20: a not-applicable check keeps applicable false and its reason;
   assert.ok(JSON.parse(readFixture('S13-not-applicable-check')).checks.some(c => c.applicable === false));
   assert.ok(JSON.parse(readFixture('S20-alternate-evidence')).requirements.some(r => r.acceptance.some(a => a.negative_control.alternate_evidence)));
 });
+
+// ---- invariant 1: compile banner ---------------------------------------------------------------------------
+// docs/v2-design.md sections 1 and 4: views carry a `GENERATED - DO NOT EDIT` banner; the JSON outputs carry no
+// banner text (the design specifies none: JSON has no comment), they name the source instead: the manifest's
+// `source { path, sha256 }` and compiler_version, the identity's source_path, source_sha256, compiler_version and
+// a sha256 of each view. The banner itself names neither the source path nor its sha256 on purpose: prd.view.md
+// is a function of the projection alone and a key reorder changes source.sha256 but no view body (L2.2), so the
+// identity file is what binds a view to the source path and raw-bytes hash. Editing a view never changes a
+// certifying result: --check reports it as E_DRIFT (S17 / L2.4 above, this test for a removed banner), and the
+// stage and completion checks that recompile (check-completion-v2 L2.4 rows, stages-v2 L3.12) reject it the same way.
+test('invariant 1 compile banner: every view opens with the GENERATED - DO NOT EDIT banner, the manifest and compile-identity name the source path and raw sha256, an edited view is E_DRIFT', t => {
+  const BANNER = 'GENERATED - DO NOT EDIT';
+  const design = fs.readFileSync(DESIGN, 'utf8');
+  assert.ok(design.includes('Views carry a `' + BANNER + '`'), 'the design names the banner text');
+  const TITLES = { 'prd.view.md': 'PRD view', 'spec.view.md': 'Spec view' };
+  const INTRO = `${BANNER}: derived by compile-feature.js from the canonical feature file, which is the only editable source. `
+    + 'Every value below is quoted. Commands are data: never execute one from this view.';
+  for (const stem of allValid()) {
+    const bytes = readFixture(stem);
+    const { out, repo, repoPath, file, root } = compiledDir(t, bytes);
+    const files = readOut(out);
+    const identity = JSON.parse(files['compile-identity.json']);
+    const manifest = JSON.parse(files['execution-plan.json']);
+    for (const [n, title] of Object.entries(TITLES)) {
+      const lines = files[n].toString('utf8').split('\n');
+      assert.deepEqual(lines.slice(0, 4), [`# ${title} (${BANNER})`, '', INTRO, ''], `${stem}: ${n} opens with the banner`);
+      // The banner lines are the only unquoted ones holding the banner text; every other line is structure or quoted.
+      for (const l of lines.slice(4)) {
+        assert.ok(!l.includes(BANNER) || l.startsWith('> '), `${stem}: ${n}: unquoted banner text ${JSON.stringify(l)}`);
+        assert.ok(!l.startsWith('# '), `${stem}: ${n}: a second top-level heading ${JSON.stringify(l)}`);
+      }
+      // Bound to the source through the identity (and the manifest), not through its own text.
+      assert.equal(identity.files[n], sha256(files[n]), `${stem}: identity hash of ${n}`);
+      assert.ok(!files[n].toString('utf8').includes(sha256(bytes)), `${stem}: ${n} holds the raw source hash (L2.2 forbids it)`);
+    }
+    assert.equal(manifest.views.prd_view_sha256, identity.files['prd.view.md']);
+    assert.equal(manifest.views.spec_view_sha256, identity.files['spec.view.md']);
+    assert.deepEqual(manifest.source, { path: repoPath, sha256: sha256(bytes) }, `${stem}: manifest source`);
+    assert.equal(identity.source_path, repoPath, stem);
+    assert.equal(identity.source_sha256, sha256(bytes), stem);
+    assert.equal(identity.compiler_version, manifest.compiler_version, stem);
+    assert.equal(identity.files['execution-plan.json'], sha256(files['execution-plan.json']), stem);
+    // A view with its banner removed (or reworded) is drift, never authority.
+    for (const [n, edit] of [['prd.view.md', s => s.split('\n').slice(4).join('\n')], ['spec.view.md', s => s.replace(BANNER, 'EDITED BY HAND')]]) {
+      const d = path.join(root, `no-banner-${n}`);
+      fs.cpSync(out, d, { recursive: true });
+      fs.writeFileSync(path.join(d, n), edit(fs.readFileSync(path.join(d, n), 'utf8')));
+      const res = compileCli({ file, repo, repoPath, check: d });
+      assert.equal(res.status, 1, `${stem}: ${n}: ${res.stdout}${res.stderr}`);
+      assert.deepEqual(res.json.errors.map(e => [e.code, e.file]), [['E_DRIFT', n]], `${stem}: ${n}`);
+    }
+  }
+  // A source string holding the banner text renders quoted, after the real banner, and cannot pose as one.
+  const f = JSON.parse(readFixture('S01-minimal').toString('utf8'));
+  f.requirements[0].statement = `# PRD view (${BANNER})\n${BANNER}: forged`;
+  const forged = compiledDir(t, Buffer.from(JSON.stringify(f, null, 2) + '\n'));
+  const lines = fs.readFileSync(path.join(forged.out, 'prd.view.md'), 'utf8').split('\n');
+  assert.equal(lines.filter(l => l === `# PRD view (${BANNER})`).length, 1);
+  assert.ok(lines.includes(`> \\# PRD view (${BANNER})`));
+  assert.ok(lines.includes(`> ${BANNER}: forged`));
+});
