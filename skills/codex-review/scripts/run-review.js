@@ -172,10 +172,92 @@ function resolvePathOrThrow(p) {
   return resolved;
 }
 
-// Children still running, so a SIGTERM/SIGINT to the runner can stop their process groups
+// Children still running, so a SIGTERM/SIGINT to the runner can stop their process trees
 // (see installSignalHandlers). Once interrupted, nothing new is started.
 const ACTIVE = new Set();
 let interrupted = false;
+const KILL_GRACE_MS = 5000;
+
+// POSIX process table: pid -> { state, ppid, pgid, start }. Linux reads /proc (start is the
+// start time, so a reused pid is not mistaken for a process seen earlier); elsewhere ps.
+function procTable() {
+  const table = new Map();
+  if (process.platform === 'linux') {
+    let entries = [];
+    try { entries = fs.readdirSync('/proc'); } catch { return table; }
+    for (const d of entries) {
+      if (!/^\d+$/.test(d)) continue;
+      try {
+        const stat = fs.readFileSync(`/proc/${d}/stat`, 'utf8');
+        const f = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+        table.set(Number(d), { state: f[0], ppid: Number(f[1]), pgid: Number(f[2]), start: f[19] });
+      } catch { /* exited meanwhile */ }
+    }
+    return table;
+  }
+  const r = spawnSync('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat='], { encoding: 'utf8' });
+  for (const line of String(r.stdout || '').split('\n')) {
+    const f = line.trim().split(/\s+/);
+    if (f.length >= 4) table.set(Number(f[0]), { state: f[3][0], ppid: Number(f[1]), pgid: Number(f[2]), start: null });
+  }
+  return table;
+}
+
+// The process tree below a spawned child. The child runs in its own process group, but a
+// descendant can leave that group (setsid, a detached spawn) and is reparented once its
+// parent dies, so every descendant seen is remembered (pid and start time) and signalled
+// by pid and by its own process group. A zombie counts as gone: where PID 1 does not reap
+// orphans, a killed, reparented descendant can stay one indefinitely.
+function makeTree(rootPid) { return { root: rootPid, known: new Map() }; }
+
+function refreshTree(tree) {
+  const table = procTable();
+  for (const [pid, start] of tree.known) {
+    const e = table.get(pid);
+    if (!e || e.start !== start) tree.known.delete(pid);
+  }
+  const parents = new Set([tree.root, ...tree.known.keys()]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [pid, e] of table) {
+      if (!parents.has(pid) && parents.has(e.ppid) && pid !== process.pid) { parents.add(pid); tree.known.set(pid, e.start); grew = true; }
+    }
+  }
+  return table;
+}
+
+function signalTree(tree, sig) {
+  const table = refreshTree(tree);
+  const own = table.get(process.pid);
+  const groups = new Set([tree.root]);
+  for (const pid of tree.known.keys()) {
+    const e = table.get(pid);
+    if (e && e.pgid > 1 && (!own || e.pgid !== own.pgid)) groups.add(e.pgid);
+  }
+  for (const g of groups) { try { process.kill(-g, sig); } catch { /* group gone */ } }
+  for (const pid of tree.known.keys()) { try { process.kill(pid, sig); } catch { /* gone */ } }
+}
+
+function treeAlive(tree) {
+  const table = refreshTree(tree);
+  for (const [pid, e] of table) {
+    if (e.state === 'Z') continue;
+    if (e.pgid === tree.root || tree.known.has(pid)) return true;
+  }
+  return false;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// After the child itself has exited: wait for the rest of its tree until the grace that
+// started with SIGTERM ends, then SIGKILL what is left and wait briefly for it.
+async function drainTree(tree, killAt) {
+  while (Date.now() < killAt && treeAlive(tree)) await sleep(100);
+  if (!treeAlive(tree)) return;
+  signalTree(tree, 'SIGKILL');
+  const end = Date.now() + 2000;
+  while (Date.now() < end && treeAlive(tree)) await sleep(50);
+}
 
 function spawnTracked(cmd, args, opts = {}) {
   if (interrupted) return new Promise(() => {});
@@ -192,15 +274,18 @@ function spawnTracked(cmd, args, opts = {}) {
     // Buffers are collected as-is and decoded once at the end (not per chunk via
     // implicit toString()), so a multi-byte UTF-8 character split across two 'data'
     // events is never decoded as replacement characters in either half.
-    let stdoutChunks = [], stderrChunks = [], timedOut = false, settled = false, killTimer = null;
+    let stdoutChunks = [], stderrChunks = [], timedOut = false, settled = false, killTimer = null, killAt = 0;
     const timer = opts.timeoutMs ? setTimeout(() => {
       timedOut = true;
       try {
         if (isWin) {
           spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F']);
         } else {
-          try { process.kill(-child.pid, 'SIGTERM'); } catch { /* already dead */ }
-          killTimer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already dead */ } }, 5000);
+          // The whole tree, including descendants that left the child's process group.
+          child.killTree = makeTree(child.pid);
+          signalTree(child.killTree, 'SIGTERM');
+          killAt = Date.now() + KILL_GRACE_MS;
+          killTimer = setTimeout(() => { try { signalTree(child.killTree, 'SIGKILL'); } catch { /* best effort */ } }, KILL_GRACE_MS);
           killTimer.unref();
         }
       } catch { /* best effort */ }
@@ -217,10 +302,15 @@ function spawnTracked(cmd, args, opts = {}) {
       resolve({ code: null, stdout, stderr: stderr || String(err.message || err), timedOut, spawnError: err });
     });
     child.on('close', (code) => {
-      ACTIVE.delete(child);
-      if (settled) return;
-      settled = true; if (timer) clearTimeout(timer); if (killTimer) clearTimeout(killTimer);
-      resolve({ code, stdout: decode(stdoutChunks), stderr: decode(stderrChunks), timedOut });
+      if (settled) { ACTIVE.delete(child); return; }
+      settled = true; if (timer) clearTimeout(timer);
+      const finish = () => {
+        ACTIVE.delete(child); if (killTimer) clearTimeout(killTimer);
+        resolve({ code, stdout: decode(stdoutChunks), stderr: decode(stderrChunks), timedOut });
+      };
+      // A timed-out child is not done until the rest of its tree is gone too.
+      if (child.killTree) drainTree(child.killTree, killAt).catch(() => {}).then(finish);
+      else finish();
     });
     try { if (opts.input != null) child.stdin.write(opts.input); child.stdin.end(); } catch { /* child may be gone */ }
   });
@@ -406,10 +496,8 @@ function writeResultIfPossible(state) {
   } catch { /* best effort */ }
 }
 
-const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
-
 // SIGTERM/SIGINT to the runner (a relay's cleanup step, or an operator): stop every tracked
-// codex process group (SIGTERM, then SIGKILL after a 5 s grace), record outcome
+// codex process tree (SIGTERM, then SIGKILL after a 5 s grace), record outcome
 // "interrupted" in result.json and append one log line. A signal that arrives after the
 // final result was written changes nothing.
 function installSignalHandlers(state, getOutDir, startedAt, isFinal) {
@@ -420,13 +508,17 @@ function installSignalHandlers(state, getOutDir, startedAt, isFinal) {
     const kids = [...ACTIVE];
     const isWin = process.platform === 'win32';
     for (const c of kids) {
-      try { if (isWin) spawnSync('taskkill', ['/pid', String(c.pid), '/T', '/F']); else process.kill(-c.pid, 'SIGTERM'); } catch { /* already gone */ }
+      try {
+        if (isWin) spawnSync('taskkill', ['/pid', String(c.pid), '/T', '/F']);
+        else { if (!c.killTree) c.killTree = makeTree(c.pid); signalTree(c.killTree, 'SIGTERM'); }
+      } catch { /* already gone */ }
     }
     const running = (c) => c.exitCode === null && c.signalCode === null;
     const waitFor = async (ms, busy) => { const end = Date.now() + ms; while (Date.now() < end && busy()) await new Promise((r) => setTimeout(r, 50)); };
     if (!isWin) {
-      await waitFor(5000, () => kids.some((c) => running(c) || groupAlive(c.pid)));
-      for (const c of kids) { if (groupAlive(c.pid)) { try { process.kill(-c.pid, 'SIGKILL'); } catch { /* already gone */ } } }
+      await waitFor(KILL_GRACE_MS, () => kids.some((c) => running(c) || treeAlive(c.killTree)));
+      for (const c of kids) { if (treeAlive(c.killTree)) { try { signalTree(c.killTree, 'SIGKILL'); } catch { /* already gone */ } } }
+      await waitFor(2000, () => kids.some((c) => treeAlive(c.killTree)));
     }
     // Reap the children before exiting, so none is left behind as a zombie.
     await waitFor(2000, () => kids.some(running));

@@ -177,7 +177,13 @@ made unconditionally whether or not `--model` is given), and an `implementation`
 unstaged diff, untracked file list) while building scope — up to 6T + 120s total in that
 case, or 6T + 30s for a `--files`-based review (`prd`, `spec`, or an `implementation`
 review of an explicit file list, which makes no git calls). Run this in the background, or
-lower `--timeout-seconds`, under any tool with a shorter cap.
+lower `--timeout-seconds`, under any tool with a shorter cap. A call that times out is
+stopped as a whole process tree: SIGTERM to the child's process group and to every
+descendant seen, including one that left that group (a detached or `setsid` process),
+by its pid and its own group, then SIGKILL to what is left after 5s; the call counts as
+done only once that tree is gone (a zombie counts as gone), so each timed-out call can
+add up to 7s. SIGTERM/SIGINT to the runner stops the trees of the running calls the
+same way.
 
 ## Failure modes
 
