@@ -5,8 +5,12 @@ Every real review in this round is the Opus fallback, labelled `claude-opus-high
 CLI is not installed and no OpenAI credential is configured (user decision "Opus fallback only"). There is no
 cross-family review anywhere in this report.
 
-**Issue #54 stays open.** Release rules 1, 3 and 4 are not met; rule 2 is not met while the pre-existing
-codex-review fake-runner case 4 fails (section 9).
+**Phase 2 (section 11) closes #54 under two owner decisions.** Opus 5.5 at high effort counts in place of Codex
+for every required review, labelled not cross-family, and the real PR/CI step is waived, so land runs up to the
+PR step. Under those decisions every release rule is met (section 9): the A3 chain certified with a completion
+proof, the failure-injection, resume and migration scenarios ran live, the pre-existing fake-runner case 4 is
+fixed (214/0), and the evidence bundle replays offline. Sections 1-10 are the phase-1 record; rows that section 11
+supersedes say so there.
 
 ## 1. Identity and commands
 
@@ -797,20 +801,20 @@ invalid at `S` (suite `timeout_min` 10); they were valid at their pinned SHA 62a
 
 | Item | Status | Blocker / note |
 |---|---|---|
-| Level 4b real Codex reviews | NOT RUN | Codex not installed, no OpenAI key; user decision. Every review is the Opus fallback |
-| cross-family code review | NOT RUN | only Opus reviewed the change (section 5.2) |
-| Level 4c PR/CI on a disposable remote | NOT RUN | session cannot create GitHub repos; toy `origin` is a local bare repo, land stops at the PR step |
-| E2E-H, E2E-G (live), E2E-D, E2E-C2, E2E-F2 | NOT RUN | time (4-CPU host, 2 agents at a time; each needs one or more full build/verify cycles of 30-60 min, or chained design runs) |
-| E2E-E2 beyond the A2 scope change | NOT RUN | a proof-command trigger, land on rev B and rev A's proof failing `--previous-proof` were not shown (section 6.7) |
-| E2E-A2 certification (verify completion, land, proof, PR) | BLOCKED | verify r5 completion `E_NEGATIVE_CONTROL`: LOGIN-007-AC1 and LOGIN-007-AC2 mutated proofs timed out; a redesign of those controls and a new build/verify cycle are NOT RUN (time); land NOT RUN (no proof) |
-| E2E-E e5 land refusal at completion | NOT RUN | no completion proof exists to land |
+| Level 4b real Codex reviews | NOT RUN (owner decision) | Opus 5.5 high counts in its place, labelled not cross-family (11.0) |
+| cross-family code review | NOT RUN (owner decision) | two Opus 5.5 high whole-change reviews (5.2, 11.2), not cross-family |
+| Level 4c PR/CI on a disposable remote | NOT RUN (owner waiver) | land runs up to the PR step (A3, E2, H3 recovery: completion passed, stopped at `pr`) |
+| E2E-H, E2E-G (live), E2E-D, E2E-C2, E2E-F2 | superseded: run in phase 2 (11.3) | H red CI NOT RUN (owner waiver, L3.8 mocked) |
+| E2E-E2 beyond the A2 scope change | superseded: PASS (11.3, rev D) | |
+| E2E-A2 certification (verify completion, land, proof, PR) | superseded by E2E-A3: PASS (11.3) | A3 redesigned the two controls with bounded proof commands; completion proof issued; land stopped at the PR step |
+| E2E-E e5 land refusal at completion | superseded: PASS as e6 (11.3) | |
 | E2E-F mutation-text judgement | NOT RUN for 25 of 28 controls | 3 judged (all match), section 6.5 |
-| E2E-A2 test-first sub-row | FAIL | the red log names no commit and no commit before the implementation holds the failing tests (section 6.2) |
-| 5.1 novice agent, 5.2 POSIX path matrix, 5.3 Windows, 5.5 metrics study | NOT RUN | 5.1 not run; 5.2 no dedicated test; 5.3 no Windows host; 5.5 cost (supplementary metrics in 5.4) |
+| E2E-A2 test-first sub-row | superseded: PASS on A3 (11.3) | test-first is certified since 25717a3 |
+| 5.1 novice agent, 5.2 POSIX path matrix, 5.3 Windows, 5.5 metrics study | 5.1 PASS (N2, 11.3); 5.2 PASS (close-out); 5.3 NOT RUN; 5.5 NOT RUN | 5.3 no Windows host; 5.5 cost (supplementary metrics in 5.4) |
 | plan 3.4 differential prompt grep as specified | NOT RUN | a journal-based substitute ran (section 5.3, PASS) |
 | agent-call ceilings (2 x mocked count) | NOT RUN | not derived; observed counts and wall times are in 2.3; every run stayed within its fixed minute ceiling |
-| evidence bundle (`tests/v2-evidence/index.json`, toy `git bundle`) and `replay.sh` output | NOT RUN | depends on a completed E2E-A chain; the chain stopped at verify completion (section 6.4) |
-| codex-review fake runner case 4 | FAIL | pre-existing at c186e5f; deterministic (2/2 reruns); not relabelled |
+| evidence bundle (`tests/v2-evidence/index.json`, toy `git bundle`) and `replay.sh` output | superseded: PASS (11.5) | |
+| codex-review fake runner case 4 | superseded: fixed in cd59672 (214 passed, 0 failed) | a real bug: the timeout killed only the child's process group |
 | network access and cost of a live check | not enforced by any script | only measured wall time is (design 10); ceilings are environment-level |
 | contract 1 build/verify review relays | attested | unchanged by design |
 | failing test ids behind a nonzero suite exit | attested | the exit code is bound to the run-frozen record; the ids are model-parsed from the log (design 10) |
@@ -818,7 +822,7 @@ invalid at `S` (suite `timeout_min` 10); they were valid at their pinned SHA 62a
 | relay-reported exit codes | attested, observed wrong | E2E-E e1-e3 relays reported 0 for a command that exits 1; the stages did not rely on them alone (section 6.6) |
 | the smoke harness | attested | its first drift call passed one clone's `spec_path` to every case (section 6.6); the harness is not part of the skill |
 
-Closure blockers for #54: release rules 1, 2, 3, 4 (section 9). Issue #54 stays open.
+Phase 1 closure blockers (rules 1-4) are resolved in phase 2 under the owner decisions (11.0, section 9). Remaining NOT RUN rows: 4b, 4c, cross-family review (owner decisions), 5.3 Windows, 5.5 metrics, E2E-H red CI.
 
 ## 9. Mapping tables
 
@@ -827,7 +831,7 @@ Closure blockers for #54: release rules 1, 2, 3, 4 (section 9). Issue #54 stays 
 | DoD item | Evidence | Status |
 |---|---|---|
 | One authoritative file | design-v2: Opus and codex happy paths write one canonical file, design commit holds only it | PASS |
-| | 5.1 novice agent | NOT RUN |
+| | 5.1 novice agent (N2, 11.3) | PASS |
 | | 5.5 metric `authoritative_files` on A r1, A r2, B (supplementary) | PASS |
 | Complete deterministic contract | S03-S14, S17-S20, X01-X07 | PASS |
 | | L3.1 (plus live corroboration in E2E-C rev-2) | PASS |
@@ -835,43 +839,43 @@ Closure blockers for #54: release rules 1, 2, 3, 4 (section 9). Issue #54 stays 
 | Review completeness | L3.3 (PRD `--against`, spec inputs, approvals binding) | PASS |
 | | E2E-B omission (62a0712) | PASS |
 | | S15 live = E2E-C (62a0712) | PASS |
-| | S16-semantic (E2E-C2) | NOT RUN |
+| | S16-semantic: E2E-C2 FAIL, fixed by G42 and the rubric; E2E-C2b (11.3) | PASS |
 | No patch accumulation | X01, X02 | PASS |
-| | E2E-D | NOT RUN |
+| | E2E-D chained runs 1-3 (11.3) | PASS |
 | Frozen check behavior | S18; L3.6; L3.7 | PASS |
 | Safe negative controls | L3.13 | PASS |
 | | E2E-F (A2 verify r5): 26 of 28 records conclusive, patches bound, checkout pinned, 3 mutation texts judged | PASS |
 | | L3.13 on live artifacts (labelled): completion rejected the 2 timed-out controls | PASS |
-| | E2E-F2 | NOT RUN |
+| | E2E-F2 (11.3) | PASS |
 | Identity protection | S17, S19a, S19b | PASS |
 | | L2.5 (mocked) | PASS |
 | | L2.5 live column, part shown by A2 (`previous_design`, `--previous` exit 0, rev B hashes in build and verify) | PASS |
-| | L2.5 live column, rest (land on rev B, rev A proof fails `--previous-proof`) | NOT RUN |
+| | L2.5 live column, rest: E2E-E2 rev D (11.3) | PASS |
 | | E2E-E e1, e2, e3, e4 and the e5 verify half (at `S`) | PASS |
-| | E2E-E e5 land refusal | NOT RUN |
+| | E2E-E e6 land refusal (11.3) | PASS |
 | Regression safety | Level 0 gated-pipeline 790/790, section-0 diff limited to the listed hunks | PASS |
 | | 1a decision (b): `fallback-parity.test.js` 91/91 | PASS |
-| | codex-review fake runner (case 4, pre-existing) | FAIL |
+| | codex-review fake runner: 214 passed, 0 failed after cd59672 (11.1) | PASS |
 | Backwards compatibility | WP3 differential: `v1 differential: 99 cases give byte-identical stdout ... under c186e5f and now` | PASS |
-| | E2E-G | NOT RUN |
+| | E2E-G (11.3) | PASS |
 | | 5.4 migrate-v1 | PASS |
 | Public example safety | redaction scan 1 and 2 (section 10) | PASS |
 | | planted-string test `redact-scan.test.js` 5/5 | PASS |
-| | scan 3 over the toy repo bundle | NOT RUN (no bundle: the A chain did not complete) |
+| | scan 3 over the toy repo bundle (11.5) | PASS |
 
 ### Invariants
 
 | # | Design section | Enforced / tested by | Status |
 |---|---|---|---|
 | 1 authoritative state | 1 | design-v2 one-file tests | PASS |
-| | | compile banner test: no test of that name found | NOT RUN |
+| | | compile banner test (close-out additions) | PASS |
 | 2 format | 1, 2 | feature-validate 152/152, schema-lite-conformance 4/4 | PASS |
 | 3 stable IDs | 3.6, 6.2, 7 | X01; L3.3; L3.11; design-v2 rev-0 test | PASS |
 | | | E2E-B `--previous` held (62a0712) | PASS |
 | | | E2E-A2 rev B `--previous` against the d30704e blob, exit 0 at `S` (0 ids removed) | PASS |
-| | | E2E-D | NOT RUN |
+| | | E2E-D (11.3) | PASS |
 | 4 no patch accumulation | 3 (G03, G04), 7 | X02 | PASS |
-| | | E2E-D | NOT RUN |
+| | | E2E-D (11.3); G42 (11.4) | PASS |
 | 5 distinct gates, one artifact | 4, 5 | feature-compile leaf-mutation test; L3.3; `--mode approvals` tests in check-completion-v2 | PASS |
 | 6 no self-certifying evidence | 1, 6.5, 9, 10 | L3.1; S18; L3.4; L3.6; L3.7; fallback-parity relay rows | PASS |
 | | | live: verify r4 refused an invented relay stdout (failed closed) | PASS |
@@ -893,13 +897,13 @@ Closure blockers for #54: release rules 1, 2, 3, 4 (section 9). Issue #54 stays 
 | Rule | Planned step | Observed | Status |
 |---|---|---|---|
 | 1 code review confirms architecture and invariants | WP7 step 2 (Opus fallback only) | Opus two-lens review: 11 findings, all fixed (5.2) | PASS (Opus review) |
-| | | cross-family review | NOT RUN: rule not met, closure blocker |
+| | | second whole-change review (11.2), Opus 5.5 high by owner decision, not cross-family | PASS (owner decision) |
 | 2 fixture matrix, regression suite, failure injection on a pinned commit | Levels 0-3 on `S` | gated-pipeline 790/790; fixture matrix all PASS | PASS |
-| | | codex-review fake runner case 4 (pre-existing, deterministic) | FAIL: rule not met, closure blocker |
-| 3 real E2E with no critical scenario NOT RUN | 3.4; 4b, 4c | B, C, E, F PASS; A2 BLOCKED at verify completion, land NOT RUN; 4b, 4c, E2E-H, E2E-G, E2E-D NOT RUN | NOT RUN: rule not met, closure blocker |
-| 4 source -> plan -> SHA -> proof -> CI traceable | E2E-A; CI | source, plan and reviewed SHA traceable through A2 build and verify r5 (6.2, 6.4); no completion proof (verify BLOCKED at completion); CI NOT RUN | NOT RUN: rule not met for proof and CI, closure blocker |
+| | | codex-review fake runner 214/0 after cd59672; E2E-H live (11.3) | PASS |
+| 3 real E2E with no critical scenario NOT RUN | 3.4; 4b, 4c | phase 2 (11.3): A3, B, C, D, E, E2, F, F2, G, H, C2b PASS; 4b and 4c waived by the owner (11.0); H red CI NOT RUN (waiver) | PASS (owner decisions) |
+| 4 source -> plan -> SHA -> proof -> CI traceable | E2E-A; CI | A3: source f5880a75 -> manifest 6b04649b -> design 1bebd14 -> red f293a35 -> reviewed d004f80 -> completion proof, replayed offline from the bundle (11.5); CI waived (11.0) | PASS (owner waiver for CI) |
 | 5 migration/rollback/instructions complete | WP6, `skill-doc.test.js`; 5.1; 5.4 | skill-doc 9/9, 5.4 PASS | PASS |
-| | | 5.1 | NOT RUN |
+| | | 5.1 N2 (11.3) | PASS |
 | 6 safeguards unchanged or stronger | 1a decision (b); Level 0 with the section-0 changes | fallback-parity 91/91; section-0 diff as listed | PASS |
 
 ## 10. Redaction
@@ -918,9 +922,152 @@ result: CLEAN
 The scan covers committed changes only. This report's final text was checked by committing it in a throwaway clone
 on top of its draft commit `1d5944f` and running the clone's scanner there: scan 1 39307 added lines, 0 findings;
 scan 2 373 files, 0 findings; CLEAN. A grep of the report for scratch-directory, home-directory and e-mail shapes found
-no hit. Scan 3 (toy repo bundle): NOT RUN, no bundle (the A chain did not complete).
+no hit. Scan 3 (toy repo bundle): superseded, PASS in phase 2 (11.5). The phase-2 full scan at the evidence commit 095a70f: scan 1 63047 added lines, scan 2 506 files (2 binary skipped), 0 findings, CLEAN.
 
 ## Close-out additions
 
 - Invariant 1 (compile banner): `feature-compile.test.js` "invariant 1 compile banner: every view opens with the GENERATED - DO NOT EDIT banner, the manifest and compile-identity name the source path and raw sha256, an edited view is E_DRIFT". The banner names neither the source path nor its sha256: design 4 makes `prd.view.md` a function of the projection and L2.2 keeps view bodies unchanged when only `source.sha256` changes. `compile-identity.json` names the source and hashes each view. The JSON outputs carry no banner because design 4 specifies none. Edited views are covered by S17 / L2.4 and L3.12.
 - Plan 5.2 (POSIX path matrix): `paths.test.js` "5.2 scripts: repo, state_dir and worktrees under "gp v2 ü": validate, compile, --mode design and run-frozen (red, suite, check, proof, negative) work"; "5.2 workflows (mocked: scripted agent boundary, real scripts): design, build and verify contract 2 run to PASS with repo, state_dir, run dirs and the seed under paths with spaces"; "5.2 workflows: a path with a quote, $, a backtick, ~ or a non-ASCII letter BLOCKS design, build and verify contract 2 with its reason, before any agent call". No defect found. The workflows' SAFE set is ASCII-only, so a path with `ü` works for the scripts and is BLOCKED by the workflows.
+
+## 11. Phase 2: owner decisions, the remaining code work and the live runs
+
+This section supersedes every NOT RUN, BLOCKED and FAIL row above that it names. The rows above stay as the record
+of what happened at their SHA.
+
+### 11.0 Owner decisions
+
+- **Reviews.** Opus 5.5 at high effort, through the `review_fallback: opus-high` path, counts in place of Codex for
+  every review #54 requires: design gates, implementation, security, final review, compliance and the whole-change
+  code review. Every such review stays labelled `claude-opus-high (codex unavailable)`, `fallback_used: true` and
+  `cross_family: false`. Nothing in this report calls it cross-family. Codex support stays in the code, unchanged
+  and tested by the fake runner.
+- **PR and CI.** The real PR/CI step (Level 4c) is waived. Land runs up to the PR step: completion revalidation
+  with `--trunk-ref origin/main`, then `gh pr` fails on the toy repo's local bare remote, which is the expected
+  stopping point.
+
+### 11.1 Code changes in phase 2 (all on `claude/charming-pasteur-ncpes9`, every commit `deedeeharris` with an empty email and no trailer)
+
+| Commits (tests, fix) | Change |
+|---|---|
+| 316b2ae, cd59672 | codex-review: a timeout stops the whole process tree, so a detached grandchild cannot survive; the liveness check treats a zombie as gone. This was the pre-existing fake-runner case 4 failure: now 214 passed, 0 failed |
+| 9ecba4d, 25717a3 | contract-2 test-first is certified: a RED commit of test-only changes, `run-frozen.js --target red` in a throwaway worktree, `test_first` in the build result, re-derived by completion |
+| 73091c0, 8a606b1 | G41: an empty `scope.test_paths` is rejected at design |
+| 8cc895b, 9ab5479 | invariant 1 compile-banner test; the plan 5.2 POSIX path matrix test (no defect found) |
+| 3349d9d, 4333ebc | fixes from the second whole-change review (11.2) |
+| 33c5e9e | from the live runs (11.4): the build scope guard (`E_SCOPE` per review round; `E_TEST_FIRST` for a focused test removed by a fix), validator rule G42 (identical acceptance scenarios, `E_DUP_STATEMENT`), the PRD/spec rubric line on paraphrased duplicates, and the SKILL.md rule "pass configured stage args as written" |
+| 28adfc5 | from the live runs: a contract-2 fixer adds tests only; it never deletes, skips or weakens a test or edits an assertion |
+| 095a70f | the evidence bundle (11.5) |
+
+### 11.2 Second whole-change code review (Opus 5.5 high, two lenses, not cross-family)
+
+It found 1 MAJOR issue: a migrate-v1 draft's `MIGRATION-TODO` fields could reach the design author and be filled by
+the model instead of a human. That is fixed in 4333ebc. Design now BLOCKS such a seed at start (`E_MIGRATION_TODO`),
+before the run_dir, the lock or any model call, and a snapshot holding the token is BLOCKED rather than repaired.
+
+The MINOR findings fixed in the same commit:
+- the design lock is shared by every worktree (git-common-dir);
+- absolute, normalized repo and request paths, and a request or run_dir inside the repo is refused;
+- every run-frozen record must carry the frozen `manifest_sha256`;
+- a strict porcelain status parser;
+- run-frozen's post-timeout deadline counts from the SIGTERM;
+- v1 completion rejects a `build_mode: v2` result.
+
+Two are deferred:
+- binding the implementation-review files to the exact change (v1 has the same gap, so nothing got weaker);
+- a Codex-runner detail (Codex is not used here).
+
+### 11.3 Live runs (all on the synthetic toy repo under `/srv/gp-v2`; every reviewer `claude-opus-high (codex unavailable)`)
+
+Pinned workflow sha256 prefixes (design / build / verify / land), each byte-identical to the named commit:
+- 4333ebc: 4cc05c0627b5 / 4046c6935d68 / c57671f250a2 / c4412681bdd9 (smoke runs 8 and 9).
+- 28adfc5: 4cc05c0627b5 / 9d2ec92f890f / c57671f250a2 / c4412681bdd9 (smoke run 10, E2E-G and E2E-H3).
+
+Only build.js differs between the two. All other scripts ran from `/srv/gp-v2/skill` at the named commit. Times are
+UTC on 2026-11-10.
+
+| Row | Status | Result | Run at | Wall time | Evidence |
+|---|---|---|---|---|---|
+| E2E-A3 design (scope-change redesign from b533e04, bounded proof commands) | PASS | design commit 1bebd14, 1 PRD + 1 spec round | 4333ebc | 08:05-08:16 | `state/session-login/a3/design.result.json`; bundled (11.5) |
+| E2E-A3 build | PASS | reviewed d004f80, 1 round, red commit f293a35 (RED: 27 assertion failures), suite exit 0 | 4333ebc | 08:17-08:30 | `a3/build.result.json`; bundled |
+| E2E-A3 verify | PASS | 28 proofs, 28 negative controls conclusive (the two A2 controls now fail in about 20 s through `--test-timeout`), completion passed, `cross_family: false` | 4333ebc | 08:30-09:05 | `a3/verify.result.json` |
+| E2E-A3 land | PASS (to the PR step, owner waiver) | completion revalidation with `--trunk-ref origin/main` passed; BLOCKED at `pr` (`gh`: no GitHub remote) | 4333ebc | 09:05-09:06 | `a3/land.result.json` |
+| E2E-A test-first sub-row | PASS | red commit f293a35 strictly between design commit 1bebd14 and reviewed d004f80, test-only range, frozen unit command exit 1 at red, exit 0 at reviewed | 4333ebc | - | `a3/build/test-first/red.record.json` (bundled) |
+| E2E-F (from A3 verify) | PASS | 28 `isolated_mutation` records, 1 exempt (LOGIN-006-AC3); 12 `mutation.patch` files judged against their frozen text, all match | 4333ebc | - | `a3/verify/negative/` |
+| E2E-B rerun (omission) | PASS | PRD round 1 BLOCKING on the uncovered 401 item; froze at 74ef587 after 9 rounds over 6 revisions; spec round 3 NEEDS_HUMAN with a confirmed MAJOR went to a revise round (the #37 rule) | 4333ebc | - | `state/feat-7f3b/design.result.json` |
+| E2E-C rerun (contradiction) | PASS | PRD round 1 BLOCKING on LOCK-001 vs LOCK-002; LOCK-001 retired before freezing | 4333ebc | - | `state/feat-2c9f/` |
+| E2E-E e6 (unreviewed commit after reviewed_sha) | PASS | verify BLOCKED at `plan preflight` (`E_BLOCKED`: unreviewed change to src/login.js), nothing executed; real land BLOCKED at `completion` (`E_BLOCKED`), no PR | 4333ebc | - | `state/drift3/e6/verify-2` |
+| E2E-E2 rev D (proof-command change, `previous_design` = 1bebd14) | PASS | design 2804716 (diff limited to the LOGIN-006-AC1 command and DEC-013, `--previous` exit 0); build reviewed 070680f; verify PASS; land completion passed, stopped at `pr`; A3's proof as `--previous-proof` against rev D: exit 1 `E_PREVIOUS`; A3's build result against rev D: exit 1 `E_COMPLETION` | 4333ebc | 10:21-11:22 | `state/session-login/a4/` |
+| E2E-D drift stress, run 1 | FAIL (data) | the dedicated run feat-d41a used its 4 PRD rounds; each round raised a new MAJOR; not frozen | 4333ebc | - | `state/feat-d41a/` |
+| E2E-D drift stress, runs 1-3 chained | PASS | run 1 = the B rerun (its seed is byte-identical apart from the id); runs 2 (92acd04) and 3 (427da2a) each found the planted defect in PRD round 1 and froze in round 2; `--previous` held 1->2->3; compile `--check` clean; no shadow ids | 4333ebc | 09:49-10:14 | `state/feat-7f3b/design-2`, `design-3` |
+| E2E-C2 paraphrase (identical scenario) | FAIL, then fixed | both reviewers saw RATE-003 duplicate RATE-002 but rated it MINOR; the design froze with both active | 4333ebc | 10:18-10:26 | `state/feat-5e1b/` |
+| E2E-C2 seed under G42 | PASS | the same seed is now invalid: `G42 E_DUP_STATEMENT /requirements/6/acceptance/0` | 28adfc5 | - | `state/g42-check/seed-C2.out` |
+| E2E-C2b paraphrase (reworded scenario, G42 silent) | PASS | PRD round 1 MAJOR "RATE-003 duplicates RATE-002" -> FAIL -> rev 2 retires RATE-003 -> PRD and spec PASS; frozen file has one active rule | 28adfc5 | 12:10-12:21 | `state/feat-5e1c/` |
+| E2E-F2 (a mutation that keeps the tested behaviour) | PASS | spec round 1 flagged the plain-object-to-Map control as a MAJOR that cannot fail its proof; rewritten to a shared-key mutation; froze in round 2 | 4333ebc | - | `state/feat-9b2d/` |
+| E2E-H1 failing out-of-scope test (first run) | FAIL, then fixed | the fix round deleted the failing injected test and build PASSed | 4333ebc | 09:48-10:00 | `state/session-login/h1/` |
+| E2E-H1b same injection, after the fix | PASS (failed closed) | BLOCKED at `implement`: the implementer refused the out-of-scope commit; test untouched; no fix round | 28adfc5 | 11:51-11:53 | `state/session-login/h1b/` |
+| E2E-H1c failing test inside a frozen test file | PASS (failed closed) | BLOCKED at `implement`: the test requires behaviour the frozen spec lacks (cache-control); no PASS, test untouched | 28adfc5 | 11:53-11:55 | `state/session-login/h1c/` |
+| E2E-H2 password trace in a separate commit | PASS (end state) | the implementer removed it in round 0, so security reviewed a clean diff (PASS; it quoted the removed line as history) | 4333ebc | 10:00-10:09 | `state/session-login/h2/` |
+| E2E-H2b password logged inside the implementation commit | PASS (caught at review) | the round-1 implementation review flagged `if (process.env.LOGIN_DEBUG) console.error('login attempt', username, password);` as BLOCKING; the fix round added a failing test first, then removed the line; round 2 review, security and suite PASS | 28adfc5 | 11:55-12:09 | `state/session-login/h2b/` |
+| E2E-H3 missing proof log | PASS | after deleting `frozen-runs/proof:LOGIN-002-AC1.log` from verify-2, land BLOCKED at `completion` (`E_BLOCKED`: "LOGIN-002-AC1 proof record log artifact is unreadable"), no PR; recovery: fresh verify-3 PASS, then land's completion passed and it stopped at `pr` | 28adfc5 | 12:38-13:14 | `a3/g/h3-*`, `a3/g/verify-3` |
+| E2E-H red CI | NOT RUN | owner waiver (no CI host); covered mocked by L3.8 | - | - | - |
+| E2E-G build from the persisted design | PASS | every later build from A3's persisted design result wrote a byte-identical `design-preflight.json` (sha256 3ceb74cd...): a3, h1, h2, h1b | 4333ebc, 28adfc5 | - | `state/session-login/*/build/design-preflight.json` |
+| E2E-G kill | PASS | verify-1 stopped with TaskStop at 11:57:12, after its journal showed all 7 proof batches done (A3 has 0 applicable checks, so the first evidence phase is the proofs); the partial dir holds only the ledger and 28 proof logs and records | 28adfc5 | - | `a3/g/verify-1.partial-listing.txt` |
+| E2E-G fresh rerun | PASS | verify-2 (fresh run_dir) PASS, completion passed; its `--mode plan` output is byte-identical to the original A3 verify and to the killed run (sha256 3fcaeeae...); source sha256 f5880a75... and base 1bebd14 kept | 28adfc5 | 12:06-12:38 | `a3/g/verify-2.workflow-output.txt` |
+| E2E-G deliberate `resumeFromRunId` after an evidence edit | PASS (failed closed, earlier stage than planned) | one line appended to `proof:LOGIN-001-AC1.log`; the resume replayed the preflight and the 7 proof batches from cache; the compliance trace recomputed the log hash, found the mismatch and returned a high finding, so verify ended FAIL at `compliance`; no verify result and no proof exist, so there is nothing to land | 28adfc5 | 11:57-12:06 | `a3/g/verify-1.resume.workflow-output.txt`, `verify-1.journal.jsonl` |
+| E2E-G v1 manifest under contract 2 | PASS | verify BLOCKED at `plan preflight`: `E_IDENTITY` "contract 2 needs a version 2 manifest"; nothing executed | 28adfc5 | - | `state/g-v1/` |
+| E2E-G migrate-v1 draft | PASS | draft written (61 todos); validate exit 1 with `{"E_TYPE":16,"E_ENUM":4}` (schema errors come first; `E_MIGRATION_TODO` shows once typed todos are filled, as SKILL.md states); as `seed_feature_path`, design BLOCKED at `start` with `E_MIGRATION_TODO`, no run_dir, no lock | 28adfc5 | - | `state/g-migrate-2/` |
+| 5.1 novice (first run) | FAIL, then fixed | the novice predicted the `features_dir: .git/features` refusal and substituted the default instead of passing the configured value; design PASSed | 4333ebc | - | `state/version-endpoint/` |
+| 5.1 novice N2 (after the SKILL.md rule) | PASS | passed the config as written; BLOCKED `E_SCOPE` (G38); reported the code, pipeline.yaml line 20 and the fix; after the fix design PASS with exactly one file under `.pipeline/features/`; no prd.md/spec.md; no questions asked; 0 trailer lines | 28adfc5 | - | smoke10 result |
+| 4b real Codex | NOT RUN (owner decision) | Opus 5.5 high counts in its place, labelled not cross-family | - | - | 11.0 |
+| 4c PR and CI | NOT RUN (owner waiver) | land stops at the PR step | - | - | 11.0 |
+
+### 11.4 Findings from the phase-2 live runs, each fixed
+
+1. **E2E-H1:** a fix round deleted a failing out-of-scope test, and build PASSed.
+   - Fix: every review round now checks git's `base..head` against the frozen `allowed_paths`/`protected_paths` and BLOCKS (`E_SCOPE`) without calling a fixer. A focused test under `test_paths` that a later round no longer carries is BLOCKED (`E_TEST_FIRST`). Contract-2 fixers are told never to delete, skip or weaken a test.
+   - Tests: two stage tests and a prompt test.
+   - Live, H1b and H1c both stopped earlier, at the implementer. The scripted guard is the second line and was not hit live.
+2. **E2E-C2:** reviewers rated an identical restated rule MINOR, and both copies froze.
+   - Fix: G42 rejects identical normalized acceptance scenarios deterministically (fixture X02-dup-scenario). S16 is now a true paraphrase, so it stays a review case. The PRD and spec rubrics make a duplicated rule at least MAJOR.
+   - Live: C2b shows the rubric path working.
+3. **Novice 5.1:** the operator overrode a bad config value.
+   - Fix: SKILL.md now says to pass configured stage args as written and report the refusal.
+   - Live: N2 passed every criterion.
+4. **Observed, not changed:** the spec view lists a retired requirement's spec-side fields without its `status`.
+   - This is by design (4): lifecycle `status` belongs to the PRD view's projection, and the manifest leaves retired items out.
+   - Recorded as a MINOR usability note.
+
+Two planned paths were not exercised live: the security pass FAILing on a high finding, and the scripted `E_SCOPE` stop. The H2b leak was caught one gate earlier, by the implementation review. Both paths are covered mocked with the real scripts (`fix` items from `[security codex high]`; the two scope tests).
+
+### 11.5 Evidence bundle and offline replay
+
+`tests/v2-evidence/` holds byte-exact copies of the A3 chain: the design, build and recovery verify-3 run dirs, the
+design and build results, and verify-3's pre-land proof. Verify's own output is restored; land's rewritten proof is
+kept beside it, not restored. 212 files, each listed with its sha256 in `index.json`. `toy-repo.bundle` holds the
+toy repo's `main`, `feat/session-login-r3` and `previous-design/session-login-a2` (b533e04, A3's
+`previous_design`): 5 commits, all by `gp-v2 toy` with an empty email, 0 trailer lines. The older remote branches
+with session trailers are not in the bundle.
+
+`replay.sh`, run with a private tmpfs over `/srv/gp-v2` (so the live root is untouched), exit 0:
+
+```
+replay approvals: exit 0   {"status":"PASS","mode":"approvals","approvals_sha256":"f12021a0...","rule":"same-revision"}
+replay design: exit 0      {"status":"PASS","mode":"design","design_commit":"1bebd14b...","source":{"sha256":"f5880a75..."}}
+replay completion: exit 0  {"status":"PASS","certification":"design-gated","reviewed_sha":"d004f807..."}
+scan 3: bundle toy-repo.bundle: 5 commits, 5 revisions, 7844 grep lines, 0 finding(s)
+result: CLEAN
+replay: all steps passed
+```
+
+Along with that output, the 212 hash lines were `ok` and 211 files were restored. Every validator ran offline from the bundle alone.
+
+### 11.6 Level 0 at the final code
+
+| Suite | Result |
+|---|---|
+| gated-pipeline, all files (`node --test skills/gated-pipeline/tests/*.test.js`) at 095a70f | 832 tests, 832 pass, 0 fail, exit 0 |
+| codex-review fake runner (`node skills/codex-review/tests/run-fake-tests.js`) | 214 passed, 0 failed, exit 0 |
+
+Validator rule set: G01-G42, R01-R04, P01-P02. The validator still reports `validator_version` 1.1.0: G42 adds a
+rejection without changing any existing output, so the existing A3 and earlier frozen designs revalidate unchanged
+(the replay in 11.5 runs at this code).
