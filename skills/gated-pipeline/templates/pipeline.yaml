@@ -8,13 +8,16 @@ branches:
   work: feature/my-change   # orchestrator-selected branch; existing checkout or optional feature worktree
   trunk: main               # PR target; the human merges
 reviews:
+  reviewer: codex           # codex | opus-high: the ONE reviewer of every artifact. codex = cross-family via codex-review (default).
+                            # opus-high = Claude Opus 5.5 at high effort reviews everything directly, no codex needed;
+                            # labelled "claude-opus-high (configured reviewer)", never cross-family. Stage arg: reviewer
   primary: codex            # cross-family reviewer (codex-review skill)
   fallback: none            # e.g. agy; if every option is capped, WAIT
   runner: ""                # ABSOLUTE path to codex-review/scripts/run-review.js (no ~: the workflows single-quote it, so ~ never expands)
   codex_model: ""           # empty = let codex-review pick from the live catalog
   codex_effort: high
   review_timeout_seconds: 1200   # per codex attempt; a real review of a few files takes 10+ minutes
-  review_fallback: none     # none | opus-high. opus-high: ONLY when codex is NOT AVAILABLE in the environment, Claude Opus 5.5 at
+  review_fallback: none     # reviewer: codex only. none | opus-high. opus-high: ONLY when codex is NOT AVAILABLE in the environment, Claude Opus 5.5 at
                             # high effort runs the same review, labelled "claude-opus-high (codex unavailable)". A capped codex still WAITs.
 design:
   features_dir: .pipeline/features   # contract 2: repo-relative dir of the canonical feature files (never under .git/); design arg features_dir

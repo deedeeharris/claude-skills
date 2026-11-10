@@ -5,7 +5,7 @@ description: Use to take a feature or fix from a raw task or an existing plan to
 
 # gated-pipeline
 
-Run one feature through four stages, each a Workflow script in `workflows/`. Claude writes and fixes the code; **codex reviews every artifact** through the `codex-review` skill (cross-family: Claude never grades Claude). Each repo describes itself in `.claude/pipeline.yaml` (template: `templates/pipeline.yaml`). This executes one plan; scheduling, multi-day liveness and merging belong to the human or outer orchestrator.
+Run one feature through four stages, each a Workflow script in `workflows/`. Claude writes and fixes the code; the reviewer is the repo's either/or choice `reviews.reviewer`: `codex` (default; **codex reviews every artifact** through the `codex-review` skill, cross-family) or `opus-high` (Claude Opus 5.5 at high effort reviews every artifact; not cross-family, and labelled so). Each repo describes itself in `.claude/pipeline.yaml` (template: `templates/pipeline.yaml`). This executes one plan; scheduling, multi-day liveness and merging belong to the human or outer orchestrator.
 
 Two contracts exist. `contract: 2` (v2, the default for every new feature) designs the feature as ONE canonical feature file and derives everything else from it by script; it is the only path that yields a `v2/design-gated` proof. `contract: 1` (absent = 1) is the v1 flow (`prd.md`, `spec.md`, hand-written `execution-plan.json`), kept unchanged for features already frozen under it (see Contract 1 (v1) compatibility).
 
@@ -59,7 +59,7 @@ Every stage takes `contract: 1|2` (absent = 1). Use `contract: 2` for every new 
 Workflow({ scriptPath: "<skill-dir>/workflows/design.js", args: {
   contract: 2, feature_id, repo, work_branch, run_dir, review_runner, completion_runner, source_request_path,
   source_request_mode, source_request_ref, features_dir, previous_design, seed_feature_path, recover,
-  codex_model, codex_effort, review_timeout_seconds, max_rounds, author_effort, review_fallback, security_docs } })
+  codex_model, codex_effort, review_timeout_seconds, max_rounds, author_effort, review_fallback, reviewer, security_docs } })
 Workflow({ scriptPath: "<skill-dir>/workflows/build.js", args: {
   contract: 2, feature_id, repo, work_branch, run_dir, review_runner, security_schema, completion_runner,
   frozen_dir, manifest_path, manifest_sha256, spec_path, design_commit, approvals_path, approvals_sha256, base_commit,
@@ -68,7 +68,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/build.js", args: {
 Workflow({ scriptPath: "<skill-dir>/workflows/verify.js", args: {
   contract: 2, feature_id, repo, work_branch, run_dir, review_runner, spec_path, compliance_schema, manifest_path,
   manifest_sha256, build_result_path, completion_runner, frozen_dir, design_commit, approvals_path, approvals_sha256,
-  base_commit, reviewed_sha, files, deleted, codex_model, codex_effort, review_timeout_seconds, review_fallback,
+  base_commit, reviewed_sha, files, deleted, codex_model, codex_effort, review_timeout_seconds, review_fallback, reviewer,
   scan_log, require_scan_row } })
 Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
   contract: 2, feature_id, repo, work_branch, trunk_branch, title, body_path, reviewed_sha, completion_runner,
@@ -94,6 +94,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
 | `seed_feature_path` | optional | absolute path of a prepared canonical file (e.g. a filled migration draft) copied into the checkout instead of a fresh draft |
 | `recover` | optional | `true`: freeze a run that died after its design commit, with the same `run_dir` (see Resume) |
 | `codex_model`, `codex_effort`, `review_timeout_seconds`, `max_rounds`, `author_effort`, `review_fallback`, `security_docs` | optional | as in v1 |
+| `reviewer` | optional | `codex` (default) or `opus-high`, from `reviews.reviewer`; see Hard rules |
 
 ### v2 args: build
 | Arg | Required | Value |
@@ -113,7 +114,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
 | `approvals_sha256` | required | design `approvals_sha256` |
 | `base_commit` | required | design `design_commit` (must be equal) |
 | `ci_failure_log_path` | optional | absolute path, outside the repo, of a saved CI failure log (CI_RED/HEAD_MOVED loop); context only |
-| `codex_model`, `codex_effort`, `impl_effort`, `max_fix_rounds`, `lock_note`, `review_timeout_seconds`, `review_fallback`, `security_docs`, `security_checklist` | optional | as in v1 |
+| `codex_model`, `codex_effort`, `impl_effort`, `max_fix_rounds`, `lock_note`, `review_timeout_seconds`, `review_fallback`, `reviewer`, `security_docs`, `security_checklist` | optional | as in v1 |
 
 ### v2 args: verify
 | Arg | Required | Value |
@@ -128,7 +129,7 @@ Workflow({ scriptPath: "<skill-dir>/workflows/land.js", args: {
 | `base_commit` | required | design `design_commit` (build's `base_commit`) |
 | `reviewed_sha` | required | build `reviewed_sha` |
 | `files`, `deleted` | optional | informational, repo-relative |
-| `codex_model`, `codex_effort`, `review_timeout_seconds`, `review_fallback`, `scan_log`, `require_scan_row` | optional | as in v1; `scan_log`/`require_scan_row` are recorded as `repo_config` |
+| `codex_model`, `codex_effort`, `review_timeout_seconds`, `review_fallback`, `reviewer`, `scan_log`, `require_scan_row` | optional | as in v1; `scan_log`/`require_scan_row` are recorded as `repo_config` |
 
 ### v2 args: land
 | Arg | Required | Value |
@@ -225,7 +226,7 @@ Service boot/connectivity, success/failure/edge cases, side-effect readback, lin
 Workflow({ scriptPath: "<skill-dir>/workflows/verify.js", args: {
   feature_id, repo, work_branch, run_dir, review_runner, files, deleted, base_commit, reviewed_sha, clean_ignore,
   spec_path, compliance_schema, checks, codex_model, codex_effort, review_timeout_seconds,
-  manifest_path, manifest_sha256, build_result_path, completion_runner, review_fallback, scan_log, require_scan_row } })
+  manifest_path, manifest_sha256, build_result_path, completion_runner, review_fallback, reviewer, scan_log, require_scan_row } })
 ```
 `base_commit` and `reviewed_sha` are REQUIRED (pass build's values straight through); the final review and the compliance trace cover the whole change `base_commit..reviewed_sha`. `files`/`deleted` are informational and must be repo-relative. A check with no `budget_min > 0` may make no live or paid calls.
 
@@ -273,8 +274,11 @@ All three path args go through the same safe-path checks as every other path; an
 The clean-tree checks compare HEAD and `git status` at the START and END of each test run; they cannot see a checkout that another process swaps and restores mid-run. So **nothing else may write to the work checkout while a stage runs**. Have the orchestrator serialize writers in a shared checkout or choose separate checkouts for concurrent lanes; dedicated feature worktrees are optional. Set `suite_isolated: true` to run the suite in a fresh worktree of the reviewed commit, which removes this assumption for the suite.
 
 ## Hard rules (every stage, every repo)
+- The reviewer is an either/or repo choice, `reviews.reviewer` in `.claude/pipeline.yaml`, passed to design, build and verify as the `reviewer` arg:
+  - `codex` (the default when absent): the rules below apply unchanged.
+  - `opus-high`: every review (PRD, spec, implementation, security, final, compliance) runs with Claude Opus 5.5 at high effort directly, with codex-review's rubric, severity scale and gate rule. No codex probe and no codex call. Each is labelled `claude-opus-high (configured reviewer)`, results carry `fallback_used: false`, and the completion proof says `cross_family: false`, never cross-family. `review_fallback` is ignored. Any other value is BLOCKED before any agent runs.
 - Reviews are cross-family by default: codex reviews every artifact. A capped codex (usage cap, quota error) is NOT a reason to switch reviewer: the stage returns BLOCKED and you WAIT for the cap to reset.
-- The one exception is codex NOT AVAILABLE in the environment (`codex --version` or `node <review_runner> --help` cannot run or exits non-zero). Every codex relay checks this first and reports `codex_available`. Only when it is `false` AND the repo config sets `reviews.review_fallback: opus-high` (passed as the `review_fallback` arg) does Claude Opus 5.5 at high effort run the same review, with the same schema and scope (design: the doc against the PRD; build: the whole change in the throwaway worktree, plus security; verify: final review and compliance trace). Same review also means the same verdict rule: the Opus reviewer reads the codex-review rubric for the kind (`<codex-review>/rubrics/<kind>.md`, located next to `review_runner`), grades findings BLOCKING/MAJOR/MINOR/NIT with a confidence, and the workflow (never the model) applies the gate rule below, so MINOR and NIT findings are reported but never block. That result is stamped `reviewer: "claude-opus-high (codex unavailable)"` and must never be reported as a codex verdict. With `review_fallback: none` (the default), unavailable codex is BLOCKED.
+- With `reviewer: codex`, the one exception is codex NOT AVAILABLE in the environment (`codex --version` or `node <review_runner> --help` cannot run or exits non-zero). Every codex relay checks this first and reports `codex_available`. Only when it is `false` AND the repo config sets `reviews.review_fallback: opus-high` (passed as the `review_fallback` arg) does Claude Opus 5.5 at high effort run the same review, with the same schema and scope (design: the doc against the PRD; build: the whole change in the throwaway worktree, plus security; verify: final review and compliance trace). Same review also means the same verdict rule: the Opus reviewer reads the codex-review rubric for the kind (`<codex-review>/rubrics/<kind>.md`, located next to `review_runner`), grades findings BLOCKING/MAJOR/MINOR/NIT with a confidence, and the workflow (never the model) applies the gate rule below, so MINOR and NIT findings are reported but never block. That result is stamped `reviewer: "claude-opus-high (codex unavailable)"` and must never be reported as a codex verdict. With `review_fallback: none` (the default), unavailable codex is BLOCKED.
 - One gate rule for both reviewers (#37), equal to the codex path: the verdict is codex-review's `computeVerdict` (the workflows carry byte-identical copies of `computeTriggers`/`computeVerdict`); `confirmed_findings` = every validated-confirmed BLOCKING/MAJOR and `other_findings` = every other non-refuted finding; a PASS with any confirmed finding is FAIL (a fix or revise round), and a NEEDS_HUMAN with none is BLOCKED unless its only reason is `model_rule_disagreement` with findings listed (design and build send those on; verify BLOCKS). The workflow decides the buckets, not the relay: the codex relay copies `result.json` field by field (every finding's `id`, `severity`, `confidence`, `iso_property`, `validation.status`, `claim`, `evidence`, `location`, plus `verdict`, `verdict_reasons`, `model_verdict`, `outcome`, `unable_to_review`, `validation.outcome`, `run_dir` and its `result_sha256`). A reply without `findings` or `model_verdict`, one whose verdict differs from what its findings give, or a PASS whose `outcome` is not `ok` or whose `unable_to_review` is set is BLOCKED. The Opus fallback self-validates: every BLOCKING/MAJOR it reports counts as confirmed (ids `F1, F2, ...`). This is stricter than before for the fallback: a confirmed MAJOR below the trigger threshold, or one in the 0.5-0.8 band, now goes to a fix/revise round instead of passing or stopping. Two documented differences remain, both on the codex path only and both unchanged: (1) `model_rule_disagreement`, including a trigger that codex's validation refuted after the model judged it, is stricter there (BLOCKED, or a round on the remaining findings, where the fallback PASSes); (2) findings codex could not validate (the validation call failed or omitted an id): an unvalidated non-trigger MAJOR goes to `other_findings`, so codex can PASS where the fallback goes to a fix/revise round, and an unvalidated trigger gives NEEDS_HUMAN, so codex BLOCKS where the fallback goes to a fix round.
 - Every review relay runs fixed, role-tagged blocks (` ```gp-exec <role> `) verbatim, in order: `setup` (availability probes, the fresh out dir, the review checkout), `start` (with the Bash tool's `run_in_background`; it writes `runner.pid`), `poll` (a bounded foreground loop of at most 9 minutes, repeated while it exits 1, at most the K times the prompt states), `cleanup` (once: SIGTERM to the `runner.pid` process if it is still alive, wait up to 10 s, remove the checkout, list the run folder). It WAITS IN THE FOREGROUND and never ends its turn between `start` and `cleanup`; a relay that ends its turn while codex runs kills the review. With no result after K polls it reports ERROR with the run-folder listing (BLOCKED, never a fallback). The Opus fallback runs only its `setup` and `cleanup`. The runner writes `result.json` atomically, and a SIGTERM/SIGINT to it stops its codex process group and records outcome `interrupted`. `tests/relay-wait.test.js` executes these blocks against the real runner and a fake codex; it proves the commands and the loop, not that a model obeys them.
 - Never deploy, run Terraform against real state, publish packages, or touch production resources without the user's explicit yes.

@@ -711,7 +711,9 @@ All v1 checks, except that runtime evidence comes from the acceptance ledger (be
   `critical` or `high` (PASS only when empty); compliance from the raw file's per-requirement
   statuses. A stage-result verdict that differs is exit 1. `reviewers`, `fallback_used` and
   `cross_family` are derived from the file kinds (runner `result.json` or codex raw file =
-  codex; `fallback-review.json` or wrapped reply = Opus fallback), not from the stage result;
+  codex; `fallback-review.json` or wrapped reply = Opus, labelled by its `reviewer`: `claude-opus-high (codex unavailable)`
+  for the fallback, `claude-opus-high (configured reviewer)` when the repo chose `reviews.reviewer: opus-high`; the entry's
+  label must equal its file's), not from the stage result;
 - checks: one run-frozen record per applicable check, matched by `check_id`, hash as recorded;
   the applicable id set equals the manifest's; command, `timeout_min` and `budget_min` equal
   the manifest check; integer `exit_code === 0`; not timed out; framed log; head =
@@ -736,7 +738,8 @@ All v1 checks, except that runtime evidence comes from the acceptance ledger (be
   proof as recorded exemptions with their reasons and counts;
 - every v2 proof records `design_commit` and `design_paths` (from the preflight), `reviewers`
   (per approval gate from the ledger, plus the derived build and verify reviewers),
-  `fallback_used`, `cross_family` (false when any of those reviews was the Opus fallback) and
+  `fallback_used` (true when any review was the codex-unavailable fallback), `cross_family` (false when any review was an
+  Opus review, fallback or configured) and
   `repo_config`;
 - with `--trunk-ref`: `git rev-list <trunk-ref>..design_commit^` is empty (no commit before the
   design commit escapes review), recorded as `trunk_qualification { ref, sha,

@@ -80,6 +80,7 @@ if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
 if (A.review_timeout_seconds !== undefined && !(Number.isInteger(A.review_timeout_seconds) && A.review_timeout_seconds > 0)) return { status: 'BLOCKED', reason: 'review_timeout_seconds must be a positive integer' }
 if (A.review_fallback !== undefined && !['none', 'opus-high'].includes(A.review_fallback)) return { status: 'BLOCKED', reason: 'review_fallback must be none|opus-high' }
+if (A.reviewer !== undefined && !['codex', 'opus-high'].includes(A.reviewer)) return { status: 'BLOCKED', reason: 'reviewer must be codex|opus-high' }
 const DOTDOT = /(^|[\/\\])\.\.([\/\\]|$)/
 const ABS0 = /^([A-Za-z]:|[\/\\])/
 // A suite result certifies reviewed_sha only if HEAD was that commit and the tree was clean before AND after the run.
@@ -151,6 +152,15 @@ const SEC = {
 // The security relay also reports whether codex exists here at all; the Opus stand-in uses the plain schema.
 const relay = s => ({ ...s, properties: { ...s.properties, codex_available: { type: 'boolean' } }, required: [...s.required, 'codex_available'] })
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
+// The repo's either/or reviewer choice (pipeline.yaml reviews.reviewer, stage arg reviewer): codex (the default) keeps codex
+// with the optional review_fallback above; opus-high runs EVERY review with Opus 5.5 at high effort directly (no codex probe,
+// no codex call), labelled CONFIGURED_REVIEWER. Either Opus label is a Claude review: never cross-family.
+const CONFIGURED_REVIEWER = 'claude-opus-high (configured reviewer)'
+const OPUS_ONLY = A.reviewer === 'opus-high'
+const OPUS_LABEL = OPUS_ONLY ? CONFIGURED_REVIEWER : FALLBACK_REVIEWER
+const OPUS_TAG = OPUS_ONLY ? 'configured reviewer' : 'codex unavailable'
+const opusRole = what => OPUS_ONLY ? `The repo config chose reviews.reviewer: opus-high, so YOU ${what}.`
+  : `Codex is not available in this environment, so YOU ${what} in its place (the repo config chose review_fallback: opus-high).`
 
 // Opus fallback parity with codex-review: same rubric file, severity scale and verdict rule as run-review.js
 // (computeTriggers/computeVerdict). The reviewer reports findings; the verdict is computed here, never by the model.
@@ -322,6 +332,12 @@ const reviewers = []
 const READBACK = []
 const disclose = o => ({ ...o, ...(C2 ? { contract: 2, readback: READBACK.slice() } : {}), build_mode: BUILD_MODE, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
 async function reviewed(step, gate, viaCodex, fallback) {
+  if (OPUS_ONLY) {
+    const f = await fallback()
+    const res = f && { ...f, codex_available: false, reviewer: CONFIGURED_REVIEWER }
+    if (res) reviewers.push({ step, reviewer: res.reviewer })
+    return res
+  }
   const r = await viaCodex()
   let res
   // An explicit relay blocker (refused command, failed setup, stale out dir) always stops the stage; it never falls back.
@@ -473,12 +489,12 @@ async function recordFallback({ step, round, dir, reply, inputs, ph, label }) {
     `Record the Opus fallback ${step} review: ${inputs ? 're-hash its inputs (hash-inputs.js --verify fails if any changed during the review), then ' : ''}` +
     `write its reply verbatim with the skill's write-json.js (strict JSON, written once and atomically; it prints { path, sha256 }). ${EXEC_NOTE}` +
     execBlock(['set -e', ...(inputs ? [`node ${SCRIPT('hash-inputs.js')} --verify ${q(dir + '/inputs.json')}`] : []),
-      writeJsonBlock(file, { gate_kind: step, reviewer: FALLBACK_REVIEWER, reply }), ...(inputs ? [`sha256sum ${q(dir + '/inputs.json')}`] : [])].join('\n')) + `\n- ${RULES}`,
+      writeJsonBlock(file, { gate_kind: step, reviewer: OPUS_LABEL, reply }), ...(inputs ? [`sha256sum ${q(dir + '/inputs.json')}`] : [])].join('\n')) + `\n- ${RULES}`,
     { label: `record opus ${label}`, phase: ph, schema: EXEC, effort: 'low' })
   const w = r && !r.blocked && r.exit_code === 0 ? jsonLines(r.stdout).find(o => o.path === file && HEX64.test(o.sha256 || '')) : null
   const inSha = r && inputs ? shaOf(r.stdout, dir + '/inputs.json') : null
   if (!w || (inputs && !HEX64.test(inSha || ''))) return { error: `the fallback ${step} review record was not written: ${r ? r.stdout : 'no reply'}` }
-  return { entry: { step, round, reviewer: FALLBACK_REVIEWER, review_dir: dir,
+  return { entry: { step, round, reviewer: OPUS_LABEL, review_dir: dir,
     ...(inputs ? { inputs_path: dir + '/inputs.json', inputs_sha256: inSha, fallback_review_path: file, fallback_review_sha256: w.sha256 } : { raw_path: file, raw_sha256: w.sha256 }) } }
 }
 // rawName: the raw codex file of a security/compliance step; without it the step is an implementation review (result.json).
@@ -699,12 +715,12 @@ async function review(round) {
     `${scopeNote(out)}${relayRead(out, 'implementation')}\n- ${RULES}`,
     { label: `codex review ${round}`, phase: 'Review', schema: RELAY, effort: 'low' }),
   () => agent(
-    `Codex is not available in this environment, so YOU are the independent implementation reviewer of the CHANGE in its place (the repo config chose review_fallback: opus-high). ` +
+    `${opusRole(`are the independent implementation reviewer of the CHANGE`)} ` +
     `Do not change the work branch.\n${fallbackSteps(['set -e', gpFresh(fb), scopePrep(fb), ...fbInputs(fb)].join('\n'), [gpUnwt(fb + '/wt'), gpList(fb)].join('\n'))}${scopeNote(fb)}` +
     `Review the change as it stands in that checkout (git -C ${q(fb + '/wt')} diff --cached is the whole change ${base}..head_sha; read any other file there for context) for correctness bugs, ` +
     `missing or broken acceptance behaviour from ${target}, and unsafe code. Report findings ONLY in that change. ` +
     `${parityNote('implementation')}${chargeText}\n- ${RULES}`,
-    { label: `opus review ${round} (codex unavailable)`, phase: 'Review', schema: PARITY_SCHEMA({ head_sha: HEAD_SHA, changed: CHANGED }), model: 'opus', effort: 'high' }).then(f => { raw = f; return gateFallback('implementation', f) }))
+    { label: `opus review ${round} (${OPUS_TAG})`, phase: 'Review', schema: PARITY_SCHEMA({ head_sha: HEAD_SHA, changed: CHANGED }), model: 'opus', effort: 'high' }).then(f => { raw = f; return gateFallback('implementation', f) }))
   return C2 ? reviewFile({ step: 'implementation', round, out, fb, res, raw, ph: 'Review', label: `review ${round}` }) : res
 }
 
@@ -732,11 +748,11 @@ async function security(round) {
     `3. After cleanup, read ${out}/security.json and return verdict and ONLY the critical/high findings as blocking. If codex errors, hits a usage cap, or writes no valid JSON, return ERROR with the reason in note.${C2 ? RAW_NOTE('security.json') : ''}\n- ${RULES}`,
     { label: `codex security ${round}`, phase: 'Review', schema: C2 ? RAW_RELAY(SEC) : relay(SEC), effort: 'low' }),
   () => agent(
-    `Codex is not available in this environment, so YOU are the independent SECURITY reviewer in its place (the repo config chose review_fallback: opus-high). Do not change any file.\n` +
+    `${opusRole(`are the independent SECURITY reviewer`)} Do not change any file.\n` +
     fallbackSteps(['set -e', gpFresh(fb), isolate(fb)].join('\n'), [gpUnwt(fb + '/wt'), gpList(fb)].join('\n')) +
     `Review in the isolated checkout of the reviewed commit at ${fb}/wt.\n` +
     `1. ${secTask()}\n2. Return verdict and ONLY the critical/high findings as blocking.${C2 ? ' Give each blocking finding its severity in lower case: critical or high.' : ''}\n- ${RULES}`,
-    { label: `opus security ${round} (codex unavailable)`, phase: 'Review', schema: SEC, model: 'opus', effort: 'high' }).then(f => { raw = f; return f }))
+    { label: `opus security ${round} (${OPUS_TAG})`, phase: 'Review', schema: SEC, model: 'opus', effort: 'high' }).then(f => { raw = f; return f }))
   return C2 ? reviewFile({ step: 'security', round, out, fb, res, raw, ph: 'Review', label: `security ${round}`, rawName: 'security.json' }) : res
 }
 

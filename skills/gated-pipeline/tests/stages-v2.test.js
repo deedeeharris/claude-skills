@@ -918,6 +918,65 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.equal(stderrJson(cc).code, 'E_REVIEW');
   });
 
+  // reviews.reviewer: opus-high (the either/or reviewer choice): every review runs with Opus directly, no codex relay at all,
+  // labelled "claude-opus-high (configured reviewer)"; completion accepts it, says cross_family false and fallback_used false.
+  test('reviewer opus-high: build and verify run no codex relay; Opus reviews are labelled configured reviewer; completion and land pass with cross_family false, fallback_used false', async (t) => {
+    const CONFIGURED = 'claude-opus-high (configured reviewer)';
+    const c = frozenRepo(t);
+    const b = await buildV2(c, { args: { reviewer: 'opus-high' }, table: {
+      'opus review 1 (configured reviewer)': opus(({ headSha, changed }) => ({ findings: [], head_sha: headSha, changed })), 'record opus review 1': stub(),
+      'opus security 1 (configured reviewer)': opus({ verdict: 'PASS', blocking: [] }), 'record opus security 1': stub() } });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'opus review 1 (configured reviewer)', 'record opus review 1',
+      'opus security 1 (configured reviewer)', 'record opus security 1', 'suite 1']);
+    assert.equal(b.result.fallback_used, false);
+    assert.deepEqual(b.result.reviewers.map(x => x.reviewer), [CONFIGURED, CONFIGURED]);
+    const p = b.calls.find(x => x.options.label === 'opus review 1 (configured reviewer)').prompt;
+    assert.match(p, /The repo config chose reviews\.reviewer: opus-high, so YOU are the independent implementation reviewer of the CHANGE\./);
+    assert.doesNotMatch(p, /Codex is not available/);
+    assert.ok(b.result.review_files.every(e => e.reviewer === CONFIGURED));
+    assert.equal(JSON.parse(fs.readFileSync(b.result.review_files[0].fallback_review_path, 'utf8')).reviewer, CONFIGURED);
+    const v = await verifyV2(c, b, { args: { reviewer: 'opus-high' }, table: {
+      'opus final review (configured reviewer)': opus(({ headSha }) => ({ findings: [], head_sha: headSha })), 'record opus final review': stub(),
+      'opus spec compliance (configured reviewer)': opus(() => ({ verdict: 'PASS', blocking: [], requirements: complianceReqs(head(c)), ...pinnedAt(head(c)) })),
+      'record opus compliance': stub() } });
+    assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
+    assert.ok(!labels(v.calls).some(l => /^codex /.test(l)), 'no codex relay: ' + labels(v.calls).join(', '));
+    assert.equal(v.result.completion.cross_family, false);
+    assert.equal(v.result.completion.fallback_used, false);
+    const proof = JSON.parse(fs.readFileSync(v.result.completion.proof_path, 'utf8'));
+    assert.equal(proof.cross_family, false);
+    assert.equal(proof.fallback_used, false);
+    assert.ok(['build', 'verify'].every(stage => proof.reviewers.filter(x => x.stage === stage).every(x => x.reviewer === CONFIGURED)));
+    const l = await landV2(c, b, v, { args: { allow_no_ci: true } });
+    assert.equal(l.result.status, 'READY_FOR_HUMAN_MERGE');
+    assert.equal(l.result.cross_family, false);
+    // a configured-reviewer file relabelled as the codex-unavailable fallback in the stage result -> completion exit 1
+    const relabelled = clone(b.result);
+    relabelled.review_files[0].reviewer = FALLBACK_REVIEWER;
+    const file = path.join(c.root, 'relabelled-configured.json');
+    fs.writeFileSync(file, JSON.stringify(relabelled));
+    const cc = c.node('check-completion.js', ['--repo', c.repo, '--feature-id', 'greet', '--reviewed-sha', b.result.reviewed_sha, '--manifest', c.manifestPath, '--manifest-sha256', c.manifestSha,
+      '--spec', c.featureFile, '--build-result', file, '--verify-result', v.result.verify_result_path, '--out', path.join(c.root, 'proof-relabelled-configured.json'), '--frozen-dir', c.frozenDir,
+      '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha]);
+    assert.equal(cc.status, 1);
+    assert.equal(stderrJson(cc).code, 'E_REVIEW');
+  });
+
+  test('reviewer must be codex or opus-high: any other value BLOCKS build and verify before any agent call', async (t) => {
+    const c = frozenRepo(t);
+    for (const value of ['opus', 'claude', '']) {
+      const b = await run('build', buildArgs(c, freshRun(c, 'build'), { reviewer: value }), many(responder({})));
+      assert.equal(b.result.status, 'BLOCKED');
+      assert.equal(b.result.reason, 'reviewer must be codex|opus-high');
+      assert.equal(b.calls.length, 0);
+      const v = await run('verify', verifyArgs(c, freshRun(c, 'verify'), path.join(c.root, 'none.json'), { reviewer: value }), many(responder({})));
+      assert.equal(v.result.status, 'BLOCKED');
+      assert.equal(v.result.reason, 'reviewer must be codex|opus-high');
+      assert.equal(v.calls.length, 0);
+    }
+  });
+
   // ---- the suite rule of design 6.3 ------------------------------------------------------------------------------------------
   function withSuite(command, known = []) {
     const f = baseFeature();
