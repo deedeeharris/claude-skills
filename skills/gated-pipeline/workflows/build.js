@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Preflight', detail: 'contract 2: the design identity of the frozen plan, before any change' },
     { title: 'Implement', detail: 'Claude implementer, test-first, commits on the work branch' },
+    { title: 'Red', detail: 'contract 2: the frozen unit command fails at the red commit, in a throwaway worktree' },
     { title: 'Review', detail: 'codex reviews the change, then a codex security pass' },
     { title: 'Fix', detail: 'Claude fixes confirmed codex findings and suite failures' },
     { title: 'Suite', detail: 'full test suite, last' },
@@ -128,6 +129,7 @@ const WORK = {
     files_deleted: { type: 'array', items: { type: 'string' } },
     tests_added: { type: 'array', items: { type: 'string' } },
     red_then_green: { type: 'string' },
+    red_commit: { type: 'string' },
     commit: { type: 'string' },
   },
   required: ['blocked', 'summary', 'files_changed', 'commit'],
@@ -525,6 +527,11 @@ if (C2) {
     : !Array.isArray(d.clean_ignore) || typeof d.unit_command !== 'string' || !Number.isInteger(d.live_budget_min) ? 'the preflight lacks the frozen suite configuration'
     : ciLog && !(hi && hi.inputs.length === 1 && hi.inputs[0].path === ciLog && HEX64.test(hi.inputs[0].sha256)) ? 'the CI failure log was not hashed' : ''
   if (bad) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: bad, preflight: pre })
+  // Test-first (design 6.3): the red commit may change only files under scope.test_paths, so there must be one.
+  if (!Array.isArray(d.test_paths) || !d.test_paths.length || !d.test_paths.every(p => typeof p === 'string' && SAFE.test(p))) {
+    return disclose({ status: 'BLOCKED', stage: 'preflight', code: 'E_TEST_FIRST', reason: 'contract-2 test-first needs at least one scope.test_paths entry: the red commit may change only files under it', preflight: pre })
+  }
+  // The red run (setup and unit command, each suite.timeout_min) has the suite's worst case, checked just below.
   const suiteRuns = typeof s.setup_command === 'string' ? 2 : 1
   const suiteLong = !Number.isInteger(s.timeout_min) || s.timeout_min < 1 ? 'the manifest suite has no timeout_min'
     : overCall(`the frozen suite (${suiteRuns === 2 ? 'setup and suite, ' : ''}${suiteRuns} x timeout_min ${s.timeout_min})`, suiteRuns * (s.timeout_min * 60 + RUN_GRACE_S))
@@ -547,9 +554,18 @@ const workReport = A.base_commit
   : 'Before changing anything, record `git rev-parse HEAD` as base_commit (keep the first value across rounds). In files_changed list repo-relative paths that still exist; list removed files in files_deleted.'
 
 phase('Implement')
+// contract 2 (design 6.3): test-first is certified, so the order of the commits is the contract: a RED commit of tests
+// only, then the implementation. The workflow runs the frozen unit command at red_commit (testFirst below).
+const testFirstNote = () => `Work test-first, in commits on ${A.work_branch} after the design commit ${A.design_commit}, in this order. ` +
+  `(1) The RED commit: one or more commits that change ONLY files under the frozen scope.test_paths (${PRE.test_paths.join(', ')}), at least one file, ` +
+  'adding or changing the focused tests of the behavioral acceptance items; at the last of them those tests must FAIL as tests (a failing assertion, never a crash, a missing command or a timeout). ' +
+  '(2) The implementation commits after it, until the focused tests pass. Then report red_commit: the full 40-hex id of the last RED commit (git rev-parse HEAD right after committing it). ' +
+  `If this branch already holds such a red commit after ${A.design_commit} from an earlier build run of this design (a CI_RED or HEAD_MOVED rerun), make no new red commit: report that one. ` +
+  'Never amend, rebase or rewrite a commit. The workflow then runs the frozen unit command at red_commit in a throwaway worktree and BLOCKS unless it fails there. ' +
+  'Static-only items use the frozen spec\'s applicable static evidence. '
 const work = await agent(
   `You are the implementer for feature ${A.feature_id}. Implement ${target}.${chargeText}${ciNote}\n\n` +
-  `Work test-first: for each behavioral acceptance item write the test, run it and see it FAIL, implement, run it and see it PASS. Static-only items use the frozen spec's applicable static evidence. ` +
+  (C2 ? testFirstNote() : `Work test-first: for each behavioral acceptance item write the test, run it and see it FAIL, implement, run it and see it PASS. Static-only items use the frozen spec's applicable static evidence. `) +
   `Run the focused tests with: ${(C2 ? PRE.unit_command : A.unit_cmd) || '(the repo\'s focused test command)'}. Keep the change minimal and in the repo's style. ` +
   `Commit on ${A.work_branch} and push the branch. Save the red and green outputs under ${A.run_dir}/implement/. ${workReport}\n\nRules:\n- ${RULES}`,
   { label: 'implement', phase: 'Implement', schema: WORK, effort: IMPL_EFFORT })
@@ -570,6 +586,66 @@ const NAME = /^[^\x00-\x1f"'`$]+$/
 const unsafe = () => [...files, ...deleted].filter(f => !NAME.test(f) || ABS.test(f) || DOTDOT.test(f))
   .concat(/^[0-9a-f]{7,40}$/.test(base) ? [] : ['(the implementer must report a hex base_commit)'])
 const history = [{ round: 0, work }]
+
+// contract 2 test-first (design 6.3, 6.4): run-frozen.js --target red --base <design_commit> runs the manifest's
+// suite.unit_command at red_commit in a throwaway worktree of it (never the work checkout), after refusing a range
+// design_commit..red_commit that is empty or changes a file outside scope.test_paths. RED holds only for a test failure:
+// setup exit 0 when set, not timed out, an integer exit that is nonzero, not 124/126/127 and below 128. Anything else
+// is BLOCKED at stage test-first (E_TEST_FIRST), never a fix round: the red commit is history before the implementation,
+// which no fixer may rewrite. The red run runs once per build run; fix rounds need no new red commit.
+let TEST_FIRST = null
+async function testFirst(w) {
+  const fail = (reason, report) => ({ blocked: true, reason, report })
+  const red = w.red_commit
+  if (typeof red !== 'string' || !/^[0-9a-f]{40}$/.test(red)) return fail('the implementer reported no red_commit (the full 40-hex id of the last test-only commit before the implementation)')
+  const out = `${A.run_dir}/test-first`
+  const rec = `${out}/red.record.json`
+  const rep = await agent(
+    `Test-first check of feature ${A.feature_id}: run the focused tests at the red commit ${red} through run-frozen.js. It runs exactly the frozen manifest's unit command ` +
+    `(never type a test command yourself) in a throwaway worktree of that commit, never in the work checkout, and writes a framed log and a record. ${EXEC_NOTE}` +
+    execBlock(['set -e', `git -C ${q(A.repo)} merge-base --is-ancestor ${red} HEAD || { echo GP_RED_NOT_ANCESTOR; exit 5; }`,
+      `node ${SCRIPT('run-frozen.js')} --repo ${q(A.repo)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} --reviewed-sha ${red} --base ${A.design_commit} --target red --out-dir ${q(out)} 2>&1`,
+      `tr -d '\\n' < ${q(rec)}; echo`].join('\n')) + `\n- ${RULES}`,
+    { label: 'test-first red', phase: 'Red', schema: EXEC, effort: 'low' })
+  if (!rep || rep.blocked) return fail('the test-first red step was blocked', rep)
+  if (/GP_RED_NOT_ANCESTOR/.test(String(rep.stdout || ''))) return fail(`red_commit ${red} is not an ancestor of the work branch HEAD`, rep)
+  const lines = jsonLines(rep.stdout)
+  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let record = lines.find(o => o.target === 'red' && o.log_path)
+  // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
+  let rb = null
+  if ((!printed || !record) && !rbRefused(rep)) {
+    rb = await readback({ step: 'test-first', ph: 'Red', sha: red, clean: PRE.clean_ignore, reads: [{ record: rec, target: 'red' }] })
+    if (!rb.error) {
+      printed = rb.records[0].printed
+      record = rb.records[0].record
+      READBACK.push({ step: 'test-first', record_path: rec })
+    }
+  }
+  const why = rb && rb.error ? ` (no printed record line with record_path ${rec}; readback: ${rb.error})` : ''
+  if (rep.exit_code !== 0 && !(rb && !rb.error)) {
+    const refusal = (String(rep.stdout || '').match(/^run-frozen: .*$/m) || [])[0]
+    return fail((refusal ? `run-frozen.js refused the red run: ${refusal.slice('run-frozen: '.length)}` : 'the red run failed, or its worktree moved or got dirty') + why, rep)
+  }
+  if (!printed || !record || record.target !== 'red' || record.head_before !== red || record.head_after !== red || record.exit_code !== printed.exit_code) {
+    return fail('the red record was not printed for the red commit' + why, rep)
+  }
+  const exit = record.exit_code
+  const setupOk = SUITE_M.setup_command === null ? record.setup === null : !!record.setup && record.setup.exit_code === 0 && record.setup.timed_out === false
+  const bad = !setupOk ? 'the setup_command failed before the red run, so the focused tests never ran'
+    : record.timed_out ? 'the red run timed out: a timeout is not a failing test'
+    : !Number.isInteger(exit) ? 'the red run has no exit code'
+    : exit === 0 ? 'the focused tests passed at red_commit (exit 0): test-first needs them to fail before the implementation'
+    : crash(exit) ? `the red run crashed (exit ${exit}): a crash, a missing command or a signal is not a failing test` : ''
+  if (bad) return fail(`RED does not hold at ${red}: ${bad}; see ${record.log_path}`, rep)
+  return { red_commit: red, record_path: printed.record_path, record_sha256: printed.record_sha256 }
+}
+if (C2) {
+  phase('Red')
+  const tf = await testFirst(work)
+  if (tf.blocked) return disclose({ status: 'BLOCKED', stage: 'test-first', code: 'E_TEST_FIRST', reason: tf.reason, ...(tf.report ? { test_first_run: tf.report } : {}), history })
+  TEST_FIRST = tf
+}
 
 // Review scope = the WHOLE change base_commit..<pinned head>, taken from git, never from the agents' file lists (an
 // unreported file must not escape review). The runner's only diff-aware mode is --uncommitted, so the change is replayed
@@ -729,7 +805,7 @@ for (let round = 1; round <= MAX + 1; round++) {
         base_commit: base, files: [...files], deleted: [...deleted], history, plan_identity: PLAN_IDENTITY,
         suite_identity: { command: SUITE_M.command, known_failure_ids: SUITE_M.known_failure_ids, isolated: SUITE_M.isolated, setup_command: SUITE_M.setup_command, timeout_min: SUITE_M.timeout_min,
           record_path: suite.record_path, record_sha256: suite.record_sha256 },
-        review_files: reviewFiles.slice(), ci_failure_log: CI_LOG, repo_config: { lock_note: A.lock_note || null } })
+        test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG, repo_config: { lock_note: A.lock_note || null } })
     }
     log(`suite failed in round ${round}: ${suite.counts}${suite.completed ? '' : ' (run did not complete)'}`)
   } else if (r.verdict === 'PASS' && (!sec || sec.verdict === 'PASS')) {
@@ -767,11 +843,12 @@ for (let round = 1; round <= MAX + 1; round++) {
   if (!items.length) items.push(`[suite] the suite failed without naming a test (${suite ? suite.counts : 'no result'}); see ${C2 && suite ? suite.log_path : `${A.run_dir}/suite-${round}.txt`}`)
   const fix = await agent(
     `You are fixing feature ${A.feature_id} on ${A.work_branch} (implemented against ${target}).${chargeText}${ciNote}\n` +
-    `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. Add or adjust tests test-first. Commit and push. ${workReport}\nITEMS:\n${items.join('\n')}\n\nRules:\n- ${RULES}`,
+    `Fix each item below for real. If an item is wrong, say why in summary instead of changing code for it. Add or adjust tests test-first. ` +
+    `${C2 ? 'The RED commit of this build is fixed: make no new red commit, and never amend, rebase or rewrite a commit. ' : ''}Commit and push. ${workReport}\nITEMS:\n${items.join('\n')}\n\nRules:\n- ${RULES}`,
     { label: `fix ${round}`, phase: 'Fix', schema: WORK, effort: IMPL_EFFORT })
   if (!fix || fix.blocked) return disclose({ status: 'BLOCKED', stage: 'fix', round, reason: fix ? fix.blocked_reason : 'fixer died', history })
   track(fix)
   history.push({ round, findings: items, fix })
 }
 return disclose({ status: 'FAIL', feature_id: A.feature_id, reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history,
-  ...(C2 ? { plan_identity: PLAN_IDENTITY, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG } : {}) })
+  ...(C2 ? { plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG } : {}) })

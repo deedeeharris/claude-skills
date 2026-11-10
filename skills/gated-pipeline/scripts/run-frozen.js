@@ -3,8 +3,8 @@
 
 // The only way a contract-2 stage executes a frozen command (docs/v2-design.md section 6.4).
 // usage: run-frozen.js --repo <abs> --frozen-dir <dir> --manifest-sha256 <h> --reviewed-sha <sha>
-//          --target check:<ID>|proof:<ACC-ID>|live:<ACC-ID>|suite|negative:<ACC-ID> --out-dir <dir>
-//          [--patch <file>] [--ledger <file>]
+//          --target check:<ID>|proof:<ACC-ID>|live:<ACC-ID>|suite|negative:<ACC-ID>|red --out-dir <dir>
+//          [--patch <file>] [--ledger <file>] [--base <sha>]
 //
 // It never takes a command string: the command is read from <frozen-dir>/execution-plan.json, which must hash to
 // --manifest-sha256. Ids must match their literal patterns (^CHECK-[A-Z0-9][A-Z0-9-]*$,
@@ -34,6 +34,16 @@
 //               Phase time starts at the first negative control: <dirname(out-dir)>/phase-start.json is created
 //               once (O_EXCL); a control that would start after limits.negative_controls_total_min of phase time
 //               writes a NOT_RUN record and exits 1. A patch that does not apply writes no record (exit 1).
+// - red         test-first (design 6.3): --reviewed-sha is the RED commit, --base (required, only for red) the design
+//               commit. Refused (no record) unless --base is a proper ancestor of the red commit and
+//               `git diff --name-only --no-renames <base> <red>` lists at least one file, every one under the
+//               manifest's test_paths (directory-prefix rule; an empty test_paths refuses). Runs suite.unit_command
+//               (required by the v2 manifest schema, so there is no fallback to suite.command), limit
+//               suite.timeout_min, ALWAYS in a fresh detached worktree of the red commit at <out-dir>/red-wt
+//               (removed afterwards; the work checkout is never read or touched), after suite.setup_command when
+//               set (a failed setup skips the run: exit_code null). The record adds base_commit and red_paths; its
+//               head/status describe that worktree. Whether the run is a valid RED (a test failure) is for build and
+//               completion to judge from the record.
 //
 // Every run: the checkout (the repo, or the worktree) must be at reviewed_sha and clean outside the manifest's
 // clean_ignore before (else refused, nothing runs) and is recorded again after; the command runs with
@@ -65,7 +75,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const { parse, StrictJsonError } = require('./lib/strict-json.js');
 const { writeOnce, Refusal, SetupError } = require('./write-json.js');
 
-const FLAGS = ['repo', 'frozen-dir', 'manifest-sha256', 'reviewed-sha', 'target', 'out-dir', 'patch', 'ledger'];
+const FLAGS = ['repo', 'frozen-dir', 'manifest-sha256', 'reviewed-sha', 'target', 'out-dir', 'patch', 'ledger', 'base'];
 const REQUIRED = FLAGS.slice(0, 6);
 const CHECK_ID = /^CHECK-[A-Z0-9][A-Z0-9-]*$/;
 const ACC_ID = /^[A-Z][A-Z0-9]*-[0-9]{3}-AC[0-9]+$/;
@@ -104,9 +114,9 @@ function git(cwd, args, opts = {}) {
 }
 
 function parseTarget(t) {
-  if (t === 'suite') return { kind: 'suite', id: null };
+  if (t === 'suite' || t === 'red') return { kind: t, id: null };
   const m = /^(check|proof|live|negative):(.*)$/.exec(t);
-  if (!m) throw new Refusal(`--target ${JSON.stringify(t)} is not check:<ID>, proof:<ID>, live:<ID>, suite or negative:<ID>`);
+  if (!m) throw new Refusal(`--target ${JSON.stringify(t)} is not check:<ID>, proof:<ID>, live:<ID>, suite, negative:<ID> or red`);
   const pattern = m[1] === 'check' ? CHECK_ID : ACC_ID;
   if (!pattern.test(m[2])) throw new Refusal(`--target id ${JSON.stringify(m[2])} does not match ${pattern}`);
   return { kind: m[1], id: m[2] };
@@ -384,6 +394,9 @@ async function main(argv) {
     if ((target.kind === 'proof' || target.kind === 'live') && !ledger) throw new SetupError(`--target ${target.kind}: needs --ledger`);
     if (target.kind === 'negative' && !patch) throw new SetupError('--target negative: needs --patch');
     if (target.kind !== 'negative' && patch) throw new SetupError('--patch is only for --target negative:<ID>');
+    if (target.kind === 'red' && args.base === undefined) throw new SetupError('--target red: needs --base <design_commit>');
+    if (target.kind !== 'red' && args.base !== undefined) throw new SetupError('--base is only for --target red');
+    if (args.base !== undefined && !/^[0-9a-f]{40}$/.test(args.base)) throw new SetupError('--base must be a full 40-hex SHA');
 
     let spec; // { command, limitS, timeoutMin, budgetMin }
     if (target.kind === 'check') {
@@ -400,6 +413,9 @@ async function main(argv) {
     } else if (target.kind === 'suite') {
       const s = manifest.suite;
       spec = { command: singleLine(s.command, 'suite'), limitS: s.timeout_min * spm, timeoutMin: s.timeout_min, budgetMin: null, setup: s.setup_command };
+    } else if (target.kind === 'red') {
+      const s = manifest.suite;
+      spec = { command: singleLine(s.unit_command, 'suite.unit_command'), limitS: s.timeout_min * spm, timeoutMin: s.timeout_min, budgetMin: null, setup: s.setup_command };
     }
     for (const cmd of spec ? [spec.command, spec.setup].filter(x => typeof x === 'string') : []) {
       if (cmd.includes(realRepo) || cmd.includes(args.repo) || cmd.includes(path.resolve(args.repo))) throw new Refusal(`the frozen command holds the repo's absolute path: ${cmd}`);
@@ -437,9 +453,27 @@ async function main(argv) {
 
     if (target.kind === 'negative') return await negative({ args, target, manifest, manifestSha, sha, realRepo, outDir, patch, ignores, spec, recordPath, write, printed });
 
-    // check, proof, suite
+    // red: the range base..red must be test-only (design 6.3) before anything runs.
+    let red = null;
+    if (target.kind === 'red') {
+      const base = args.base;
+      if (base === sha || git(realRepo, ['merge-base', '--is-ancestor', base, sha], { allowFail: true }).status !== 0) throw new Refusal(`--base ${base} is not a proper ancestor of the red commit ${sha}`);
+      const testPaths = Array.isArray(manifest.test_paths) ? manifest.test_paths : [];
+      if (!testPaths.length) throw new Refusal('the manifest has no test_paths: a red commit can only change files under scope.test_paths');
+      const paths = git(realRepo, ['diff', '--name-only', '--no-renames', '-z', base, sha]).stdout.split('\0').filter(Boolean).sort();
+      if (!paths.length) throw new Refusal(`the red commit ${sha} changes no file since ${base}`);
+      const outside = paths.filter(p => !covered(p, testPaths));
+      if (outside.length) throw new Refusal(`the red range ${base}..${sha} changes files outside scope.test_paths: ${outside.join(', ')}`);
+      red = { base_commit: base, red_paths: paths };
+    }
+
+    // check, proof, suite, red
     let cwd = realRepo, worktree = null;
-    if (target.kind === 'suite' && manifest.suite.isolated) {
+    if (target.kind === 'red') {
+      worktree = path.join(outDir, 'red-wt');
+      addWorktree(realRepo, worktree, sha);
+      cwd = worktree;
+    } else if (target.kind === 'suite' && manifest.suite.isolated) {
       worktree = path.join(outDir, 'suite-wt');
       addWorktree(realRepo, worktree, sha);
       cwd = worktree;
@@ -449,22 +483,22 @@ async function main(argv) {
       if (before.head !== sha) throw new Refusal(`the checkout ${cwd} is at ${before.head}, not reviewed_sha ${sha}`);
       if (before.dirty.length) throw new Refusal(`the checkout ${cwd} is not clean outside clean_ignore: ${before.dirty.join('; ')}`);
       let setup = null;
-      if (target.kind === 'suite' && typeof spec.setup === 'string') {
-        const s = await runFramed({ command: spec.setup, cwd, target: 'suite.setup', head: sha, logPath: path.join(outDir, 'suite.setup.log'), limitS: spec.limitS });
+      if ((target.kind === 'suite' || target.kind === 'red') && typeof spec.setup === 'string') {
+        const s = await runFramed({ command: spec.setup, cwd, target: args.target + '.setup', head: sha, logPath: path.join(outDir, args.target + '.setup.log'), limitS: spec.limitS });
         setup = { exit_code: s.exit_code, log_path: s.log_path, log_sha256: s.log_sha256, timed_out: s.timed_out };
       }
       const logPath = path.join(outDir, args.target + '.log');
       let run;
       if (setup && (setup.exit_code !== 0 || setup.timed_out)) {
         fs.writeFileSync(logPath, 'gp-run-frozen header ' + JSON.stringify({ target: args.target, command: spec.command, cwd, head: sha }) +
-          '\nsuite not run: setup failed\n\ngp-run-frozen footer ' + JSON.stringify({ exit_code: null, signal: null, elapsed_s: 0 }) + '\n', { flag: 'wx' });
+          `\n${args.target} not run: setup failed\n\ngp-run-frozen footer ` + JSON.stringify({ exit_code: null, signal: null, elapsed_s: 0 }) + '\n', { flag: 'wx' });
         run = { exit_code: null, signal: null, timed_out: false, elapsed_s: 0, log_path: logPath, log_sha256: sha256(fs.readFileSync(logPath)) };
       } else run = await runFramed({ command: spec.command, cwd, target: args.target, head: sha, logPath, limitS: spec.limitS });
       const after = checkoutState(cwd, ignores);
       const rec = { target: args.target, command: spec.command, cwd, head_before: before.head, head_after: after.head, status_before: before.status,
         status_after: after.status, timeout_s: spec.limitS, timeout_min: spec.timeoutMin, budget_min: spec.budgetMin, elapsed_s: run.elapsed_s,
         exit_code: run.exit_code, signal: run.signal, timed_out: run.timed_out, log_path: run.log_path, log_sha256: run.log_sha256,
-        manifest_sha256: manifestSha, setup };
+        manifest_sha256: manifestSha, setup, ...(red || {}) };
       const w = write(rec);
       if (target.kind === 'proof') appendLedger(ledger, { id: target.id, live: false, record_path: recordPath, record_sha256: w.sha256 });
       process.stdout.write(JSON.stringify(printed(w, rec)) + '\n');

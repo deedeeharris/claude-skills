@@ -378,7 +378,8 @@ function check(args) {
 //   build result        v1 fields + contract 2, build_mode "v2", plan_identity { design_commit, source_sha256,
 //                         manifest_sha256, approvals_sha256, preflight_path, preflight_sha256 }, suite_identity
 //                         { command, known_failure_ids, isolated, setup_command, timeout_min, record_path,
-//                         record_sha256 }, review_files [ { step: implementation|security, round, reviewer,
+//                         record_sha256 }, test_first { red_commit, record_path, record_sha256 } (the run-frozen
+//                         --target red record), review_files [ { step: implementation|security, round, reviewer,
 //                         review_dir, result_path + result_sha256 | inputs_path + inputs_sha256 +
 //                         fallback_review_path + fallback_review_sha256 | raw_path + raw_sha256 } ], history
 //                         (tests_added in history[].work / history[].fix), optional repo_config
@@ -1025,6 +1026,37 @@ function completionV2(args) {
     need(!named.length, 'E_SUITE', `known failure ${id} names a test this build added or changed: ${named.join(', ')}`);
   }
 
+  // test-first (design 6.3, 6.5): a RED commit of tests only, after the design commit and before the reviewed SHA,
+  // at which run-frozen.js --target red ran the frozen unit command in a throwaway worktree and it FAILED as a test
+  // failure (integer exit, nonzero, not 124/126/127, below 128, not timed out). Re-derived from git and the record.
+  const tf = build.test_first;
+  need(keysExactly(tf, ['red_commit', 'record_path', 'record_sha256']) && SHA.test(tf.red_commit || ''), 'E_TEST_FIRST',
+    'a contract-2 build result needs test_first { red_commit (40-hex), record_path, record_sha256 }');
+  const redCommit = tf.red_commit;
+  const redResolved = gitBuf(repo, ['rev-parse', '--verify', '--quiet', redCommit + '^{commit}']);
+  need(redResolved.ok && redResolved.stdout.toString().trim() === redCommit, 'E_TEST_FIRST', 'the red commit does not resolve: ' + redCommit);
+  const isAncestor = (a, b) => spawnSync('git', ['-C', repo, 'merge-base', '--is-ancestor', a, b]).status === 0;
+  need(redCommit !== designCommit && isAncestor(designCommit, redCommit), 'E_TEST_FIRST', `the red commit ${redCommit} is not a proper descendant of the design commit ${designCommit}`);
+  need(redCommit !== sha && isAncestor(redCommit, sha), 'E_TEST_FIRST', `the red commit ${redCommit} is not a proper ancestor of the reviewed SHA ${sha}: the implementation must come after it`);
+  const redPaths = git(repo, ['diff', '--name-only', '--no-renames', '-z', designCommit, redCommit]).split('\0').filter(Boolean).sort();
+  need(redPaths.length > 0, 'E_TEST_FIRST', `the red commit ${redCommit} changes no file since the design commit`);
+  const redOutside = redPaths.filter(f => !testPaths.some(t => insideEntry(f, t)));
+  need(!redOutside.length, 'E_TEST_FIRST', `the red range ${designCommit}..${redCommit} changes files outside scope.test_paths: ${redOutside.join(', ')}`);
+  const red = frozenRecord(ctx, tf.record_path, tf.record_sha256, 'test-first red record', { target: 'red', command: ms.unit_command, sha: redCommit, ignores: cleanIgnore, protectedPaths });
+  const rr = red.record;
+  need(typeof rr.cwd === 'string' && path.resolve(rr.cwd) !== repo && !within(repo, path.resolve(rr.cwd)), 'E_TEST_FIRST', 'the red run did not run in a throwaway worktree outside the work checkout');
+  need(rr.base_commit === designCommit && JSON.stringify(rr.red_paths) === JSON.stringify(redPaths), 'E_TEST_FIRST', 'the red record names another base or other red paths than git');
+  need(rr.timeout_s > 0 && rr.timeout_s <= ms.timeout_min * 60, 'E_TEST_FIRST', 'the red run ran under another limit than suite.timeout_min');
+  if (ms.setup_command !== null) {
+    need(isObj(rr.setup) && rr.setup.exit_code === 0 && rr.setup.timed_out === false, 'E_TEST_FIRST', 'the setup_command did not exit 0 before the red run');
+    const rf = readFooter(rr.setup.log_path);
+    framedLog(ctx, rr.setup.log_path, rr.setup.log_sha256, 'red setup', { target: 'red.setup', command: ms.setup_command, cwd: rr.cwd, head: redCommit }, { exit_code: rr.setup.exit_code, signal: rf.signal, elapsed_s: rf.elapsed_s });
+  } else need(rr.setup === null, 'E_TEST_FIRST', 'a red record without setup_command must have setup null');
+  need(rr.timed_out === false, 'E_TEST_FIRST', 'the red run timed out: a timeout is not a failing test');
+  need(Number.isInteger(rr.exit_code), 'E_TEST_FIRST', 'the red record has no integer exit_code');
+  need(rr.exit_code !== 0, 'E_TEST_FIRST', 'the focused tests passed at the red commit (exit 0): test-first needs them to fail before the implementation');
+  need(!crashCode(rr.exit_code), 'E_TEST_FIRST', `the red run crashed (exit ${rr.exit_code}): a crash, a missing command or a signal is not a failing test`);
+
   // reviews, re-derived from the files.
   const br = reviewFiles(ctx, 'build', build.review_files, ['implementation', 'security'], { implementation: build.review.verdict, security: build.security.verdict }, manifest);
   const vr = reviewFiles(ctx, 'verify', verify.review_files, ['final', 'compliance'], { final: verify.final_review.verdict, compliance: compliance.verdict }, manifest);
@@ -1196,6 +1228,7 @@ function completionV2(args) {
     suite: { status: seen.length ? 'KNOWN_BASELINE_FAILURES' : 'GREEN', completed: true, exit_code: sr.exit_code, log_path: suiteLog.path, log_sha256: suiteLog.sha256,
       record_path: path.resolve(si.record_path), record_sha256: si.record_sha256 },
     known_failures_seen: seen,
+    test_first: { red_commit: redCommit, record_path: red.path, record_sha256: red.sha256, command: rr.command, exit_code: rr.exit_code, red_paths: redPaths },
     negative_controls: negative,
     repo_config: { build: isObj(build.repo_config) ? build.repo_config : null, verify: isObj(verify.repo_config) ? verify.repo_config : null },
     trunk_qualification: trunk,

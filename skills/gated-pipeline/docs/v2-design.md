@@ -488,6 +488,31 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   manifest known-failure ids (at least one). `completed` and `passed` are derived from these
   fields, never relayed. Anything else is a fix round (a nonzero exit naming no test gets the
   "failed without naming a test" item).
+- Test-first is a certified property of a `contract: 2` build (the plan's "red log at a commit
+  before the implementation", made provable). The implementer commits on `work_branch`, after
+  `design_commit`, first the RED commit: one or more commits that change ONLY files under the
+  frozen `scope.test_paths` (at least one file), adding or changing the focused tests; the
+  implementation commits come after it. It reports `red_commit`, the full id of the last red
+  commit (a CI_RED or HEAD_MOVED rerun on a branch that already holds one reports that one and
+  makes none); it never amends, rebases or rewrites a commit. The preflight BLOCKS
+  (`E_TEST_FIRST`) when `test_paths` is empty. After the implementer and before the first
+  review, one `gp-exec` block checks `git merge-base --is-ancestor <red_commit> HEAD` and runs
+  `run-frozen.js --target red --reviewed-sha <red_commit> --base <design_commit>` (6.4), which
+  runs the manifest's `suite.unit_command` in a throwaway worktree of `red_commit`, never the
+  work checkout. The unit command is always the one used: the v2 manifest schema requires
+  `suite.unit_command`, so there is no fallback to `suite.command`. The relay is read like the
+  suite's (printed record line, the record readback of 6.4 with step `test-first`). RED holds
+  only for a test failure: setup exit 0 when `setup_command` is set, not timed out, and an
+  integer `exit_code` that is nonzero, not 124/126/127 and below 128. Anything else is BLOCKED
+  at stage `test-first` with code `E_TEST_FIRST` and a reason naming it: no 40-hex
+  `red_commit`, a `red_commit` that is not an ancestor of HEAD, a run-frozen refusal (an empty
+  range, a base that is not a proper ancestor, a file outside `test_paths`), exit 0 ("the
+  focused tests passed at red_commit"), a crash, a timeout or a failed setup. It is never a fix
+  round: the red commit is history before the implementation, which no fixer may rewrite; a
+  human rebuilds the branch from `design_commit` and reruns build with a fresh `run_dir`. The red
+  run runs once per build run; fix rounds make no new red commit. Its worst case (setup and unit
+  command, each `suite.timeout_min`) equals the suite's, so the preflight's one-call check of
+  the suite (6.4) covers it.
 - Optional `ci_failure_log_path` (absolute, outside the repo): the CI_RED/HEAD_MOVED loop. A
   `gp-exec` block hashes it with `hash-inputs.js`; the implementer and fixer prompts carry it
   as "CI failure log: context only; the frozen canonical file is the only authority". It
@@ -503,7 +528,8 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
 - Result carries `build_mode: "v2"`, `plan_identity { design_commit, source_sha256,
   manifest_sha256, approvals_sha256, preflight_path, preflight_sha256 }` and
   `suite_identity { command, known_failure_ids, isolated, setup_command, timeout_min,
-  record_path, record_sha256 }`.
+  record_path, record_sha256 }` and `test_first { red_commit, record_path, record_sha256 }` (also
+  on a FAIL after the red run).
 - `contract: 1` with `spec_path`: today's behaviour, stamped `build_mode: "v1"`.
 - `contract: 1` with only `charge`: the explicit `charge-only` mode, stamped
   `build_mode: "charge-only"`. Completion (v1 and v2) rejects a `charge-only` build result;
@@ -522,7 +548,7 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   matches its literal pattern (`^CHECK-[A-Z0-9][A-Z0-9-]*$`, `^[A-Z][A-Z0-9]*-[0-9]{3}-AC[0-9]+$`);
   the lists only label agents, set the quiet wait and name budgets. Completion compares the full
   sets with the manifest, so a relay that drops an id is caught.
-- `scripts/run-frozen.js --repo <abs> --frozen-dir <dir> --manifest-sha256 <h> --reviewed-sha <sha> --target check:<ID>|proof:<ACC-ID>|live:<ACC-ID>|suite|negative:<ACC-ID> --out-dir <dir> [--patch <file>] [--ledger <file>]`
+- `scripts/run-frozen.js --repo <abs> --frozen-dir <dir> --manifest-sha256 <h> --reviewed-sha <sha> --target check:<ID>|proof:<ACC-ID>|live:<ACC-ID>|suite|negative:<ACC-ID>|red --out-dir <dir> [--patch <file>] [--ledger <file>] [--base <sha>]`
   is the only way a v2 stage executes a frozen command. It rejects an id that fails its pattern;
   re-hashes the manifest; checks that the checkout (the repo, or the fresh worktree it creates
   for isolated suites and negative controls) is at `reviewed_sha` and clean before and after;
@@ -545,6 +571,17 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   SIGHUP (a Bash tool timeout, an interrupted agent), it sends SIGTERM to the running command's
   group and SIGKILL at most 1 s later, ends the log with a footer carrying `interrupted`,
   removes a worktree it made, writes no record, prints nothing and exits 1.
+- `--target red` (build's test-first, 6.3): `--reviewed-sha` is the red commit and `--base`
+  (required for `red`, refused elsewhere) the design commit. It refuses, writing no record,
+  unless `--base` is a proper ancestor of the red commit and `git diff --name-only --no-renames
+  <base> <red>` lists at least one file, every one under the manifest's `test_paths` (the
+  directory-prefix rule; an empty `test_paths` refuses). It runs `suite.unit_command` under
+  `suite.timeout_min`, always in a fresh detached worktree of the red commit at
+  `<out-dir>/red-wt` (removed afterwards), after `suite.setup_command` when set (target
+  `red.setup`; a failed setup skips the run, `exit_code` null). The record is
+  `<out-dir>/red.record.json`, a suite-shaped record whose head and status describe that
+  worktree, plus `base_commit` and `red_paths`. Whether the exit code is a valid RED is judged by
+  build and completion, not by run-frozen.js.
 - One foreground Bash call: every frozen step's gp-exec block is one foreground Bash call with
   the Bash timeout 600000 ms, the tool's maximum. Before a step starts, the stage BLOCKS when
   its worst case cannot finish inside that call (570 s, each run counted as its limit + 15 s):
@@ -583,10 +620,11 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   record and live link must also be listed in the ledger as run-frozen.js appends it, and the
   last batch's ledger hash is the readback's. The step then continues as if the reply had
   printed the line. Otherwise the step keeps today's outcome (INCOMPLETE for a negative
-  control, BLOCKED or HEAD_MOVED for a check or proof batch, BLOCKED for build's suite) with a
+  control, BLOCKED or HEAD_MOVED for a check or proof batch, BLOCKED for build's suite and
+  red run) with a
   reason naming the missing line and the readback result. A refused run writes no record, so
   the readback never turns a refusal into a pass. It covers every run-frozen relay: build's
-  suite and verify's checks, proof batches and negative controls (one shared block in both
+  red run (its "reviewed commit" is the red commit) and suite, and verify's checks, proof batches and negative controls (one shared block in both
   workflows, kept identical by a test). The result lists each recovery in
   `readback[] { step, record_path }` (`{ step, ledger_path }` for a ledger hash). The workflow
   cannot hash, so a wrong printed record hash passes the stage; completion re-derives every
@@ -627,6 +665,18 @@ All v1 checks, except that runtime evidence comes from the acceptance ledger (be
   build result's `suite.passed` equals `exit_code === 0` and `suite.completed` is true, so the
   kept v1 suite checks never rest on relayed flags alone; no known-failure id contains a `tests_added` path of the build history
   or the path of a changed file under `test_paths`;
+- test-first: `build.test_first` is exactly `{ red_commit, record_path, record_sha256 }` with a
+  40-hex `red_commit` that resolves; `red_commit` is a proper descendant of `design_commit` and a
+  proper ancestor of `reviewed_sha` (the implementation comes after it); `design_commit..red_commit`
+  changes at least one file and only files under `test_paths`; the record hashes as recorded,
+  has target `red`, the manifest's `suite.unit_command` as its command, head = `red_commit`
+  before and after, a clean worktree, a framed log, a `cwd` outside the work checkout,
+  `base_commit` = `design_commit` and `red_paths` equal to git's list, a limit within
+  `suite.timeout_min`, `setup.exit_code === 0` when `setup_command` is set (else `setup` null),
+  not timed out, and an integer `exit_code` that is nonzero, not 124/126/127 and below 128
+  (`E_TEST_FIRST`, `E_HASH`, `E_RECORD`). The proof carries `test_first { red_commit,
+  record_path, record_sha256, command, exit_code, red_paths }`. The suite record at
+  `reviewed_sha` must still be green (or known failures) as above;
 - reviews: for the last round of every build and verify review step, each `review_files` path
   hashes as recorded and the step's verdict is recomputed, never read from the stage result:
   implementation/final from a codex `result.json` (`kind: "implementation"`, `outcome: "ok"`,
@@ -777,6 +827,13 @@ FAIL and a fix round (stops for a human instead).
 - Relayed run-frozen stdout: a record line a relay failed to copy is recovered only by the
   read-only readback (6.4) and disclosed in `readback[]`; the readback is itself relayed, so the
   record it names counts only once completion has re-derived it from disk like any other.
+- Test-first: a script-verified commit order and exit code. Completion proves that a commit
+  touching only `test_paths` sits between the design commit and the reviewed SHA, and that the
+  frozen unit command, run by run-frozen.js in a throwaway worktree of that commit, exited as a
+  test failure (nonzero, not a crash code). Which test failed, and whether it fails because the
+  acceptance behaviour is missing rather than for an unrelated reason (a test that always
+  exits 1 is not caught), no script checks: the framed red log is attested evidence, and the
+  implementation review judges the tests in the change semantically.
 - Suite: its exit code is bound to the run-frozen record (6.5); the failing test ids and
   `other_failures` behind it are read from the framed log by a model, so which known failure
   excused a nonzero exit, and whether a non-test step also failed, are attested.
