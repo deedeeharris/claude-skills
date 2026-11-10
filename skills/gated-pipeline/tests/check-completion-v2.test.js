@@ -247,6 +247,13 @@ test('approvals: Opus fallback records with script-hashed inputs freeze too', t 
   passed(c.approvals());
 });
 
+test('approvals: Opus records labelled configured reviewer (reviews.reviewer: opus-high) freeze; a record whose file carries the other Opus label is exit 1', t => {
+  const c = ledger(t, [{ snap: 1 }, { gate: 'prd', rev: 1, review: { reviewer: 'configured' } }, { gate: 'spec', rev: 1, review: { reviewer: 'configured' } }]);
+  passed(c.approvals());
+  const d = ledger(t, [{ snap: 1 }, { gate: 'prd', rev: 1, review: { reviewer: 'configured', fileReviewer: 'claude-opus-high (codex unavailable)' } }, { gate: 'spec', rev: 1, review: { reviewer: 'configured' } }]);
+  blocked(d.approvals(), 'E_APPROVALS', /fallback-review\.json reviewer must be the record's claude-opus-high \(configured reviewer\)/);
+});
+
 test('approvals: an edited fallback-review.json is exit 1', t => {
   const c = ledger(t, [{ snap: 1 }, { gate: 'prd', rev: 1, review: { reviewer: 'fallback' } }, { gate: 'spec', rev: 1, review: { reviewer: 'fallback' } }]);
   const fb = c.records[1].fallback_review_path;

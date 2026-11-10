@@ -105,6 +105,7 @@ if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
 if (A.review_timeout_seconds !== undefined && !(Number.isInteger(A.review_timeout_seconds) && A.review_timeout_seconds > 0)) return { status: 'BLOCKED', reason: 'review_timeout_seconds must be a positive integer' }
 if (A.review_fallback !== undefined && !['none', 'opus-high'].includes(A.review_fallback)) return { status: 'BLOCKED', reason: 'review_fallback must be none|opus-high' }
+if (A.reviewer !== undefined && !['codex', 'opus-high'].includes(A.reviewer)) return { status: 'BLOCKED', reason: 'reviewer must be codex|opus-high' }
 const TIMEOUT_S = A.review_timeout_seconds || 1200
 const RULES = [
   `Repo: ${A.repo}, branch ${A.work_branch}. Do not change code in this stage; you only run checks and report.`,
@@ -139,6 +140,15 @@ const COMPLY = {
 // The compliance relay also reports whether codex exists here at all; the Opus stand-in uses the plain schema.
 const relay = s => ({ ...s, properties: { ...s.properties, codex_available: { type: 'boolean' } }, required: [...s.required, 'codex_available'] })
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
+// The repo's either/or reviewer choice (pipeline.yaml reviews.reviewer, stage arg reviewer): codex (the default) keeps codex
+// with the optional review_fallback above; opus-high runs EVERY review with Opus 5.5 at high effort directly (no codex probe,
+// no codex call), labelled CONFIGURED_REVIEWER. Either Opus label is a Claude review: never cross-family.
+const CONFIGURED_REVIEWER = 'claude-opus-high (configured reviewer)'
+const OPUS_ONLY = A.reviewer === 'opus-high'
+const OPUS_LABEL = OPUS_ONLY ? CONFIGURED_REVIEWER : FALLBACK_REVIEWER
+const OPUS_TAG = OPUS_ONLY ? 'configured reviewer' : 'codex unavailable'
+const opusRole = what => OPUS_ONLY ? `The repo config chose reviews.reviewer: opus-high, so YOU ${what}.`
+  : `Codex is not available in this environment, so YOU ${what} in its place (the repo config chose review_fallback: opus-high).`
 
 // Opus fallback parity with codex-review: same rubric file, severity scale and verdict rule as run-review.js
 // (computeTriggers/computeVerdict). The reviewer reports findings; the verdict is computed here, never by the model.
@@ -310,6 +320,12 @@ const reviewers = []
 const READBACK = []
 const disclose = o => ({ ...o, ...(C2 ? { contract: 2, readback: READBACK.slice() } : {}), reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
 async function reviewed(step, gate, viaCodex, fallback) {
+  if (OPUS_ONLY) {
+    const f = await fallback()
+    const res = f && { ...f, codex_available: false, reviewer: CONFIGURED_REVIEWER }
+    if (res) reviewers.push({ step, reviewer: res.reviewer })
+    return res
+  }
   const r = await viaCodex()
   let res
   // An explicit relay blocker (refused command, failed setup, stale out dir) always stops the stage; it never falls back.
@@ -461,12 +477,12 @@ async function recordFallback({ step, round, dir, reply, inputs, ph, label }) {
     `Record the Opus fallback ${step} review: ${inputs ? 're-hash its inputs (hash-inputs.js --verify fails if any changed during the review), then ' : ''}` +
     `write its reply verbatim with the skill's write-json.js (strict JSON, written once and atomically; it prints { path, sha256 }). ${EXEC_NOTE}` +
     execBlock(['set -e', ...(inputs ? [`node ${SCRIPT('hash-inputs.js')} --verify ${q(dir + '/inputs.json')}`] : []),
-      writeJsonBlock(file, { gate_kind: step, reviewer: FALLBACK_REVIEWER, reply }), ...(inputs ? [`sha256sum ${q(dir + '/inputs.json')}`] : [])].join('\n')) + `\n- ${RULES}`,
+      writeJsonBlock(file, { gate_kind: step, reviewer: OPUS_LABEL, reply }), ...(inputs ? [`sha256sum ${q(dir + '/inputs.json')}`] : [])].join('\n')) + `\n- ${RULES}`,
     { label: `record opus ${label}`, phase: ph, schema: EXEC, effort: 'low' })
   const w = r && !r.blocked && r.exit_code === 0 ? jsonLines(r.stdout).find(o => o.path === file && HEX64.test(o.sha256 || '')) : null
   const inSha = r && inputs ? shaOf(r.stdout, dir + '/inputs.json') : null
   if (!w || (inputs && !HEX64.test(inSha || ''))) return { error: `the fallback ${step} review record was not written: ${r ? r.stdout : 'no reply'}` }
-  return { entry: { step, round, reviewer: FALLBACK_REVIEWER, review_dir: dir,
+  return { entry: { step, round, reviewer: OPUS_LABEL, review_dir: dir,
     ...(inputs ? { inputs_path: dir + '/inputs.json', inputs_sha256: inSha, fallback_review_path: file, fallback_review_sha256: w.sha256 } : { raw_path: file, raw_sha256: w.sha256 }) } }
 }
 async function reviewFile({ step, round, out, fb, res, raw, ph, label, rawName }) {
@@ -643,11 +659,11 @@ if (C2) {
     `${finNote(out)}${relayRead(out, 'implementation')}\n- ${RULES}`,
     { label: 'codex final review', phase: 'Final review', schema: RELAY, effort: 'low' }),
   () => agent(
-    `Codex is not available in this environment, so YOU are the independent final implementation reviewer of the CHANGE in its place (the repo config chose review_fallback: opus-high).\n` +
+    `${opusRole(`are the independent final implementation reviewer of the CHANGE`)}\n` +
     fallbackSteps(['set -e', gpFresh(fbOut), finSetup(fbOut), ...fbInputs(fbOut)].join('\n'), [gpUnwt(fbOut + '/wt'), gpList(fbOut)].join('\n')) + finNote(fbOut) +
     `Review the change as it stands in that checkout (git -C ${q(fbOut + '/wt')} diff --cached is the whole change ${base}..${sha}; read any other file there for context) ` +
     `for correctness bugs, behaviour that contradicts the frozen canonical file ${A.spec_path}, and unsafe code. Report findings ONLY in that change. ${parityNote('implementation')}\n- ${RULES}`,
-    { label: 'opus final review (codex unavailable)', phase: 'Final review', schema: PARITY_SCHEMA({ head_sha: { type: 'string' } }), model: 'opus', effort: 'high' }).then(f => { finRaw = f; return gateFallback('implementation', f) }))
+    { label: `opus final review (${OPUS_TAG})`, phase: 'Final review', schema: PARITY_SCHEMA({ head_sha: { type: 'string' } }), model: 'opus', effort: 'high' }).then(f => { finRaw = f; return gateFallback('implementation', f) }))
   fin = await reviewFile({ step: 'final', round: 1, out, fb: fbOut, res: fin, raw: finRaw, ph: 'Final review', label: 'final review' })
   if (!fin || fin.blocked || fin.verdict === 'ERROR' || (fin.verdict === 'NEEDS_HUMAN' && !fin.confirmed_findings.length)) return disclose({ status: 'BLOCKED', stage: 'final review', checks, final_review: fin })
   if (fin.verdict === 'PASS' && fin.confirmed_findings.length) fin.verdict = 'FAIL'
@@ -679,13 +695,13 @@ if (C2) {
     `Around all of the blocks (on the main repo, not the isolated checkout): ${stateNote}\n- ${RULES}`,
     { label: 'codex spec compliance', phase: 'Final review', schema: RAW_RELAY(COMPLY), effort: 'low' }),
   () => agent(
-    `Codex is not available in this environment, so YOU run the independent SPEC-COMPLIANCE trace in its place (the repo config chose review_fallback: opus-high). Do not change any file.\n` +
+    `${opusRole(`run the independent SPEC-COMPLIANCE trace`)} Do not change any file.\n` +
     fallbackSteps(['set -e', gpFresh(compFb), compIsolate(compFb)].join('\n'), [gpUnwt(compFb + '/wt'), gpList(compFb)].join('\n')) +
     `Work in the isolated checkout of the reviewed commit at ${compFb}/wt.\n` +
     `1. ${compTask}\n` +
     `2. Return verdict, requirements (each shaped exactly as the requirements items in ${A.compliance_schema}: id, status and evidence records), and EVERY finding as blocking (each one is a requirement missing, wrong or unproven).\n` +
     `Around the setup, the trace and the cleanup (on the main repo, not the isolated checkout): ${stateNote}\n- ${RULES}`,
-    { label: 'opus spec compliance (codex unavailable)', phase: 'Final review', schema: COMPLY, model: 'opus', effort: 'high' }).then(f => { compRaw = f; return f }))
+    { label: `opus spec compliance (${OPUS_TAG})`, phase: 'Final review', schema: COMPLY, model: 'opus', effort: 'high' }).then(f => { compRaw = f; return f }))
   comp = await reviewFile({ step: 'compliance', round: 1, out: cout, fb: compFb, res: comp, raw: compRaw, ph: 'Final review', label: 'compliance', rawName: 'compliance.json' })
   if (!comp || comp.blocked || comp.verdict === 'ERROR') return disclose({ status: 'BLOCKED', stage: 'compliance', checks, final_review: fin, compliance: comp })
   if (comp.blocking.length) comp.verdict = 'FAIL'
@@ -833,11 +849,11 @@ const fin = await reviewed('final review', r => gateCodex('implementation', r), 
   `${finNote(out)}${relayRead(out, 'implementation')}\n- ${RULES}`,
   { label: 'codex final review', phase: 'Final review', schema: RELAY, effort: 'low' }),
 () => agent(
-  `Codex is not available in this environment, so YOU are the independent final implementation reviewer of the CHANGE in its place (the repo config chose review_fallback: opus-high).\n` +
+  `${opusRole(`are the independent final implementation reviewer of the CHANGE`)}\n` +
   fallbackSteps(['set -e', gpFresh(fbOut), finSetup(fbOut)].join('\n'), [gpUnwt(fbOut + '/wt'), gpList(fbOut)].join('\n')) + finNote(fbOut) +
   `Review the change as it stands in that checkout (git -C ${q(fbOut + '/wt')} diff --cached is the whole change ${A.base_commit}..${A.reviewed_sha}; read any other file there for context) ` +
   `for correctness bugs, behaviour that contradicts the spec ${A.spec_path}, and unsafe code. Report findings ONLY in that change. ${parityNote('implementation')}\n- ${RULES}`,
-  { label: 'opus final review (codex unavailable)', phase: 'Final review', schema: PARITY_SCHEMA({ head_sha: { type: 'string' } }), model: 'opus', effort: 'high' }).then(f => gateFallback('implementation', f)))
+  { label: `opus final review (${OPUS_TAG})`, phase: 'Final review', schema: PARITY_SCHEMA({ head_sha: { type: 'string' } }), model: 'opus', effort: 'high' }).then(f => gateFallback('implementation', f)))
 if (!fin || fin.blocked || fin.verdict === 'ERROR' || (fin.verdict === 'NEEDS_HUMAN' && !fin.confirmed_findings.length)) return disclose({ status: 'BLOCKED', stage: 'final review', results, final_review: fin })
 // Findings decide, not the self-reported verdict.
 if (fin.verdict === 'PASS' && fin.confirmed_findings.length) fin.verdict = 'FAIL'
@@ -869,13 +885,13 @@ const comp = await reviewed('compliance', r => r, () => agent(
   `Around all of the blocks (on the main repo, not the isolated checkout): ${stateNote}\n- ${RULES}`,
   { label: 'codex spec compliance', phase: 'Final review', schema: relay(COMPLY), effort: 'low' }),
 () => agent(
-  `Codex is not available in this environment, so YOU run the independent SPEC-COMPLIANCE trace in its place (the repo config chose review_fallback: opus-high). Do not change any file.\n` +
+  `${opusRole(`run the independent SPEC-COMPLIANCE trace`)} Do not change any file.\n` +
   fallbackSteps(['set -e', gpFresh(compFb), compIsolate(compFb)].join('\n'), [gpUnwt(compFb + '/wt'), gpList(compFb)].join('\n')) +
   `Work in the isolated checkout of the reviewed commit at ${compFb}/wt.\n` +
   `1. ${compTask}\n` +
   `2. Return verdict, requirements (each shaped exactly as the requirements items in ${A.compliance_schema}: id, status and evidence records copied from the ledger), and EVERY finding as blocking (each one is a requirement missing, wrong or unproven).\n` +
   `Around the setup, the trace and the cleanup (on the main repo, not the isolated checkout): ${stateNote}\n- ${RULES}`,
-  { label: 'opus spec compliance (codex unavailable)', phase: 'Final review', schema: COMPLY, model: 'opus', effort: 'high' }))
+  { label: `opus spec compliance (${OPUS_TAG})`, phase: 'Final review', schema: COMPLY, model: 'opus', effort: 'high' }))
 if (!comp || comp.blocked || comp.verdict === 'ERROR') return disclose({ status: 'BLOCKED', stage: 'compliance', results, final_review: fin, compliance: comp })
 if (comp.blocking.length) comp.verdict = 'FAIL'
 const compDrift = pinned(comp)

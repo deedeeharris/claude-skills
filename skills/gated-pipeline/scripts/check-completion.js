@@ -433,6 +433,11 @@ const gateRule = require('./lib/gate-rule.js');
 
 const V2_ONLY = ['frozen-dir', 'approvals', 'approvals-sha256', 'trunk-ref', 'commit', 'expect-parent', 'source'];
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)';
+// The repo's either/or choice reviews.reviewer: opus-high labels every Opus review CONFIGURED_REVIEWER. Both Opus labels are
+// Claude reviews: fallback_used counts only FALLBACK_REVIEWER, and cross_family is false when either appears.
+const CONFIGURED_REVIEWER = 'claude-opus-high (configured reviewer)';
+const OPUS_REVIEWERS = [FALLBACK_REVIEWER, CONFIGURED_REVIEWER];
+const isOpus = reviewer => OPUS_REVIEWERS.includes(reviewer);
 const V2_FLAGS = {
   approvals: { required: ['repo', 'approvals', 'source'], optional: [] },
   design: { required: ['repo', 'feature-id', 'frozen-dir', 'manifest-sha256', 'spec', 'commit', 'approvals', 'approvals-sha256'], optional: ['expect-parent', 'out'] },
@@ -629,13 +634,13 @@ function checkApprovals(ctx, { approvalsPath, approvalsSha, F, repoPath: knownRe
       need(result.verdict === runner.verdict, 'E_APPROVALS', `${label}: result.json verdict ${result.verdict} is not computeVerdict's ${runner.verdict}`);
       verdict = gateRule.codexGate(r.gate, result).verdict;
     } else {
-      need(r.reviewer === FALLBACK_REVIEWER, 'E_APPROVALS', `${label}: a fallback record's reviewer is ${FALLBACK_REVIEWER}`);
+      need(isOpus(r.reviewer), 'E_APPROVALS', `${label}: an Opus record's reviewer is one of ${OPUS_REVIEWERS.join(', ')}`);
       for (const k of ['inputs_path', 'fallback_review_path']) need(typeof r[k] === 'string' && inside(path.resolve(r[k]), reviewDir), 'E_APPROVALS', `${label}: ${k} must lie in review_dir`);
       const fb = hashed(ctx, path.resolve(r.fallback_review_path), r.fallback_review_sha256, `${label} fallback-review.json`);
       strictJson(fb, `${label} fallback-review.json`);
       need(keysExactly(fb.value, ['gate_kind', 'reviewer', 'reply']), 'E_APPROVALS', `${label}: fallback-review.json must be { gate_kind, reviewer, reply }`);
       need(fb.value.gate_kind === r.gate, 'E_APPROVALS', `${label}: fallback-review.json gate_kind ${fb.value.gate_kind} is not the ${r.gate} gate`);
-      need(fb.value.reviewer === FALLBACK_REVIEWER, 'E_APPROVALS', `${label}: fallback-review.json reviewer must be ${FALLBACK_REVIEWER}`);
+      need(fb.value.reviewer === r.reviewer, 'E_APPROVALS', `${label}: fallback-review.json reviewer must be the record's ${r.reviewer}`);
       const inputs = jsonV2(ctx, path.resolve(r.inputs_path), `${label} inputs.json`).value;
       need(keysExactly(inputs, ['inputs']), 'E_APPROVALS', `${label}: inputs.json must be { inputs }`);
       sameInputs(ctx, inputs.inputs, expected, label);
@@ -912,17 +917,17 @@ function reviewFiles(ctx, stage, entries, steps, stageVerdicts, manifest) {
     } else if (kind === 'fallback') {
       hashed(ctx, e.inputs_path, e.inputs_sha256, label + ' inputs.json');
       const fb = strictJson(hashed(ctx, e.fallback_review_path, e.fallback_review_sha256, label + ' fallback-review.json'), label + ' fallback-review.json').value;
-      need(keysExactly(fb, ['gate_kind', 'reviewer', 'reply']) && fb.gate_kind === e.step && fb.reviewer === FALLBACK_REVIEWER, 'E_REVIEW',
-        `${label}: fallback-review.json must be { gate_kind: ${e.step}, reviewer: ${FALLBACK_REVIEWER}, reply }`);
-      reviewer = FALLBACK_REVIEWER;
+      need(keysExactly(fb, ['gate_kind', 'reviewer', 'reply']) && fb.gate_kind === e.step && isOpus(fb.reviewer), 'E_REVIEW',
+        `${label}: fallback-review.json must be { gate_kind: ${e.step}, reviewer: one of ${OPUS_REVIEWERS.join(', ')}, reply }`);
+      reviewer = fb.reviewer;
       try { verdict = gateRule.fallbackGate('implementation', fb.reply).verdict; } catch (err) { throw new GateError('E_REVIEW', `${label}: ${err.message}`); }
     } else {
       raw = strictJson(hashed(ctx, e.raw_path, e.raw_sha256, label + ' raw file'), label + ' raw file').value;
       need(isObj(raw), 'E_REVIEW', `${label}: the raw file must be an object`);
       const wrapped = Object.hasOwn(raw, 'gate_kind');
-      if (wrapped) need(keysExactly(raw, ['gate_kind', 'reviewer', 'reply']) && raw.gate_kind === e.step && raw.reviewer === FALLBACK_REVIEWER && isObj(raw.reply), 'E_REVIEW',
-        `${label}: a wrapped fallback reply must be { gate_kind: ${e.step}, reviewer: ${FALLBACK_REVIEWER}, reply }`);
-      reviewer = wrapped ? FALLBACK_REVIEWER : 'codex';
+      if (wrapped) need(keysExactly(raw, ['gate_kind', 'reviewer', 'reply']) && raw.gate_kind === e.step && isOpus(raw.reviewer) && isObj(raw.reply), 'E_REVIEW',
+        `${label}: a wrapped Opus reply must be { gate_kind: ${e.step}, reviewer: one of ${OPUS_REVIEWERS.join(', ')}, reply }`);
+      reviewer = wrapped ? raw.reviewer : 'codex';
       const body = wrapped ? raw.reply : raw;
       if (e.step === 'security') {
         // Every list the file carries counts: codex security.json uses findings, the fallback reply blocking.
@@ -1242,6 +1247,7 @@ function completionV2(args) {
   need(isDeepStrictEqual(initialState, finalState), 'E_RACE', 'Git state changed during completion check');
   const reviewers = [...d.approvals.reviewers, ...br.derived, ...vr.derived];
   const fallbackUsed = reviewers.some(x => x.reviewer === FALLBACK_REVIEWER);
+  const opusUsed = reviewers.some(x => isOpus(x.reviewer));
   const proof = {
     version: 2, contract: 2, certification: 'design-gated', status: 'PASS', feature_id: feature, base_commit: base, reviewed_sha: sha,
     manifest_sha256: manifestSource.sha256, spec_sha256: manifest.spec_sha256, source: d.output.source, design_commit: designCommit, design_paths: d.output.design_paths,
@@ -1251,7 +1257,7 @@ function completionV2(args) {
     ...finalState,
     requirements, changed_files: changed, checks,
     reviews: { implementation: 'PASS', security: 'PASS', final: 'PASS', compliance: 'PASS' },
-    reviewers, fallback_used: fallbackUsed, cross_family: !fallbackUsed,
+    reviewers, fallback_used: fallbackUsed, cross_family: !opusUsed,
     suite: { status: seen.length ? 'KNOWN_BASELINE_FAILURES' : 'GREEN', completed: true, exit_code: sr.exit_code, log_path: suiteLog.path, log_sha256: suiteLog.sha256,
       record_path: path.resolve(si.record_path), record_sha256: si.record_sha256 },
     known_failures_seen: seen,
@@ -1279,7 +1285,7 @@ function completionV2(args) {
   } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
   return { status: 'PASS', contract: 2, certification: 'design-gated', proof_path: out, proof_sha256: hash(fs.readFileSync(out)), reviewed_sha: sha,
     design_commit: designCommit, manifest_sha256: manifestSource.sha256, state_paths: statePaths, clean_ignore: cleanIgnore,
-    cross_family: !fallbackUsed, fallback_used: fallbackUsed, trunk_qualification: trunk };
+    cross_family: !opusUsed, fallback_used: fallbackUsed, trunk_qualification: trunk };
 }
 function readFooter(file) {
   try {

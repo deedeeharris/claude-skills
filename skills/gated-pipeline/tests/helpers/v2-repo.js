@@ -17,6 +17,7 @@ const { gitEnv } = require('./git-env.js');
 
 const SCRIPTS = path.resolve(__dirname, '../../scripts');
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)';
+const CONFIGURED_REVIEWER = 'claude-opus-high (configured reviewer)';
 const REPO_PATH = '.pipeline/features/greet.feature.json';
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const clone = v => JSON.parse(JSON.stringify(v));
@@ -171,11 +172,12 @@ function makeRepo(t, opts = {}) {
       record.result_path = path.join(runDir, 'result.json');
       record.result_sha256 = sha256(fs.readFileSync(record.result_path));
     } else {
-      record.reviewer = FALLBACK_REVIEWER;
+      // reviewer 'fallback' (codex unavailable) or 'configured' (reviews.reviewer: opus-high); fileReviewer tampers the file's label
+      record.reviewer = o.reviewer === 'configured' ? CONFIGURED_REVIEWER : FALLBACK_REVIEWER;
       const inputsPath = path.join(reviewDir, 'inputs.json');
       const h = c.node('hash-inputs.js', ['--out', inputsPath, ...inputs.flatMap(i => [i.role === 'files' ? '--files' : '--against', i.path])]);
       assert.equal(h.status, 0, h.stderr);
-      const fb = c.writeJson(path.join(reviewDir, 'fallback-review.json'), { gate_kind: o.gate_kind || gate, reviewer: FALLBACK_REVIEWER, reply: { findings } });
+      const fb = c.writeJson(path.join(reviewDir, 'fallback-review.json'), { gate_kind: o.gate_kind || gate, reviewer: o.fileReviewer || record.reviewer, reply: { findings } });
       Object.assign(record, { inputs_path: inputsPath, fallback_review_path: fb.path, fallback_review_sha256: fb.sha256 });
     }
     Object.assign(record, o.record || {});
@@ -417,4 +419,4 @@ function completeRun(t, opts = {}) {
 }
 const pick = (o, keys) => Object.fromEntries(keys.map(k => [k, o[k]]));
 
-module.exports = { makeRepo, completeRun, baseFeature, featureBytes, cleanEnv, sha256, clone, FALLBACK_REVIEWER, REPO_PATH, PIPELINE_YAML, IMPL_FILES, SCRIPTS };
+module.exports = { makeRepo, completeRun, baseFeature, featureBytes, cleanEnv, sha256, clone, FALLBACK_REVIEWER, CONFIGURED_REVIEWER, REPO_PATH, PIPELINE_YAML, IMPL_FILES, SCRIPTS };

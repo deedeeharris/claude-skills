@@ -139,7 +139,7 @@ function driver(c, plan = {}) {
     if (m) { take(q[m[1]], label)(c, prompt); return DOC(c, 'revised'); }
     m = /^codex (prd|spec) review \d+$/.exec(label);
     if (m) return execRelay(c, prompt, c.codex ? take(q['r' + m[1]], label) : null);
-    m = /^opus (prd|spec) review \d+ \(codex unavailable\)$/.exec(label);
+    m = /^opus (prd|spec) review \d+ \((?:codex unavailable|configured reviewer)\)$/.exec(label);
     if (m) return execFallback(c, prompt, take(q['r' + m[1]], label));
     assert.fail('unexpected agent call: ' + label);
   };
@@ -151,6 +151,32 @@ async function design(c, args, plan, opts) {
 }
 const reviewCalls = labels => labels.filter(l => /review/.test(l));
 const tip = c => c.git('rev-parse', 'refs/heads/feature/greet');
+
+// ---- reviews.reviewer: opus-high (the either/or reviewer choice) --------------------------------------------------
+test(`${MOCKED}: reviewer opus-high: no codex relay at all; PRD and spec reviews are Opus, labelled configured reviewer in the ledger, and --mode approvals accepts them`, async t => {
+  const c = fixture(t);
+  const { result, labels, calls } = await design(c, c.args({ reviewer: 'opus-high', review_fallback: undefined }), { reviews: { prd: [[]], spec: [[]] } });
+  assert.equal(result.status, 'PASS', JSON.stringify(result).slice(0, 2000));
+  assert.deepEqual(labels, ['start', 'snapshot 1', 'opus prd review 1 (configured reviewer)', 'record 1',
+    'opus spec review 1 (configured reviewer)', 'record 2', 'approvals', 'commit', 'freeze']);
+  assert.equal(result.fallback_used, false);
+  assert.deepEqual(result.reviewers.map(x => x.reviewer), ['claude-opus-high (configured reviewer)', 'claude-opus-high (configured reviewer)']);
+  const p = calls.find(x => x.options.label === 'opus prd review 1 (configured reviewer)').prompt;
+  assert.match(p, /The repo config chose reviews\.reviewer: opus-high, so YOU are the independent prd reviewer\./);
+  assert.doesNotMatch(p, /Codex is not available/);
+  const ledger = JSON.parse(fs.readFileSync(result.approvals_path, 'utf8'));
+  const records = ledger.records || ledger;
+  assert.ok(Array.isArray(records) && records.length === 2 && records.every(r => r.reviewer === 'claude-opus-high (configured reviewer)'), JSON.stringify(ledger).slice(0, 800));
+  for (const r of records) assert.equal(JSON.parse(fs.readFileSync(r.fallback_review_path, 'utf8')).reviewer, 'claude-opus-high (configured reviewer)');
+});
+
+test(`${MOCKED}: reviewer must be codex or opus-high: another value BLOCKS design before any agent call`, async t => {
+  const c = fixture(t);
+  const { result, calls } = await run('design', c.args({ reviewer: 'opus' }), []);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.reason, 'reviewer must be codex|opus-high');
+  assert.equal(calls.length, 0);
+});
 
 // ---- arg checks ---------------------------------------------------------------------------------------------------
 test(`${MOCKED}: contract 2 BLOCKS forbidden or mixed args, an unsafe features_dir (E_SCOPE) and bad paths with zero agent calls`, async t => {

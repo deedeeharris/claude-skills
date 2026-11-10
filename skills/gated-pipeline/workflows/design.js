@@ -52,6 +52,7 @@ if (A.codex_model && !/^[A-Za-z0-9._-]+$/.test(A.codex_model)) return { status: 
 if (A.codex_effort && !['low', 'medium', 'high', 'xhigh'].includes(A.codex_effort)) return { status: 'BLOCKED', reason: 'codex_effort must be low|medium|high|xhigh' }
 if (A.review_timeout_seconds !== undefined && !(Number.isInteger(A.review_timeout_seconds) && A.review_timeout_seconds > 0)) return { status: 'BLOCKED', reason: 'review_timeout_seconds must be a positive integer' }
 if (A.review_fallback !== undefined && !['none', 'opus-high'].includes(A.review_fallback)) return { status: 'BLOCKED', reason: 'review_fallback must be none|opus-high' }
+if (A.reviewer !== undefined && !['codex', 'opus-high'].includes(A.reviewer)) return { status: 'BLOCKED', reason: 'reviewer must be codex|opus-high' }
 const TIMEOUT_S = A.review_timeout_seconds || 1200
 const MAX = A.max_rounds ?? 3
 const EFFORT = A.author_effort || 'medium'
@@ -70,6 +71,15 @@ const DOC = {
   required: ['blocked', 'path', 'summary'],
 }
 const FALLBACK_REVIEWER = 'claude-opus-high (codex unavailable)'
+// The repo's either/or reviewer choice (pipeline.yaml reviews.reviewer, stage arg reviewer): codex (the default) keeps codex
+// with the optional review_fallback above; opus-high runs EVERY review with Opus 5.5 at high effort directly (no codex probe,
+// no codex call), labelled CONFIGURED_REVIEWER. Either Opus label is a Claude review: never cross-family.
+const CONFIGURED_REVIEWER = 'claude-opus-high (configured reviewer)'
+const OPUS_ONLY = A.reviewer === 'opus-high'
+const OPUS_LABEL = OPUS_ONLY ? CONFIGURED_REVIEWER : FALLBACK_REVIEWER
+const OPUS_TAG = OPUS_ONLY ? 'configured reviewer' : 'codex unavailable'
+const opusRole = what => OPUS_ONLY ? `The repo config chose reviews.reviewer: opus-high, so YOU ${what}.`
+  : `Codex is not available in this environment, so YOU ${what} in its place (the repo config chose review_fallback: opus-high).`
 
 // Opus fallback parity with codex-review: same rubric file, severity scale and verdict rule as run-review.js
 // (computeTriggers/computeVerdict). The reviewer reports findings; the verdict is computed here, never by the model.
@@ -239,6 +249,12 @@ const RELAY = RELAY_REVIEW()
 const reviewers = []
 const disclose = o => ({ ...o, reviewers, fallback_used: reviewers.some(x => x.reviewer === FALLBACK_REVIEWER) })
 async function reviewed(step, gate, relay, fallback) {
+  if (OPUS_ONLY) {
+    const f = await fallback()
+    const res = f && { ...f, codex_available: false, reviewer: CONFIGURED_REVIEWER }
+    if (res) reviewers.push({ step, reviewer: res.reviewer })
+    return res
+  }
   const r = await relay()
   let res
   // An explicit relay blocker (refused command, failed setup, stale out dir) always stops the stage; it never falls back.
@@ -268,13 +284,13 @@ function codex(kind, file, against, out, label, ph, inventory) {
     `${relayRead(out, kind)}\n- ${RULES}`,
     { label, phase: ph, schema: RELAY, effort: 'low' }),
   () => agent(
-    `Codex is not available in this environment, so YOU are the independent ${kind} reviewer in its place (the repo config chose review_fallback: opus-high). ` +
+    `${opusRole(`are the independent ${kind} reviewer`)} ` +
     `Review ${file}${inventory ? ` and the execution inventory ${inventory}` : ''}${against ? ` against ${against}` : ''} for defects: missing or contradicted requirements, ` +
     'claims the repo does not support (read the code), untestable or vague acceptance checks, and gaps in scope.\n' +
     (inventory ? 'Review the execution inventory against the spec too: every acceptance ID and proof command must match, scope must be explicit, and inapplicable checks must have a reason.\n' : '') +
     fallbackSteps(['set -e', gpFresh(fb)].join('\n'), gpList(fb)) +
     `${parityNote(kind)} Do not edit any file.\n- ${RULES}`,
-    { label: `${label.replace(/^codex /, 'opus ')} (codex unavailable)`, phase: ph, schema: PARITY_SCHEMA(), model: 'opus', effort: 'high' }).then(f => gateFallback(kind, f)))
+    { label: `${label.replace(/^codex /, 'opus ')} (${OPUS_TAG})`, phase: ph, schema: PARITY_SCHEMA(), model: 'opus', effort: 'high' }).then(f => gateFallback(kind, f)))
 }
 
 async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
@@ -632,13 +648,13 @@ async function designV2() {
       `${relayRead(out, gate)}\n- ${RULES}`,
       { label: `codex ${gate} review ${round}`, phase: ph, schema: RELAY, effort: 'low' }),
     () => agent(
-      `Codex is not available in this environment, so YOU are the independent ${gate} reviewer in its place (the repo config chose review_fallback: opus-high). ` +
+      `${opusRole(`are the independent ${gate} reviewer`)} ` +
       `Review ${what}. Read only these revision ${snap.k} files (and the repo's code for context), never the working copy of the canonical file.\n${DATA_RULE}\n` +
       fallbackSteps(['set -e', gpFresh(fb), [...chain, node('hash-inputs.js', `--out ${q(fb + '/inputs.json')} --files ${files.map(q).join(' ')} --against ${q(against)}`)].join(' && ')].join('\n'),
         node('hash-inputs.js', `--verify ${q(fb + '/inputs.json')}`)) +
       'If the cleanup block exits nonzero (a review input changed while you reviewed), return blocked=true with its output in note.\n' +
       `${parityNote(gate)} Do not edit any file.\n- ${RULES}`,
-      { label: `opus ${gate} review ${round} (codex unavailable)`, phase: ph, schema: PARITY_SCHEMA(), model: 'opus', effort: 'high' }).then(f => { raw = f; return gateFallback(gate, f) }))
+      { label: `opus ${gate} review ${round} (${OPUS_TAG})`, phase: ph, schema: PARITY_SCHEMA(), model: 'opus', effort: 'high' }).then(f => { raw = f; return gateFallback(gate, f) }))
     return { r, raw, round, out, fb, gate }
   }
   // The gate verdict of design section 9 (scripts/lib/gate-rule.js): computeVerdict, then PASS with a confirmed finding -> FAIL.
@@ -660,7 +676,7 @@ async function designV2() {
     const ledger = JSON.stringify({ ...header(), records: [...records, rec] })
     // A codex record pins its result.json by the hash cleanup's sha256sum printed; the block re-checks it before writing.
     const body = ['set -e', ...(codexRun ? [`printf '%s  %s\\n' ${q(rec.result_sha256)} ${q(rec.result_path)} | sha256sum -c --quiet - >/dev/null || { echo GP_RESULT_HASH; exit 3; }`] : [
-      `FB=$(${node('write-json.js', `--out ${q(rec.fallback_review_path)}`)} <<'GP_JSON'`, JSON.stringify({ gate_kind: gate, reviewer: FALLBACK_REVIEWER, reply: rv.raw }), 'GP_JSON', ')',
+      `FB=$(${node('write-json.js', `--out ${q(rec.fallback_review_path)}`)} <<'GP_JSON'`, JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL, reply: rv.raw }), 'GP_JSON', ')',
       'printf \'%s\\n\' "$FB"', `H=$(printf '%s' "$FB" | sed -n 's/.*"sha256":"\\([0-9a-f]\\{64\\}\\)".*/\\1/p')`, 'test -n "$H"']),
       `${codexRun ? 'cat' : `sed "s/${FB_HASH}/$H/"`} <<'GP_JSON' | ${node('write-json.js', `--out ${q(file)}`)}`, ledger, 'GP_JSON'].join('\n')
     const w = await step(`record ${n}`, rv.gate === 'prd' ? 'PRD review' : 'Spec review', body)
