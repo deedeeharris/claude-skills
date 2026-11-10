@@ -919,3 +919,8 @@ The scan covers committed changes only. This report's final text was checked by 
 on top of its draft commit `1d5944f` and running the clone's scanner there: scan 1 39307 added lines, 0 findings;
 scan 2 373 files, 0 findings; CLEAN. A grep of the report for scratch-directory, home-directory and e-mail shapes found
 no hit. Scan 3 (toy repo bundle): NOT RUN, no bundle (the A chain did not complete).
+
+## Close-out additions
+
+- Invariant 1 (compile banner): `feature-compile.test.js` "invariant 1 compile banner: every view opens with the GENERATED - DO NOT EDIT banner, the manifest and compile-identity name the source path and raw sha256, an edited view is E_DRIFT". The banner names neither the source path nor its sha256: design 4 makes `prd.view.md` a function of the projection and L2.2 keeps view bodies unchanged when only `source.sha256` changes. `compile-identity.json` names the source and hashes each view. The JSON outputs carry no banner because design 4 specifies none. Edited views are covered by S17 / L2.4 and L3.12.
+- Plan 5.2 (POSIX path matrix): `paths.test.js` "5.2 scripts: repo, state_dir and worktrees under "gp v2 ü": validate, compile, --mode design and run-frozen (red, suite, check, proof, negative) work"; "5.2 workflows (mocked: scripted agent boundary, real scripts): design, build and verify contract 2 run to PASS with repo, state_dir, run dirs and the seed under paths with spaces"; "5.2 workflows: a path with a quote, $, a backtick, ~ or a non-ASCII letter BLOCKS design, build and verify contract 2 with its reason, before any agent call". No defect found. The workflows' SAFE set is ASCII-only, so a path with `ü` works for the scripts and is BLOCKED by the workflows.
