@@ -1,0 +1,13 @@
+diff --git a/src/server.js b/src/server.js
+index fa5e489..b06b779 100644
+--- a/src/server.js
++++ b/src/server.js
+@@ -21,7 +21,7 @@ function createServer(options = {}) {
+   const login = createLoginHandler({ users, sessions, limiter, gate });
+   return http.createServer((req, res) => {
+     const url = new URL(req.url, 'http://localhost');
+-    if (req.method === 'POST' && url.pathname === '/login') {
++    if (url.pathname === '/login') {
+       login(req, res).catch(() => {
+         if (!res.headersSent) sendJson(res, 500, { error: 'internal error' });
+       });

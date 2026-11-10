@@ -1,0 +1,23 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..4f05c4f 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -217,7 +217,7 @@ function createLoginHandler({ users, sessions, limiter, gate }) {
+       return;
+     }
+ 
+-    const verification = gate.run(async () => {
++    const verifyTask = async () => {
+       const lock = limiter.begin(username);
+       if (lock.locked) return { lock };
+       let ok = false;
+@@ -233,7 +233,8 @@ function createLoginHandler({ users, sessions, limiter, gate }) {
+       }
+       limiter.end(username, !ok);
+       return { ok };
+-    });
++    };
++    const verification = users.has(username) ? gate.run(verifyTask) : verifyTask();
+     if (verification === null) {
+       sendJson(res, 503, INVALID_CREDENTIALS, { 'retry-after': String(BUSY_RETRY_AFTER_S) });
+       return;

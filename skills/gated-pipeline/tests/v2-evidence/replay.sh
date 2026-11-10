@@ -9,14 +9,15 @@
 #      out of the bundle with its hash and reason) is reported UNVERIFIABLE, never fetched or edited (exit 4 on
 #      a mismatch or a missing listed file);
 #   3. the neutral root (/srv/gp-v2, the root the live runs used, so no path is rewritten) must be absent or
-#      empty; the bundle is cloned to <root>/base and the listed byte-exact copies are restored to their
+#      empty; the bundle is cloned to clone.to (the checkout path the live run used, under the root) on clone.branch,
+#      and the listed byte-exact copies are restored to their
 #      recorded absolute paths under the root (exit 5 on a setup failure);
 #   4. check-completion.js reruns --mode approvals, --mode design and the completion validation with the
 #      argument lists recorded in index.json (exit 0 expected for each; exit 6 otherwise);
 #   5. redact-scan.js runs over this repository's branch diff and the bundle (exit 7 on a finding).
 #
 # index.json shape (written by the evidence commit):
-#   { "root": "/srv/gp-v2", "bundle": "<file beside this script>",
+#   { "root": "/srv/gp-v2", "bundle": "<file beside this script>", "clone": { "to": "<abs path under root>", "branch": "<branch>" },
 #     "files": [ { "path": "<path beside this script>", "sha256": "<hex>", "restore_to": "<abs path under root>" | null,
 #                  "withheld": false } | { "path": ..., "sha256": ..., "withheld": true, "reason": "..." } ],
 #     "replay": { "approvals": [ <check-completion.js args> ], "design": [ ... ], "completion": [ ... ] } }
@@ -69,7 +70,10 @@ NODE
 # ---- 3. clone and restore under the neutral root ----------------------------------------------------------------
 if [ -e "$ROOT" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then die 5 "$ROOT exists and is not empty; replay needs a fresh neutral root"; fi
 mkdir -p "$ROOT" || die 5 "cannot create $ROOT"
-git clone -q "$BUNDLE" "$ROOT/base" || die 5 "git clone of the bundle failed"
+CLONE_TO="$(json clone.to)" || die 3 "index.json names no clone.to"
+CLONE_BRANCH="$(json clone.branch)" || die 3 "index.json names no clone.branch"
+case "$CLONE_TO" in "$ROOT"/*) ;; *) die 5 "clone.to $CLONE_TO is outside $ROOT";; esac
+git clone -q -b "$CLONE_BRANCH" "$BUNDLE" "$CLONE_TO" || die 5 "git clone of the bundle failed"
 node - "$INDEX" "$EVID" "$ROOT" <<'NODE' || die 5 "restoring the evidence copies failed"
 const fs = require('fs'), path = require('path');
 const [index, evid, root] = process.argv.slice(2);

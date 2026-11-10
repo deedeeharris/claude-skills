@@ -1,0 +1,17 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..c3eefb2 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -92,7 +92,11 @@ function createFailureLimiter({ maxFailures = MAX_FAILURES, windowMs = WINDOW_MS
+   function recordFailure(username) {
+     const t = now();
+     fresh(username, t);
+-    const record = track(username, t);
++    let record = records.get(username);
++    if (!record) {
++      record = { timestamps: [], pending: 0 };
++      records.set(username, record);
++    }
+     record.timestamps.push(t);
+     if (record.timestamps.length > maxFailures) record.timestamps.splice(0, record.timestamps.length - maxFailures);
+   }

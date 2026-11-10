@@ -1,0 +1,31 @@
+{
+  "target": "negative:LOGIN-007-AC2",
+  "id": "LOGIN-007-AC2",
+  "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+  "cwd": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC2/wt",
+  "head_before": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+  "head_after": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+  "status_before": [],
+  "status_after": [],
+  "timeout_s": 120,
+  "timeout_min": null,
+  "budget_min": null,
+  "elapsed_s": 20.084,
+  "exit_code": 1,
+  "signal": null,
+  "timed_out": false,
+  "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC2/negative:LOGIN-007-AC2.log",
+  "log_sha256": "ff1179dcab18995191ffdac352823fcad687314ade1da1fab631bfebb5d3a70c",
+  "manifest_sha256": "6b04649ba5b4bb92f430709a4606f8bc7db3025463d7c147e04e4dd62dec749a",
+  "setup": null,
+  "baseline_exit_code": 0,
+  "baseline_log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC2/negative:LOGIN-007-AC2.baseline.log",
+  "baseline_log_sha256": "e4dc034f851c5229bcd5cd59864af233f4c27c734c2c16e1613b394435df90be",
+  "baseline_timed_out": false,
+  "mutation_patch_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC2/mutation.patch",
+  "mutation_patch_sha256": "e303fec2759b0835b6285b078851ee89004bf667a25a547bbfc971edf7d4bdd1",
+  "mutated_paths": [
+    "src/login.js"
+  ],
+  "phase_elapsed_s": 1064.773
+}

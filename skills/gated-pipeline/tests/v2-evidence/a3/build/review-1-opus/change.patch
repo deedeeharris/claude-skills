@@ -1,0 +1,1183 @@
+diff --git a/README.md b/README.md
+index 41ef141..07998d1 100644
+--- a/README.md
++++ b/README.md
+@@ -7,3 +7,18 @@ A tiny dependency-free Node HTTP service used to exercise the gated pipeline.
+ - `src/users.js` is a local in-memory fake user store: synthetic users (`alice`, `bob`) whose
+   salted scrypt hashes are computed at startup from synthetic passwords in `test/fixtures/users.js`.
+ - Tests: `npm test` (`node --test "test/**/*.test.js"`).
++
++## POST /login
++
++`POST /login` with a JSON body `{"username": "...", "password": "..."}` (at most 4096 bytes):
++
++- `200 {"token": "..."}`: correct credentials; the token is 32 random bytes in base64url.
++- `401 {"error": "invalid credentials"}`: wrong password or unknown user (same body for both).
++- `429 {"error": "too many attempts"}` with `Retry-After`: 5 failed attempts for that username
++  within the last 60 seconds (sliding window; attempts still being verified count too).
++- `503` with `Retry-After: 1` and the 401 body: 4 password verifications are already running and
++  16 more are waiting on this server; not counted as a failed attempt.
++- `400 {"error": "invalid request"}` for a malformed body, `413 {"error": "payload too large"}`
++  for a body over 4096 bytes.
++
++Passwords and tokens are never logged. Sessions live in memory only (at most 10000).
+diff --git a/src/login.js b/src/login.js
+new file mode 100644
+index 0000000..ae8fd05
+--- /dev/null
++++ b/src/login.js
+@@ -0,0 +1,269 @@
++'use strict';
++
++// POST /login: body parsing, validation, the per-username failure limiter, the session store and
++// the server-wide password-verification gate. Nothing here logs: passwords and tokens never reach
++// stdout or stderr.
++
++const crypto = require('node:crypto');
++// Module object, not a destructured function: hashPasswordAsync is read at call time.
++const usersModule = require('./users.js');
++
++const MAX_BODY_BYTES = 4096;
++const MAX_USERNAME_LENGTH = 64;
++const MAX_PASSWORD_LENGTH = 1024;
++const MAX_FAILURES = 5;
++const WINDOW_MS = 60000;
++const MAX_TRACKED = 10000;
++const MAX_ACTIVE_VERIFICATIONS = 4;
++const MAX_QUEUED_VERIFICATIONS = 16;
++const BUSY_RETRY_AFTER_S = 1;
++
++// Unknown usernames are hashed with this salt so they cost the same scrypt work as a real check.
++const DUMMY_SALT = crypto.randomBytes(16);
++
++const INVALID_CREDENTIALS = { error: 'invalid credentials' };
++const TOO_MANY_ATTEMPTS = { error: 'too many attempts' };
++const INVALID_REQUEST = { error: 'invalid request' };
++const PAYLOAD_TOO_LARGE = { error: 'payload too large' };
++const INTERNAL_ERROR = { error: 'internal error' };
++
++function sendJson(res, status, body, headers = {}) {
++  const payload = JSON.stringify(body);
++  res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers });
++  res.end(payload);
++}
++
++// token -> { username, createdAt }; holds at most MAX_TRACKED tokens, evicting the oldest.
++function createSessionStore() {
++  const sessions = new Map();
++  return {
++    issue(username) {
++      const token = crypto.randomBytes(32).toString('base64url');
++      if (sessions.size >= MAX_TRACKED) sessions.delete(sessions.keys().next().value);
++      sessions.set(token, { username, createdAt: Date.now() });
++      return token;
++    },
++    usernameFor(token) {
++      const session = sessions.get(token);
++      return session ? session.username : null;
++    },
++    size() {
++      return sessions.size;
++    },
++  };
++}
++
++// Sliding window per exact username: the newest failure timestamps (at most maxFailures) plus a
++// count of attempts currently in verification. Locked when timestamps + pending >= maxFailures.
++function createFailureLimiter({ maxFailures = MAX_FAILURES, windowMs = WINDOW_MS, maxTracked = MAX_TRACKED, now = Date.now } = {}) {
++  const records = new Map();
++
++  // Drops expired timestamps; deletes and returns null for a record left with nothing in it.
++  function fresh(username, t) {
++    const record = records.get(username);
++    if (!record) return null;
++    record.timestamps = record.timestamps.filter(ts => t - ts < windowMs);
++    if (record.timestamps.length === 0 && record.pending === 0) {
++      records.delete(username);
++      return null;
++    }
++    return record;
++  }
++
++  function status(record, t) {
++    if (!record || record.timestamps.length + record.pending < maxFailures) return { locked: false, retryAfter: 0 };
++    const retryAfter = record.timestamps.length >= maxFailures ? Math.ceil((record.timestamps[0] + windowMs - t) / 1000) : BUSY_RETRY_AFTER_S;
++    return { locked: true, retryAfter };
++  }
++
++  // Returns the record for username, creating it within the maxTracked bound.
++  function track(username, t) {
++    const existing = records.get(username);
++    if (existing) return existing;
++    if (records.size >= maxTracked) {
++      for (const name of [...records.keys()]) fresh(name, t);
++      if (records.size >= maxTracked) records.delete(records.keys().next().value);
++    }
++    const record = { timestamps: [], pending: 0 };
++    records.set(username, record);
++    return record;
++  }
++
++  function recordFailure(username) {
++    const t = now();
++    fresh(username, t);
++    const record = track(username, t);
++    record.timestamps.push(t);
++    if (record.timestamps.length > maxFailures) record.timestamps.splice(0, record.timestamps.length - maxFailures);
++  }
++
++  return {
++    check(username) {
++      const t = now();
++      return status(fresh(username, t), t);
++    },
++    begin(username) {
++      const t = now();
++      const result = status(fresh(username, t), t);
++      if (!result.locked) track(username, t).pending++;
++      return result;
++    },
++    end(username, failed) {
++      const record = records.get(username);
++      if (record && record.pending > 0) record.pending--;
++      if (failed) recordFailure(username);
++    },
++    recordFailure,
++    size() {
++      return records.size;
++    },
++  };
++}
++
++// At most maxActive tasks run at once and at most maxQueued wait in FIFO order; run() returns null
++// when both are full, otherwise a Promise settled with the task's outcome.
++function createVerificationGate({ maxActive = MAX_ACTIVE_VERIFICATIONS, maxQueued = MAX_QUEUED_VERIFICATIONS } = {}) {
++  let running = 0;
++  const queue = [];
++
++  function start({ task, resolve, reject }) {
++    running++;
++    let outcome;
++    try {
++      outcome = Promise.resolve(task());
++    } catch (err) {
++      outcome = Promise.reject(err);
++    }
++    outcome
++      .finally(() => {
++        running--;
++        if (queue.length > 0 && running < maxActive) start(queue.shift());
++      })
++      .then(resolve, reject);
++  }
++
++  return {
++    run(task) {
++      if (running < maxActive) return new Promise((resolve, reject) => start({ task, resolve, reject }));
++      if (queue.length < maxQueued) return new Promise((resolve, reject) => queue.push({ task, resolve, reject }));
++      return null;
++    },
++    active() {
++      return running;
++    },
++    queued() {
++      return queue.length;
++    },
++  };
++}
++
++// Resolves with the body Buffer, or null once it exceeds limit (the rest is discarded).
++function readBody(req, limit) {
++  return new Promise(resolve => {
++    const chunks = [];
++    let size = 0;
++    req.on('data', chunk => {
++      if (size > limit) return;
++      size += chunk.length;
++      if (size > limit) {
++        chunks.length = 0;
++        resolve(null);
++      } else {
++        chunks.push(chunk);
++      }
++    });
++    req.on('end', () => resolve(Buffer.concat(chunks)));
++    req.on('error', () => resolve(null));
++  });
++}
++
++// Returns { username, password } for a valid body, otherwise null.
++function parseCredentials(buffer) {
++  let body;
++  try {
++    body = JSON.parse(buffer.toString('utf8'));
++  } catch {
++    return null;
++  }
++  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
++  const { username, password } = body;
++  if (typeof username !== 'string' || username.length < 1 || username.length > MAX_USERNAME_LENGTH) return null;
++  if (typeof password !== 'string' || password.length < 1 || password.length > MAX_PASSWORD_LENGTH) return null;
++  return { username, password };
++}
++
++function sendLocked(res, lock) {
++  sendJson(res, 429, TOO_MANY_ATTEMPTS, { 'retry-after': String(lock.retryAfter) });
++}
++
++function createLoginHandler({ users, sessions, limiter, gate }) {
++  return async function handleLogin(req, res) {
++    const buffer = await readBody(req, MAX_BODY_BYTES);
++    if (buffer === null) {
++      sendJson(res, 413, PAYLOAD_TOO_LARGE, { connection: 'close' });
++      req.resume();
++      return;
++    }
++    const credentials = parseCredentials(buffer);
++    if (!credentials) {
++      sendJson(res, 400, INVALID_REQUEST);
++      return;
++    }
++    const { username, password } = credentials;
++
++    const arrival = limiter.check(username);
++    if (arrival.locked) {
++      sendLocked(res, arrival);
++      return;
++    }
++
++    const verification = gate.run(async () => {
++      const lock = limiter.begin(username);
++      if (lock.locked) return { lock };
++      let ok = false;
++      try {
++        if (users.has(username)) {
++          ok = (await users.verifyAsync(username, password)) === true;
++        } else {
++          await usersModule.hashPasswordAsync(password, DUMMY_SALT);
++        }
++      } catch (err) {
++        limiter.end(username, false);
++        throw err;
++      }
++      limiter.end(username, !ok);
++      return { ok };
++    });
++    if (verification === null) {
++      sendJson(res, 503, INVALID_CREDENTIALS, { 'retry-after': String(BUSY_RETRY_AFTER_S) });
++      return;
++    }
++
++    let result;
++    try {
++      result = await verification;
++    } catch {
++      sendJson(res, 500, INTERNAL_ERROR);
++      return;
++    }
++    if (result.lock) sendLocked(res, result.lock);
++    else if (result.ok) sendJson(res, 200, { token: sessions.issue(username) });
++    else sendJson(res, 401, INVALID_CREDENTIALS);
++  };
++}
++
++module.exports = {
++  MAX_BODY_BYTES,
++  MAX_USERNAME_LENGTH,
++  MAX_PASSWORD_LENGTH,
++  MAX_FAILURES,
++  WINDOW_MS,
++  MAX_TRACKED,
++  MAX_ACTIVE_VERIFICATIONS,
++  MAX_QUEUED_VERIFICATIONS,
++  BUSY_RETRY_AFTER_S,
++  createSessionStore,
++  createFailureLimiter,
++  createVerificationGate,
++  createLoginHandler,
++};
+diff --git a/src/server.js b/src/server.js
+index 279edf8..fa5e489 100644
+--- a/src/server.js
++++ b/src/server.js
+@@ -2,6 +2,7 @@
+ 
+ const http = require('node:http');
+ const { createUserStore } = require('./users.js');
++const { createSessionStore, createFailureLimiter, createVerificationGate, createLoginHandler } = require('./login.js');
+ 
+ function sendJson(res, status, body) {
+   const payload = JSON.stringify(body);
+@@ -10,10 +11,22 @@ function sendJson(res, status, body) {
+ }
+ 
+ // options.users: a store from createUserStore (empty by default).
++// options.sessions: a store from createSessionStore; options.now: a millisecond clock (Date.now);
++// options.gate: a gate from createVerificationGate, shared by every login to this server.
+ function createServer(options = {}) {
+   const users = options.users || createUserStore([]);
++  const sessions = options.sessions || createSessionStore();
++  const limiter = createFailureLimiter({ now: options.now || Date.now });
++  const gate = options.gate || createVerificationGate();
++  const login = createLoginHandler({ users, sessions, limiter, gate });
+   return http.createServer((req, res) => {
+     const url = new URL(req.url, 'http://localhost');
++    if (req.method === 'POST' && url.pathname === '/login') {
++      login(req, res).catch(() => {
++        if (!res.headersSent) sendJson(res, 500, { error: 'internal error' });
++      });
++      return;
++    }
+     if (req.method === 'GET' && url.pathname === '/health') {
+       sendJson(res, 200, { status: 'ok', users: users.usernames().length });
+       return;
+diff --git a/src/users.js b/src/users.js
+index 57e782b..2f5d59c 100644
+--- a/src/users.js
++++ b/src/users.js
+@@ -11,6 +11,13 @@ function hashPassword(password, salt) {
+   return crypto.scryptSync(password, salt, KEY_LENGTH);
+ }
+ 
++// Same scrypt as hashPassword, computed on the libuv threadpool instead of the event loop.
++function hashPasswordAsync(password, salt) {
++  return new Promise((resolve, reject) => {
++    crypto.scrypt(password, salt, KEY_LENGTH, (err, key) => (err ? reject(err) : resolve(key)));
++  });
++}
++
+ // entries: [{ username, password }] with synthetic credentials only.
+ function createUserStore(entries = []) {
+   const users = new Map();
+@@ -33,7 +40,13 @@ function createUserStore(entries = []) {
+       if (!user || typeof password !== 'string') return false;
+       return crypto.timingSafeEqual(hashPassword(password, user.salt), user.hash);
+     },
++    // Asynchronous twin of verify.
++    async verifyAsync(username, password) {
++      const user = users.get(username);
++      if (!user || typeof password !== 'string') return false;
++      return crypto.timingSafeEqual(await hashPasswordAsync(password, user.salt), user.hash);
++    },
+   };
+ }
+ 
+-module.exports = { createUserStore, hashPassword };
++module.exports = { createUserStore, hashPassword, hashPasswordAsync };
+diff --git a/test/login-concurrency.test.js b/test/login-concurrency.test.js
+new file mode 100644
+index 0000000..adda0d7
+--- /dev/null
++++ b/test/login-concurrency.test.js
+@@ -0,0 +1,261 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const crypto = require('node:crypto');
++const usersModule = require('../src/users.js');
++const { createServer } = require('../src/server.js');
++const { USERS } = require('./fixtures/users.js');
++const { listen } = require('./helpers.js');
++
++const { createUserStore } = usersModule;
++const [ALICE, BOB] = USERS;
++const T0 = 1_700_000_000_000;
++const NAMES = Array.from({ length: 40 }, (_, i) => `u${String(i + 1).padStart(2, '0')}`);
++
++// src/login.js is loaded lazily so a missing module fails an assertion instead of the whole file.
++function loadLogin() {
++  try {
++    return require('../src/login.js');
++  } catch (err) {
++    if (err.code === 'MODULE_NOT_FOUND') return {};
++    throw err;
++  }
++}
++
++function newGate() {
++  const { createVerificationGate } = loadLogin();
++  assert.equal(typeof createVerificationGate, 'function', 'src/login.js exports createVerificationGate');
++  return createVerificationGate();
++}
++
++// Polls cond() on every turn of the event loop; fails the test after 2 seconds.
++async function waitFor(cond, label) {
++  const deadline = Date.now() + 2000;
++  while (!cond()) {
++    if (Date.now() > deadline) assert.fail(`timed out waiting for ${label}`);
++    await new Promise(resolve => setImmediate(resolve));
++  }
++}
++
++// A users object whose verifyAsync returns promises the test settles.
++function createSpyUsers() {
++  const names = new Set(['alice', ...NAMES]);
++  const calls = [];
++  const state = { pending: 0, maxPending: 0, auto: null };
++  const settle = (call, outcome) => {
++    if (call.settled) return;
++    call.settled = true;
++    state.pending--;
++    if (outcome instanceof Error) call.reject(outcome);
++    else call.resolve(outcome);
++  };
++  return {
++    calls,
++    state,
++    has: username => names.has(username),
++    usernames: () => [...names],
++    verifyAsync(username, password) {
++      const call = { username, password, settled: false };
++      const promise = new Promise((resolve, reject) => Object.assign(call, { resolve, reject }));
++      calls.push(call);
++      state.pending++;
++      state.maxPending = Math.max(state.maxPending, state.pending);
++      if (state.auto !== null) settle(call, state.auto);
++      return promise;
++    },
++    settle,
++    // Settles every pending call, and every later one, with outcome.
++    settleAll(outcome) {
++      state.auto = outcome;
++      for (const call of calls) settle(call, outcome);
++    },
++  };
++}
++
++function postLogin(url, body, init = {}) {
++  return fetch(`${url}/login`, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json' },
++    body: JSON.stringify(body),
++    ...init,
++  }).then(async res => ({ status: res.status, headers: res.headers, text: await res.text() }));
++}
++
++// Sends one request per username, each only after the previous one is active or queued in the gate.
++async function fillGate(url, gate, usernames) {
++  const responses = [];
++  for (const username of usernames) {
++    const seen = gate.active() + gate.queued();
++    responses.push(postLogin(url, { username, password: `pw-${username}` }));
++    await waitFor(() => gate.active() + gate.queued() === seen + 1, `${username} in the gate`);
++  }
++  return responses;
++}
++
++async function withSpyServer(extra, fn) {
++  const gate = newGate();
++  const users = createSpyUsers();
++  const { createSessionStore } = loadLogin();
++  const srv = await listen(createServer({ users, sessions: createSessionStore(), gate, ...extra }));
++  const pending = [];
++  try {
++    await fn({ srv, gate, users, pending });
++  } finally {
++    users.settleAll(false);
++    await Promise.allSettled(pending);
++    await srv.close();
++  }
++}
++
++test('a login beyond 4 running and 16 waiting gets 503 at once', async () => {
++  await withSpyServer({}, async ({ srv, gate, users, pending }) => {
++    const responses = await fillGate(srv.url, gate, NAMES.slice(0, 20));
++    pending.push(...responses);
++    assert.equal(gate.active(), 4);
++    assert.equal(gate.queued(), 16);
++    assert.equal(users.calls.length, 4);
++    const busy = await postLogin(srv.url, { username: 'u21', password: 'pw-u21' }, { signal: AbortSignal.timeout(2000) });
++    assert.equal(busy.status, 503);
++    assert.equal(busy.headers.get('content-type'), 'application/json');
++    assert.equal(busy.headers.get('retry-after'), '1');
++    assert.equal(busy.text, '{"error":"invalid credentials"}');
++    assert.equal(users.calls.length, 4);
++    assert.equal(gate.queued(), 16);
++    users.settleAll(false);
++    for (const res of await Promise.all(responses)) {
++      assert.equal(res.status, 401);
++      assert.equal(res.text, busy.text);
++    }
++  });
++});
++
++test('at most 4 verifications run and queued logins start in FIFO order', async () => {
++  await withSpyServer({}, async ({ srv, gate, users, pending }) => {
++    const responses = await fillGate(srv.url, gate, NAMES.slice(0, 20));
++    pending.push(...responses);
++    users.settle(users.calls[0], false);
++    await waitFor(() => users.calls.length === 5, 'the 5th verification');
++    assert.equal(users.calls[4].username, 'u05');
++    assert.equal(gate.active(), 4);
++    assert.equal(gate.queued(), 15);
++    users.settleAll(true);
++    const results = await Promise.all(responses);
++    assert.equal(users.state.maxPending, 4);
++    assert.equal(results[0].status, 401);
++    for (const res of results.slice(1)) {
++      assert.equal(res.status, 200);
++      assert.match(JSON.parse(res.text).token, /^[A-Za-z0-9_-]{43}$/);
++    }
++  });
++});
++
++test('503 refusals are not counted as failed attempts', async () => {
++  await withSpyServer({ now: () => T0 }, async ({ srv, gate, users, pending }) => {
++    const responses = await fillGate(srv.url, gate, NAMES.slice(0, 20));
++    pending.push(...responses);
++    for (let i = 0; i < 6; i++) {
++      const res = await postLogin(srv.url, { username: 'alice', password: 'wrong-password' });
++      assert.equal(res.status, 503);
++    }
++    assert.equal(users.calls.some(call => call.username === 'alice'), false);
++    users.settleAll(false);
++    await Promise.all(responses);
++    users.settleAll(true);
++    const res = await postLogin(srv.url, { username: 'alice', password: 'any-password' });
++    assert.equal(res.status, 200);
++    assert.ok(JSON.parse(res.text).token);
++  });
++});
++
++test('the unknown-user dummy hash takes a gate slot', async () => {
++  const gate = newGate();
++  const original = usersModule.hashPasswordAsync;
++  const deferred = [];
++  usersModule.hashPasswordAsync = () => new Promise(resolve => deferred.push(resolve));
++  const srv = await listen(createServer({ users: createUserStore(USERS), gate }));
++  const ghosts = [];
++  let alice;
++  try {
++    for (let i = 1; i <= 4; i++) ghosts.push(postLogin(srv.url, { username: `ghost${i}`, password: 'ghost-password' }));
++    await waitFor(() => deferred.length === 4, '4 dummy hashes');
++    let aliceAnswered = false;
++    alice = postLogin(srv.url, ALICE).then(res => {
++      aliceAnswered = true;
++      return res;
++    });
++    await waitFor(() => gate.queued() === 1, 'alice queued');
++    assert.equal(gate.active(), 4);
++    assert.equal(gate.queued(), 1);
++    assert.equal(aliceAnswered, false);
++    for (const resolve of deferred) resolve(Buffer.alloc(32));
++    for (const res of await Promise.all(ghosts)) assert.equal(res.status, 401);
++    const res = await alice;
++    assert.equal(res.status, 200);
++    assert.ok(JSON.parse(res.text).token);
++  } finally {
++    usersModule.hashPasswordAsync = original;
++    for (const resolve of deferred) resolve(Buffer.alloc(32));
++    await Promise.allSettled([...ghosts, alice]);
++    await srv.close();
++  }
++});
++
++test('a rejected verification answers 500 and frees its slot', async () => {
++  await withSpyServer({}, async ({ srv, gate, users, pending }) => {
++    const first = NAMES.slice(0, 4).map(username => postLogin(srv.url, { username, password: 'pw' }));
++    pending.push(...first);
++    await waitFor(() => users.calls.length === 4, '4 verifications');
++    for (const call of users.calls) users.settle(call, new Error('boom'));
++    for (const res of await Promise.all(first)) {
++      assert.equal(res.status, 500);
++      assert.equal(res.text, '{"error":"internal error"}');
++    }
++    await waitFor(() => gate.active() === 0, 'all slots free');
++    const second = NAMES.slice(4, 8).map(username => postLogin(srv.url, { username, password: 'pw' }));
++    pending.push(...second);
++    await waitFor(() => gate.active() === 4 && users.calls.length === 8, 'the second batch verifying');
++    assert.deepEqual(users.calls.slice(4).map(call => call.username).sort(), NAMES.slice(4, 8));
++    users.settleAll(true);
++    for (const res of await Promise.all(second)) assert.equal(res.status, 200);
++  });
++});
++
++test('concurrent guesses for one username stop at 5 verifications', async () => {
++  await withSpyServer({ now: () => T0 }, async ({ srv, gate, users, pending }) => {
++    const responses = Array.from({ length: 8 }, () => postLogin(srv.url, { username: 'alice', password: 'wrong-password' }));
++    pending.push(...responses);
++    await waitFor(() => gate.active() === 4 && gate.queued() === 4, '4 running and 4 waiting');
++    users.settleAll(false);
++    const results = await Promise.all(responses);
++    assert.equal(users.calls.length, 5);
++    assert.equal(results.filter(res => res.status === 401).length, 5);
++    const locked = results.filter(res => res.status === 429);
++    assert.equal(locked.length, 3);
++    for (const res of locked) assert.equal(res.text, '{"error":"too many attempts"}');
++    assert.equal((await postLogin(srv.url, { username: 'alice', password: 'wrong-password' })).status, 429);
++  });
++});
++
++test('verifyAsync and hashPasswordAsync match the synchronous scheme', async () => {
++  const store = createUserStore(USERS);
++  assert.equal(typeof store.verifyAsync, 'function', 'the store has verifyAsync');
++  assert.equal(typeof usersModule.hashPasswordAsync, 'function', 'src/users.js exports hashPasswordAsync');
++  const cases = [
++    [ALICE.username, ALICE.password, true],
++    [ALICE.username, BOB.password, false],
++    ['carol', ALICE.password, false],
++    [ALICE.username, 12345, false],
++  ];
++  for (const [username, password, expected] of cases) {
++    const result = store.verifyAsync(username, password);
++    assert.ok(result instanceof Promise);
++    assert.equal(await result, expected);
++  }
++  const salt = crypto.randomBytes(16);
++  const asyncHash = await usersModule.hashPasswordAsync('pw', salt);
++  const syncHash = usersModule.hashPassword('pw', salt);
++  assert.ok(Buffer.isBuffer(asyncHash));
++  assert.equal(asyncHash.length, 32);
++  assert.deepEqual(asyncHash, syncHash);
++});
+diff --git a/test/login-failure.test.js b/test/login-failure.test.js
+new file mode 100644
+index 0000000..7ed3842
+--- /dev/null
++++ b/test/login-failure.test.js
+@@ -0,0 +1,65 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { createServer } = require('../src/server.js');
++const { createUserStore } = require('../src/users.js');
++const { USERS } = require('./fixtures/users.js');
++const { listen } = require('./helpers.js');
++
++const [ALICE] = USERS;
++
++// src/login.js is loaded lazily so a missing module fails an assertion instead of the whole file.
++function loadLogin() {
++  try {
++    return require('../src/login.js');
++  } catch (err) {
++    if (err.code === 'MODULE_NOT_FOUND') return {};
++    throw err;
++  }
++}
++
++function newSessions() {
++  const { createSessionStore } = loadLogin();
++  assert.equal(typeof createSessionStore, 'function', 'src/login.js exports createSessionStore');
++  return createSessionStore();
++}
++
++async function postLogin(url, body) {
++  const res = await fetch(`${url}/login`, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json' },
++    body: JSON.stringify(body),
++  });
++  return { status: res.status, headers: res.headers, text: await res.text() };
++}
++
++test('wrong password and unknown user get byte-identical 401 bodies', async () => {
++  const sessions = newSessions();
++  const srv = await listen(createServer({ users: createUserStore(USERS), sessions }));
++  try {
++    const wrong = await postLogin(srv.url, { username: 'alice', password: 'wrong-password' });
++    const unknown = await postLogin(srv.url, { username: 'carol', password: ALICE.password });
++    for (const res of [wrong, unknown]) {
++      assert.equal(res.status, 401);
++      assert.equal(res.headers.get('content-type'), 'application/json');
++      assert.equal(res.text, '{"error":"invalid credentials"}');
++    }
++    assert.equal(wrong.text, unknown.text);
++  } finally {
++    await srv.close();
++  }
++});
++
++test('a wrong password issues no token', async () => {
++  const sessions = newSessions();
++  const srv = await listen(createServer({ users: createUserStore(USERS), sessions }));
++  try {
++    const res = await postLogin(srv.url, { username: 'alice', password: 'wrong-password' });
++    assert.equal(res.status, 401);
++    assert.equal(Object.hasOwn(JSON.parse(res.text), 'token'), false);
++    assert.equal(sessions.size(), 0);
++  } finally {
++    await srv.close();
++  }
++});
+diff --git a/test/login-logging.test.js b/test/login-logging.test.js
+new file mode 100644
+index 0000000..78da566
+--- /dev/null
++++ b/test/login-logging.test.js
+@@ -0,0 +1,108 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { createServer } = require('../src/server.js');
++const { createUserStore } = require('../src/users.js');
++const { USERS } = require('./fixtures/users.js');
++const { listen } = require('./helpers.js');
++
++const [ALICE, BOB] = USERS;
++
++// src/login.js is loaded lazily so a missing module fails an assertion instead of the whole file.
++function loadLogin() {
++  try {
++    return require('../src/login.js');
++  } catch (err) {
++    if (err.code === 'MODULE_NOT_FOUND') return {};
++    throw err;
++  }
++}
++
++async function postRaw(url, body) {
++  const res = await fetch(`${url}/login`, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json' },
++    body,
++  });
++  return { status: res.status, text: await res.text() };
++}
++
++const postLogin = (url, body) => postRaw(url, JSON.stringify(body));
++
++// Records every console call and stdout/stderr write while still forwarding to the original.
++async function recordOutput(fn) {
++  const recorded = [];
++  const methods = ['log', 'info', 'warn', 'error', 'debug'];
++  const saved = methods.map(m => console[m]);
++  const savedOut = process.stdout.write;
++  const savedErr = process.stderr.write;
++  const capture = args => recorded.push(args.map(a => (typeof a === 'string' ? a : Buffer.isBuffer(a) ? a.toString('utf8') : String(a))).join(' '));
++  methods.forEach((m, i) => {
++    console[m] = (...args) => {
++      capture(args);
++      return saved[i].apply(console, args);
++    };
++  });
++  process.stdout.write = function (...args) {
++    capture(args);
++    return savedOut.apply(this, args);
++  };
++  process.stderr.write = function (...args) {
++    capture(args);
++    return savedErr.apply(this, args);
++  };
++  try {
++    await fn();
++  } finally {
++    methods.forEach((m, i) => {
++      console[m] = saved[i];
++    });
++    process.stdout.write = savedOut;
++    process.stderr.write = savedErr;
++  }
++  return recorded.join('\n');
++}
++
++test('no password or token reaches the logs on any login path', async () => {
++  const { createVerificationGate } = loadLogin();
++  assert.equal(typeof createVerificationGate, 'function', 'src/login.js exports createVerificationGate');
++  const secrets = [ALICE.password, 'wrong-password-logged', 'unknown-user-password', 'bob-guess-password', 'malformed-body-password', 'busy-server-password'];
++  const tokens = [];
++  const srv = await listen(createServer({ users: createUserStore(USERS) }));
++  const busy = await listen(createServer({ users: createUserStore(USERS), gate: createVerificationGate({ maxActive: 0, maxQueued: 0 }) }));
++  try {
++    const output = await recordOutput(async () => {
++      const ok = await postLogin(srv.url, ALICE);
++      assert.equal(ok.status, 200);
++      tokens.push(JSON.parse(ok.text).token);
++      assert.equal((await postLogin(srv.url, { username: 'alice', password: 'wrong-password-logged' })).status, 401);
++      assert.equal((await postLogin(srv.url, { username: 'carol', password: 'unknown-user-password' })).status, 401);
++      for (let i = 0; i < 5; i++) assert.equal((await postLogin(srv.url, { username: 'bob', password: 'bob-guess-password' })).status, 401);
++      assert.equal((await postLogin(srv.url, { username: 'bob', password: 'bob-guess-password' })).status, 429);
++      assert.equal((await postRaw(srv.url, '{"username":"alice","password":"malformed-body-password"')).status, 400);
++      assert.equal((await postLogin(busy.url, { username: 'alice', password: 'busy-server-password' })).status, 503);
++    });
++    for (const secret of [...secrets, ...tokens]) assert.equal(output.includes(secret), false, 'a secret was written to the logs');
++    assert.equal(output.includes(BOB.password), false);
++  } finally {
++    await srv.close();
++    await busy.close();
++  }
++});
++
++test('the issued token is not logged on a successful login', async () => {
++  const srv = await listen(createServer({ users: createUserStore(USERS) }));
++  try {
++    let token;
++    const output = await recordOutput(async () => {
++      const res = await postLogin(srv.url, ALICE);
++      assert.equal(res.status, 200);
++      token = JSON.parse(res.text).token;
++    });
++    assert.match(token, /^[A-Za-z0-9_-]{43}$/);
++    assert.equal(output.includes(token), false, 'the token was written to the logs');
++  } finally {
++    await srv.close();
++  }
++});
+diff --git a/test/login-ratelimit.test.js b/test/login-ratelimit.test.js
+new file mode 100644
+index 0000000..aecfc70
+--- /dev/null
++++ b/test/login-ratelimit.test.js
+@@ -0,0 +1,178 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++
++// Count hashPasswordAsync calls (the unknown-user dummy hash) before src/server.js is loaded.
++const usersModule = require('../src/users.js');
++const counters = { hash: 0, verify: 0 };
++const originalHashAsync = usersModule.hashPasswordAsync;
++usersModule.hashPasswordAsync = (...args) => {
++  counters.hash++;
++  return originalHashAsync(...args);
++};
++
++const { createServer } = require('../src/server.js');
++const { createUserStore } = usersModule;
++const { USERS } = require('./fixtures/users.js');
++const { listen } = require('./helpers.js');
++
++const [ALICE, BOB] = USERS;
++const T0 = 1_700_000_000_000;
++const WRONG = { username: 'alice', password: 'wrong-password' };
++
++// src/login.js is loaded lazily so a missing module fails an assertion instead of the whole file.
++function loadLogin() {
++  try {
++    return require('../src/login.js');
++  } catch (err) {
++    if (err.code === 'MODULE_NOT_FOUND') return {};
++    throw err;
++  }
++}
++
++async function postLogin(url, body) {
++  const res = await fetch(`${url}/login`, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json' },
++    body: JSON.stringify(body),
++  });
++  return { status: res.status, headers: res.headers, text: await res.text() };
++}
++
++async function withServer(options, fn) {
++  const clock = { t: T0 };
++  const srv = await listen(createServer({ users: createUserStore(USERS), now: () => clock.t, ...options }));
++  try {
++    await fn(srv, clock);
++  } finally {
++    await srv.close();
++  }
++}
++
++async function failTimes(url, body, n) {
++  for (let i = 0; i < n; i++) assert.equal((await postLogin(url, body)).status, 401, `attempt ${i + 1} is 401`);
++}
++
++test('the 6th attempt after 5 failures is 429 even with the right password', async () => {
++  await withServer({}, async srv => {
++    await failTimes(srv.url, WRONG, 5);
++    const res = await postLogin(srv.url, ALICE);
++    assert.equal(res.status, 429);
++    assert.equal(res.text, '{"error":"too many attempts"}');
++    assert.equal(res.headers.get('retry-after'), '60');
++  });
++});
++
++test('the lock lifts once the oldest failure is 60 seconds old', async () => {
++  await withServer({}, async (srv, clock) => {
++    await failTimes(srv.url, WRONG, 5);
++    clock.t = T0 + 59_999;
++    assert.equal((await postLogin(srv.url, ALICE)).status, 429);
++    clock.t = T0 + 60_000;
++    const res = await postLogin(srv.url, ALICE);
++    assert.equal(res.status, 200);
++    assert.match(JSON.parse(res.text).token, /^[A-Za-z0-9_-]{43}$/);
++  });
++});
++
++test('other usernames are unaffected by a lock', async () => {
++  await withServer({}, async srv => {
++    await failTimes(srv.url, WRONG, 5);
++    const res = await postLogin(srv.url, BOB);
++    assert.equal(res.status, 200);
++    assert.ok(JSON.parse(res.text).token);
++  });
++});
++
++test('unknown usernames are limited exactly like registered ones', async () => {
++  await withServer({}, async srv => {
++    const carol = { username: 'carol', password: 'any-password' };
++    await failTimes(srv.url, carol, 5);
++    assert.equal((await postLogin(srv.url, carol)).status, 429);
++  });
++});
++
++test('a successful login does not reset the failure count', async () => {
++  await withServer({}, async srv => {
++    await failTimes(srv.url, WRONG, 4);
++    assert.equal((await postLogin(srv.url, ALICE)).status, 200);
++    assert.equal((await postLogin(srv.url, WRONG)).status, 401);
++    assert.equal((await postLogin(srv.url, ALICE)).status, 429);
++  });
++});
++
++test('the window slides per failure instead of resetting at once', async () => {
++  await withServer({}, async (srv, clock) => {
++    await failTimes(srv.url, WRONG, 1);
++    clock.t = T0 + 30_000;
++    await failTimes(srv.url, WRONG, 4);
++    let res = await postLogin(srv.url, WRONG);
++    assert.equal(res.status, 429);
++    assert.equal(res.headers.get('retry-after'), '30');
++    clock.t = T0 + 60_000;
++    assert.equal((await postLogin(srv.url, WRONG)).status, 401);
++    res = await postLogin(srv.url, WRONG);
++    assert.equal(res.status, 429);
++    assert.equal(res.headers.get('retry-after'), '30');
++  });
++});
++
++test('a locked username never reaches password verification', async () => {
++  const store = createUserStore(USERS);
++  const users = {
++    has: username => store.has(username),
++    usernames: () => store.usernames(),
++    verifyAsync: (username, password) => {
++      counters.verify++;
++      return store.verifyAsync(username, password);
++    },
++  };
++  await withServer({ users }, async srv => {
++    const before = { ...counters };
++    await failTimes(srv.url, WRONG, 5);
++    await failTimes(srv.url, { username: 'carol', password: 'any-password' }, 5);
++    const locked = { ...counters };
++    assert.equal(locked.verify - before.verify, 5);
++    assert.ok(locked.hash - before.hash >= 5, 'the hashPasswordAsync spy is wired');
++    assert.equal((await postLogin(srv.url, ALICE)).status, 429);
++    assert.equal((await postLogin(srv.url, { username: 'carol', password: 'any-password' })).status, 429);
++    assert.deepEqual(counters, locked);
++  });
++});
++
++test('the limiter tracks at most 10000 usernames via recordFailure', () => {
++  const { createFailureLimiter, MAX_TRACKED } = loadLogin();
++  assert.equal(MAX_TRACKED, 10000);
++  const clock = { t: T0 };
++  const limiter = createFailureLimiter({ now: () => clock.t });
++  for (let i = 0; i < 5; i++) limiter.recordFailure('victim');
++  assert.equal(limiter.check('victim').locked, true);
++  for (let i = 0; i < 9999; i++) limiter.recordFailure(`u${i}`);
++  assert.equal(limiter.size(), 10000);
++  assert.equal(limiter.check('victim').locked, true);
++  limiter.recordFailure('u9999');
++  assert.equal(limiter.size(), 10000);
++  assert.equal(limiter.check('victim').locked, false);
++  clock.t = T0 + 60_000;
++  limiter.recordFailure('late');
++  assert.equal(limiter.size(), 1);
++});
++
++test('the limiter tracks at most 10000 usernames via begin', () => {
++  const { createFailureLimiter, MAX_TRACKED } = loadLogin();
++  assert.equal(MAX_TRACKED, 10000);
++  const limiter = createFailureLimiter({ now: () => T0 });
++  for (let i = 0; i < 5; i++) {
++    assert.equal(limiter.begin('victim').locked, false);
++    limiter.end('victim', true);
++  }
++  assert.equal(limiter.check('victim').locked, true);
++  assert.equal(limiter.size(), 1);
++  for (let i = 0; i < 9999; i++) assert.equal(limiter.begin(`u${i}`).locked, false);
++  assert.equal(limiter.size(), 10000);
++  assert.equal(limiter.check('victim').locked, true);
++  assert.equal(limiter.begin('u9999').locked, false);
++  assert.equal(limiter.size(), 10000);
++  assert.equal(limiter.check('victim').locked, false);
++});
+diff --git a/test/login-success.test.js b/test/login-success.test.js
+new file mode 100644
+index 0000000..30113b9
+--- /dev/null
++++ b/test/login-success.test.js
+@@ -0,0 +1,95 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { createServer } = require('../src/server.js');
++const { createUserStore } = require('../src/users.js');
++const { USERS } = require('./fixtures/users.js');
++const { listen } = require('./helpers.js');
++
++const [ALICE, BOB] = USERS;
++const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
++
++// src/login.js is loaded lazily so a missing module fails an assertion instead of the whole file.
++function loadLogin() {
++  try {
++    return require('../src/login.js');
++  } catch (err) {
++    if (err.code === 'MODULE_NOT_FOUND') return {};
++    throw err;
++  }
++}
++
++function newSessions() {
++  const { createSessionStore } = loadLogin();
++  assert.equal(typeof createSessionStore, 'function', 'src/login.js exports createSessionStore');
++  return createSessionStore();
++}
++
++async function postLogin(url, body) {
++  const res = await fetch(`${url}/login`, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json' },
++    body: typeof body === 'string' ? body : JSON.stringify(body),
++  });
++  return { status: res.status, headers: res.headers, text: await res.text() };
++}
++
++test('a correct login returns 200 with a fresh random token each time', async () => {
++  const sessions = newSessions();
++  const srv = await listen(createServer({ users: createUserStore(USERS), sessions }));
++  try {
++    const first = await postLogin(srv.url, ALICE);
++    const second = await postLogin(srv.url, ALICE);
++    for (const res of [first, second]) {
++      assert.equal(res.status, 200);
++      assert.equal(res.headers.get('content-type'), 'application/json');
++      const body = JSON.parse(res.text);
++      assert.deepEqual(Object.keys(body), ['token']);
++      assert.match(body.token, TOKEN_RE);
++    }
++    assert.notEqual(JSON.parse(first.text).token, JSON.parse(second.text).token);
++  } finally {
++    await srv.close();
++  }
++});
++
++test('the session store maps each issued token to its username', async () => {
++  const sessions = newSessions();
++  const srv = await listen(createServer({ users: createUserStore(USERS), sessions }));
++  try {
++    const a = await postLogin(srv.url, ALICE);
++    const b = await postLogin(srv.url, BOB);
++    assert.equal(a.status, 200);
++    assert.equal(b.status, 200);
++    assert.equal(sessions.usernameFor(JSON.parse(a.text).token), 'alice');
++    assert.equal(sessions.usernameFor(JSON.parse(b.text).token), 'bob');
++    assert.equal(sessions.usernameFor('x'.repeat(43)), null);
++  } finally {
++    await srv.close();
++  }
++});
++
++test('the session store holds at most 10000 tokens and evicts the oldest', () => {
++  const sessions = newSessions();
++  const tokens = [];
++  for (let i = 0; i < 10001; i++) tokens.push(sessions.issue('alice'));
++  assert.equal(sessions.size(), 10000);
++  assert.equal(sessions.usernameFor(tokens[0]), null);
++  assert.equal(sessions.usernameFor(tokens[1]), 'alice');
++  assert.equal(sessions.usernameFor(tokens[10000]), 'alice');
++});
++
++test('GET /login falls through to the 404 response', async () => {
++  // Checked first that POST /login is routed, so the 404 below is about the method.
++  const sessions = newSessions();
++  const srv = await listen(createServer({ users: createUserStore(USERS), sessions }));
++  try {
++    assert.equal((await postLogin(srv.url, ALICE)).status, 200);
++    const res = await fetch(`${srv.url}/login`);
++    assert.equal(res.status, 404);
++    assert.deepEqual(await res.json(), { error: 'not found' });
++  } finally {
++    await srv.close();
++  }
++});
+diff --git a/test/login-validation.test.js b/test/login-validation.test.js
+new file mode 100644
+index 0000000..4e95b80
+--- /dev/null
++++ b/test/login-validation.test.js
+@@ -0,0 +1,74 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { createServer } = require('../src/server.js');
++const { createUserStore } = require('../src/users.js');
++const { USERS } = require('./fixtures/users.js');
++const { listen } = require('./helpers.js');
++
++const [ALICE] = USERS;
++
++async function postRaw(url, body) {
++  const res = await fetch(`${url}/login`, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json' },
++    body,
++  });
++  return { status: res.status, text: await res.text() };
++}
++
++test('malformed bodies are rejected with 400', async () => {
++  const srv = await listen(createServer({ users: createUserStore(USERS) }));
++  try {
++    const bodies = [
++      '{"username":"alice",',
++      '[]',
++      JSON.stringify({ username: 'alice' }),
++      JSON.stringify({ username: 1, password: 'x' }),
++      JSON.stringify({ username: '', password: 'x' }),
++      JSON.stringify({ username: 'a'.repeat(65), password: 'x' }),
++      JSON.stringify({ username: 'alice', password: 'p'.repeat(1025) }),
++    ];
++    for (const body of bodies) {
++      const res = await postRaw(srv.url, body);
++      assert.equal(res.status, 400, `400 for ${body.slice(0, 40)}`);
++      assert.equal(res.text, '{"error":"invalid request"}');
++    }
++  } finally {
++    await srv.close();
++  }
++});
++
++test('a body over 4096 bytes is rejected with 413', async () => {
++  const srv = await listen(createServer({ users: createUserStore(USERS) }));
++  try {
++    const body = JSON.stringify({ username: 'alice', password: 'p'.repeat(5000 - 34) });
++    assert.equal(Buffer.byteLength(body), 5000);
++    const res = await postRaw(srv.url, body);
++    assert.equal(res.status, 413);
++    assert.equal(res.text, '{"error":"payload too large"}');
++  } finally {
++    await srv.close();
++  }
++});
++
++test('rejected requests do not count as failed attempts', async () => {
++  const clock = { t: 1_700_000_000_000 };
++  const srv = await listen(createServer({ users: createUserStore(USERS), now: () => clock.t }));
++  try {
++    const bodies = [
++      '{"username":"alice","password":',
++      JSON.stringify({ username: 'alice' }),
++      JSON.stringify({ username: 'alice', password: '' }),
++      JSON.stringify({ username: 'alice', password: 1 }),
++      JSON.stringify({ username: 'alice', password: null }),
++      JSON.stringify({ username: 'alice', password: 'p'.repeat(1025) }),
++    ];
++    for (const body of bodies) assert.equal((await postRaw(srv.url, body)).status, 400);
++    const res = await postRaw(srv.url, JSON.stringify(ALICE));
++    assert.equal(res.status, 200);
++  } finally {
++    await srv.close();
++  }
++});

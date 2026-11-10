@@ -1,0 +1,13 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..4f6dd48 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -223,7 +223,7 @@ function createLoginHandler({ users, sessions, limiter, gate }) {
+       let ok = false;
+       try {
+         if (users.has(username)) {
+-          ok = (await users.verifyAsync(username, password)) === true;
++          ok = true;
+         } else {
+           await usersModule.hashPasswordAsync(password, DUMMY_SALT);
+         }

@@ -1,0 +1,31 @@
+{
+  "target": "negative:LOGIN-002-AC2",
+  "id": "LOGIN-002-AC2",
+  "command": "node --test --test-timeout=20000 --test-force-exit test/login-failure.test.js",
+  "cwd": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-002-AC2/wt",
+  "head_before": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+  "head_after": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+  "status_before": [],
+  "status_after": [],
+  "timeout_s": 120,
+  "timeout_min": null,
+  "budget_min": null,
+  "elapsed_s": 0.525,
+  "exit_code": 1,
+  "signal": null,
+  "timed_out": false,
+  "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-002-AC2/negative:LOGIN-002-AC2.log",
+  "log_sha256": "9b8c25fcdbd31178fb1f027fd6df6da4577a0c5f592bf508a9bdf736d8668575",
+  "manifest_sha256": "6b04649ba5b4bb92f430709a4606f8bc7db3025463d7c147e04e4dd62dec749a",
+  "setup": null,
+  "baseline_exit_code": 0,
+  "baseline_log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-002-AC2/negative:LOGIN-002-AC2.baseline.log",
+  "baseline_log_sha256": "ebc1c2bcd5ed6aa5d6f1ad7ca33e0b0aa73916b7b356ef2e1896e6b91de07e17",
+  "baseline_timed_out": false,
+  "mutation_patch_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-002-AC2/mutation.patch",
+  "mutation_patch_sha256": "d74c3d671ce312d57c0879e7f91321eeb67962e4d2b08a74967826b74564d38c",
+  "mutated_paths": [
+    "src/login.js"
+  ],
+  "phase_elapsed_s": 166.428
+}

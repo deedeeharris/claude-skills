@@ -1,0 +1,13 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..c8e5e27 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -39,8 +39,6 @@ function createSessionStore() {
+   return {
+     issue(username) {
+       const token = crypto.randomBytes(32).toString('base64url');
+-      if (sessions.size >= MAX_TRACKED) sessions.delete(sessions.keys().next().value);
+-      sessions.set(token, { username, createdAt: Date.now() });
+       return token;
+     },
+     usernameFor(token) {

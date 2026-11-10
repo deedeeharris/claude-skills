@@ -1,0 +1,13 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..6115dec 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -187,7 +187,7 @@ function parseCredentials(buffer) {
+   }
+   if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+   const { username, password } = body;
+-  if (typeof username !== 'string' || username.length < 1 || username.length > MAX_USERNAME_LENGTH) return null;
++  if (typeof username !== 'string' || username.length < 1) return null;
+   if (typeof password !== 'string' || password.length < 1 || password.length > MAX_PASSWORD_LENGTH) return null;
+   return { username, password };
+ }

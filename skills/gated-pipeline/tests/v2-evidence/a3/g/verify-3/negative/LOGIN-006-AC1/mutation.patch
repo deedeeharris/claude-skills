@@ -1,0 +1,13 @@
+diff --git a/src/server.js b/src/server.js
+index fa5e489..109f769 100644
+--- a/src/server.js
++++ b/src/server.js
+@@ -27,7 +27,7 @@ function createServer(options = {}) {
+       });
+       return;
+     }
+-    if (req.method === 'GET' && url.pathname === '/health') {
++    if (req.method === 'GET' && url.pathname === '/healthz') {
+       sendJson(res, 200, { status: 'ok', users: users.usernames().length });
+       return;
+     }

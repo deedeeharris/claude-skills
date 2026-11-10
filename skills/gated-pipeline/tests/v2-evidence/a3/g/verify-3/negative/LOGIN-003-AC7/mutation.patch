@@ -1,0 +1,43 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..896a7b6 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -211,6 +211,20 @@ function createLoginHandler({ users, sessions, limiter, gate }) {
+     }
+     const { username, password } = credentials;
+ 
++    // Password verification runs before the limiter check() and begin(); its result goes unused
++    // when the username is locked.
++    let ok = false;
++    try {
++      if (users.has(username)) {
++        ok = (await users.verifyAsync(username, password)) === true;
++      } else {
++        await usersModule.hashPasswordAsync(password, DUMMY_SALT);
++      }
++    } catch {
++      sendJson(res, 500, INTERNAL_ERROR);
++      return;
++    }
++
+     const arrival = limiter.check(username);
+     if (arrival.locked) {
+       sendLocked(res, arrival);
+@@ -220,17 +234,6 @@ function createLoginHandler({ users, sessions, limiter, gate }) {
+     const verification = gate.run(async () => {
+       const lock = limiter.begin(username);
+       if (lock.locked) return { lock };
+-      let ok = false;
+-      try {
+-        if (users.has(username)) {
+-          ok = (await users.verifyAsync(username, password)) === true;
+-        } else {
+-          await usersModule.hashPasswordAsync(password, DUMMY_SALT);
+-        }
+-      } catch (err) {
+-        limiter.end(username, false);
+-        throw err;
+-      }
+       limiter.end(username, !ok);
+       return { ok };
+     });

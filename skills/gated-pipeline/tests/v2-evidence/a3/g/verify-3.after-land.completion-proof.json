@@ -1,0 +1,1176 @@
+{
+  "version": 2,
+  "contract": 2,
+  "certification": "design-gated",
+  "status": "PASS",
+  "feature_id": "session-login",
+  "base_commit": "1bebd14b5cbb433960cc357e71d8b8b41fde0c1a",
+  "reviewed_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+  "manifest_sha256": "6b04649ba5b4bb92f430709a4606f8bc7db3025463d7c147e04e4dd62dec749a",
+  "spec_sha256": "f5880a7534f6d2aa18c39b3d5d6406115f65bba41adf0e77511fab0dc0cf2539",
+  "source": {
+    "path": ".pipeline/features/session-login.feature.json",
+    "sha256": "f5880a7534f6d2aa18c39b3d5d6406115f65bba41adf0e77511fab0dc0cf2539"
+  },
+  "design_commit": "1bebd14b5cbb433960cc357e71d8b8b41fde0c1a",
+  "design_paths": [
+    ".pipeline/features/session-login.feature.json"
+  ],
+  "approvals_sha256": "f12021a09892a42a4460055f5b0ca5907ff0243c4999e7fb27a2c5c38370f4a9",
+  "approval_rule": "same-revision",
+  "approvals": [
+    {
+      "gate": "prd",
+      "round": 1,
+      "rev": 1,
+      "verdict": "PASS"
+    },
+    {
+      "gate": "spec",
+      "round": 1,
+      "rev": 1,
+      "verdict": "PASS"
+    }
+  ],
+  "config_bound": {
+    "config_path": ".claude/pipeline.yaml",
+    "config_sha256": "5e8ce888c03c3869c40056c6988f47a94245b084fd648845a4d78221e6138c8c",
+    "state_paths": [],
+    "clean_ignore": [],
+    "known_failures": []
+  },
+  "state_paths": [],
+  "clean_ignore": [],
+  "artifact_hashes": {
+    "build_result": "a198ba9bea87832156e5d02b1595b6cb45062ee059c98767042d07f463ee064f",
+    "verify_result": "f1f6cc283a8f5bce7a72f999cfe7abc0284ebf70ada0216a806aa0928f168a4e",
+    "preflight": "3ceb74cd63a49028ba6b120dfc04f335613ccde000bdbf4b18fd186d6594d675",
+    "acceptance_ledger": "b395fc305864834a574b3ad9686801d6b0e23bd3fbd4de4f2c7e16cb0d595c1b"
+  },
+  "actual_head": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+  "state_only_qualification": {
+    "applied": false,
+    "commits": [],
+    "changed_paths": []
+  },
+  "clean_state_qualification": {
+    "clean_ignore": [],
+    "ignored_dirty_paths": []
+  },
+  "requirements": [
+    {
+      "id": "LOGIN-001-AC1",
+      "requirement_id": "LOGIN-001",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-success.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-001-AC1.record.json",
+          "record_sha256": "505b50e71f6e2aeca1b57fff7552c79af8ca3d5c63b63dfe0801ac2dc4ec1189",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-001-AC1.log",
+          "log_sha256": "3d72517d3ac8c8900c28d97dd74babf2b6e0cfc776c01a5ce0bb33965d3cf370"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-001-AC2",
+      "requirement_id": "LOGIN-001",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-success.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-001-AC2.record.json",
+          "record_sha256": "41236eb2ed9748ca3f4c14cdd6f280f6330a2cf0c18c5d8d922a807687dae623",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-001-AC2.log",
+          "log_sha256": "8072d7d10ac2c8182b3341b06e3ae5ff406bd8b8c810fdce6acd58b2f92b4ff9"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-001-AC3",
+      "requirement_id": "LOGIN-001",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-success.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-001-AC3.record.json",
+          "record_sha256": "ca3a47cc3c155941adbc9fa84a9a2f527e3b6de39292c52cf3a1c7caa64e4f44",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-001-AC3.log",
+          "log_sha256": "6573bbd71b6fd22c76c62808d5c661fcfb8dba4aaf3562fbdb87ff308e217e05"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-002-AC1",
+      "requirement_id": "LOGIN-002",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-failure.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-002-AC1.record.json",
+          "record_sha256": "e4b142c621416a4f9aae210edcddf6024a18e9546cbaf30ab6100252e5b9cb0b",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-002-AC1.log",
+          "log_sha256": "36ad5c4a0819beedd56f7aa5513462d2a5b04b958e595d00e556e038e415cd52"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-002-AC2",
+      "requirement_id": "LOGIN-002",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-failure.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-002-AC2.record.json",
+          "record_sha256": "a9cf0effd3b9200392d99772b58c402bf9d517c3b5a45d7b60ecf78d008f3d7b",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-002-AC2.log",
+          "log_sha256": "7cc812c89350d5643d1fdbc382b823bb2b11e1668caefbc2bf1870ae9f4ff836"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC1",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC1.record.json",
+          "record_sha256": "0197de0c7b077f72fa683dee9d1d495d8a75dd0b250fc5f87d2af259be54ce75",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC1.log",
+          "log_sha256": "9ea59e83127ee6ec8c50e6fe0b0d16bd20af50b1564a71ac6e94bd3fedc753d5"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC2",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC2.record.json",
+          "record_sha256": "969c609e17dabab2759f142bae13d79c23646f1cdd2d24ccbb8c14c1466c96e7",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC2.log",
+          "log_sha256": "7c89392801be338505e42b856c9512da8263286373df03885426ef07206fcc84"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC3",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC3.record.json",
+          "record_sha256": "6bfb14e1289b0fce5deacd390334992c74a93d2859f9d412697a56c92626972f",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC3.log",
+          "log_sha256": "0e1d9fc5eb1139023f6be95360595ff4266fc8ff502590b685d3ee1fb53659bc"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC4",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC4.record.json",
+          "record_sha256": "f708819d9e02c6008ddb7a5a8e77761fbe0a2d3b956d527eda0c9518e5a2f4b1",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC4.log",
+          "log_sha256": "43b2340e9cf40f81fb38e8b29452af0929f2a88d97697227301cc380d43e8aa4"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC5",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC5.record.json",
+          "record_sha256": "76aaca9a9d4355834374a6ea8575eb4261f5485be78b1e18b57eb17e5714d0af",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC5.log",
+          "log_sha256": "1d32f862379892a1dcc410987e90e6b2642f31e29a364eb16d81be8c1900001e"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC6",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC6.record.json",
+          "record_sha256": "713f3c840c908edfbf862c7446a2d8dc0bed8261300d385ac7f30d8d0a404791",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC6.log",
+          "log_sha256": "7fadea0ec38417452b6d96dca165b0daea851a50be813c63261c417522e9b76e"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC7",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC7.record.json",
+          "record_sha256": "26e852784fc7028c1110b507d836eea77cdf97d59578531923ca467a70cc68af",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC7.log",
+          "log_sha256": "d2fcc9192653315e79b031bc547567f9b3f9f4fadd6b1fba1a9fa9c773490c5a"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC8",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC8.record.json",
+          "record_sha256": "67464020e117a8e6e5d4bdfbb9ce2c9f415d447ce9a37a95f56cd3a068521e82",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC8.log",
+          "log_sha256": "9894414e32c32f650447cc46241a54cd758b5d9f5e84b97db6f66f8e959e8d43"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC9",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC9.record.json",
+          "record_sha256": "eb29d3f9d7233ab36327a04ed8ef2e2413c0426ebb0f2732b4640ae295c5fc3d",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC9.log",
+          "log_sha256": "72c530a78ad7dc16f29f4f95156510aded66a93147f9143724666cdc365ef5de"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-003-AC10",
+      "requirement_id": "LOGIN-003",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-ratelimit.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC10.record.json",
+          "record_sha256": "f90b74384c0d0d0f4c64a2e142cf7c3f3ce6a6d0944ae72be549c6eb097360e8",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-003-AC10.log",
+          "log_sha256": "7648b0517cb422e256694d5a938051b08d7674fc86a1e9c82a36d796aa6f0615"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-004-AC1",
+      "requirement_id": "LOGIN-004",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-logging.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-004-AC1.record.json",
+          "record_sha256": "d24df281ebd1c7236867d635de7920db086bf6d387390014f98db152bbd0c1cb",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-004-AC1.log",
+          "log_sha256": "920164b76f7eb69c90b161af9c7c4304ec3670c57a4dc13debb7d89305ff1bd3"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-004-AC2",
+      "requirement_id": "LOGIN-004",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-logging.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-004-AC2.record.json",
+          "record_sha256": "3c9075bf7b36bcc6f5b17b55c94ebba4562505b8f9bb28812d4bd8fd5f6bfe7f",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-004-AC2.log",
+          "log_sha256": "d4d54ec92145cd01f856da879cf3db51c8fb42509c306dc40bd3eea545740114"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-005-AC1",
+      "requirement_id": "LOGIN-005",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-validation.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-005-AC1.record.json",
+          "record_sha256": "0d8d208b3e53bbddc54a3ab1de1b8d2bfea00803b782c51935f3d250f4f53758",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-005-AC1.log",
+          "log_sha256": "778638fe2bccc7517f13db31bdd3a967e17fddecc1a94e4427c689754c8b9ca1"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-005-AC2",
+      "requirement_id": "LOGIN-005",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-validation.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-005-AC2.record.json",
+          "record_sha256": "0d9a0965401f959a631379eabb831ce29ec2f786185af8d6cfb8679f4ce41354",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-005-AC2.log",
+          "log_sha256": "adba25b2e3c4336c14a9d506e25fbd85377db964b462b8f47080e9f76e7f4c1c"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-005-AC3",
+      "requirement_id": "LOGIN-005",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-validation.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-005-AC3.record.json",
+          "record_sha256": "49a776569874dbb2e5d91d456279fee9c8418eafcacf9b415d89280862493ab0",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-005-AC3.log",
+          "log_sha256": "ca728241edc517ff2eeeaf09150cfd4282e118c42b33e3e3cd12ed3ca299d6eb"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-006-AC1",
+      "requirement_id": "LOGIN-006",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/health.test.js test/users.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-006-AC1.record.json",
+          "record_sha256": "ee76f6af56a1f903f0da91322ab339b4aea9c13422a83a9709c3af3338e7342c",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-006-AC1.log",
+          "log_sha256": "d817cb0e69531805eb827f3882d298b3d1d18759daf33ad10cea2fef0c3e7963"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-006-AC2",
+      "requirement_id": "LOGIN-006",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-success.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-006-AC2.record.json",
+          "record_sha256": "505c687b7606c879f11d0668a2d3f0a73e66febda02331df31de95c7e9e45ad7",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-006-AC2.log",
+          "log_sha256": "043c83afb09bb29260b4765387df8c48a8fb64075768dde23bb34a7fbe167b43"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-006-AC3",
+      "requirement_id": "LOGIN-006",
+      "kind": "static",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "static",
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "file": "package.json",
+          "line": 9,
+          "file_sha256": "0f6559cc7e4918bfdde9b7aef14b5a5ba431a19f00e0bd9e588b9b424156a3a9"
+        },
+        {
+          "kind": "static",
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "file": "test/login-success.test.js",
+          "line": 38,
+          "file_sha256": "1cd5f3b2b88422879e4f4f5738b46a3aa233908a3ec1c5b96ba100bf06f34ccd"
+        },
+        {
+          "kind": "static",
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "file": "test/login-failure.test.js",
+          "line": 37,
+          "file_sha256": "1358ccd92d02b93f5f9108b3e2f409206c2a87b457f9f3335229fff25acf897e"
+        },
+        {
+          "kind": "static",
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "file": "test/login-ratelimit.test.js",
+          "line": 57,
+          "file_sha256": "1c544d6edc6a9bd0d24171c1de1d9cdcfddb842c9ea1dbcb3fdbbf51bee60021"
+        },
+        {
+          "kind": "static",
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "file": "test/login-validation.test.js",
+          "line": 21,
+          "file_sha256": "23200cc4f23ee00eab61af3574e6ee822beaeee015c7586962d510c7c2e23cda"
+        },
+        {
+          "kind": "static",
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "file": "test/login-logging.test.js",
+          "line": 67,
+          "file_sha256": "cc0f5b275e0d659b4792dd1d8a211a5d04b938dcae36f44bcaf8596be41d0953"
+        },
+        {
+          "kind": "static",
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "file": "test/login-concurrency.test.js",
+          "line": 111,
+          "file_sha256": "d798cb2d6fa25212d33fc6238109de16de3369a5e22cc2bc933645909ad4e991"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-007-AC1",
+      "requirement_id": "LOGIN-007",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC1.record.json",
+          "record_sha256": "a254859f95bb4272da2be53a2382383e381e4c159b350509bc124e9a60106242",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC1.log",
+          "log_sha256": "df82804367b7cef58583115165d49cbd35bf2cc281a24819aef65f4e901b885f"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-007-AC2",
+      "requirement_id": "LOGIN-007",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC2.record.json",
+          "record_sha256": "704babfe753512f0c111b5bb114380455c31c3b9be6d254dddf7b2ea80a83f5d",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC2.log",
+          "log_sha256": "e472364e9a7515b199b8964fd30e8cdf8a087c8479f74bda45dc839c01a4e2b3"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-007-AC3",
+      "requirement_id": "LOGIN-007",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC3.record.json",
+          "record_sha256": "4a3fbc894ceef0e9687ee22234885ce58cf7af3e891d47e77fd5cd9a4813b26a",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC3.log",
+          "log_sha256": "bb1a951697f3e5d29eb6f72aba988727bd3006a875f19e444137faa3e34a088f"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-007-AC4",
+      "requirement_id": "LOGIN-007",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC4.record.json",
+          "record_sha256": "c8325a879670314c433662ceed2625234cec72bc2a791ad8d3914280d79f91f6",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC4.log",
+          "log_sha256": "410132b667f4113aa1ff568ca9bad19abcc87910397b53cfc6a1b76c3c20dc89"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-007-AC5",
+      "requirement_id": "LOGIN-007",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC5.record.json",
+          "record_sha256": "55cc98984881c8fb6cae48f23879f7d853d2b37e8eb862a6784afa64be95828d",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC5.log",
+          "log_sha256": "f3738a947a9365d1f2a3662c506c681e276219ab776a40a637e9218b1f6d853f"
+        }
+      ]
+    },
+    {
+      "id": "LOGIN-007-AC6",
+      "requirement_id": "LOGIN-007",
+      "kind": "runtime",
+      "live": false,
+      "status": "PASS",
+      "evidence": [
+        {
+          "kind": "runtime",
+          "live": false,
+          "head_sha": "d004f807efbc39d004b3fe4352351c8dba3a9177",
+          "command": "node --test --test-timeout=20000 --test-force-exit test/login-concurrency.test.js",
+          "exit_code": 0,
+          "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC6.record.json",
+          "record_sha256": "af112dfac3243389d1f8ce37a45c61537939a4ae40493352719eae50dc67e98b",
+          "log_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/frozen-runs/proof:LOGIN-007-AC6.log",
+          "log_sha256": "d44a4cf78b8b1dc5f8affb0178bca4070d7427ad53796fff5d74520bf31fe0d3"
+        }
+      ]
+    }
+  ],
+  "changed_files": [
+    "README.md",
+    "src/login.js",
+    "src/server.js",
+    "src/users.js",
+    "test/login-concurrency.test.js",
+    "test/login-failure.test.js",
+    "test/login-logging.test.js",
+    "test/login-ratelimit.test.js",
+    "test/login-success.test.js",
+    "test/login-validation.test.js"
+  ],
+  "checks": [
+    {
+      "id": "CHECK-SMOKE",
+      "name": "Service smoke (boot and connectivity)",
+      "applicable": false,
+      "reason": "npm start binds a fixed port (PORT, default 3000) and runs until killed, so it cannot be a frozen exit-0 command; every runtime proof already boots the real http server from createServer on an ephemeral 127.0.0.1 port via test/helpers.js listen() and exercises it over HTTP with fetch."
+    },
+    {
+      "id": "CHECK-LINT",
+      "name": "Lint",
+      "applicable": false,
+      "reason": "The repo configures no linter: package.json has only the start and test scripts and no dependencies, and there is no lint config file."
+    },
+    {
+      "id": "CHECK-TYPES",
+      "name": "Type check",
+      "applicable": false,
+      "reason": "The repo is plain CommonJS JavaScript with no TypeScript, JSDoc type checking or type checker configured."
+    }
+  ],
+  "reviews": {
+    "implementation": "PASS",
+    "security": "PASS",
+    "final": "PASS",
+    "compliance": "PASS"
+  },
+  "reviewers": [
+    {
+      "stage": "design",
+      "step": "prd",
+      "round": 1,
+      "reviewer": "claude-opus-high (codex unavailable)"
+    },
+    {
+      "stage": "design",
+      "step": "spec",
+      "round": 1,
+      "reviewer": "claude-opus-high (codex unavailable)"
+    },
+    {
+      "stage": "build",
+      "step": "implementation",
+      "round": 1,
+      "reviewer": "claude-opus-high (codex unavailable)"
+    },
+    {
+      "stage": "build",
+      "step": "security",
+      "round": 1,
+      "reviewer": "claude-opus-high (codex unavailable)"
+    },
+    {
+      "stage": "verify",
+      "step": "final",
+      "round": 1,
+      "reviewer": "claude-opus-high (codex unavailable)"
+    },
+    {
+      "stage": "verify",
+      "step": "compliance",
+      "round": 1,
+      "reviewer": "claude-opus-high (codex unavailable)"
+    }
+  ],
+  "fallback_used": true,
+  "cross_family": false,
+  "suite": {
+    "status": "GREEN",
+    "completed": true,
+    "exit_code": 0,
+    "log_path": "/srv/gp-v2/state/session-login/a3/build/suite-1/suite.log",
+    "log_sha256": "f406fed7536dad8c097e4ae32270caeb55d527154707399d6f64c9ae3cf943d5",
+    "record_path": "/srv/gp-v2/state/session-login/a3/build/suite-1/suite.record.json",
+    "record_sha256": "926856f98b7422bae12657a0cf35392e984ec00a4810c83d64585cb6089173d7"
+  },
+  "known_failures_seen": [],
+  "test_first": {
+    "red_commit": "f293a35d2ea498cad8faf9cb47b2003ba6c1bcae",
+    "record_path": "/srv/gp-v2/state/session-login/a3/build/test-first/red.record.json",
+    "record_sha256": "5f0bc7e2f31004f9480703af9fd08ab7bd45a4e92b72de67a7599a71c67c11ab",
+    "command": "node --test --test-timeout=20000 --test-force-exit test/login-success.test.js test/login-failure.test.js test/login-ratelimit.test.js test/login-validation.test.js test/login-logging.test.js test/login-concurrency.test.js",
+    "exit_code": 1,
+    "red_paths": [
+      "test/login-concurrency.test.js",
+      "test/login-failure.test.js",
+      "test/login-logging.test.js",
+      "test/login-ratelimit.test.js",
+      "test/login-success.test.js",
+      "test/login-validation.test.js"
+    ]
+  },
+  "negative_controls": {
+    "isolated": [
+      {
+        "id": "LOGIN-001-AC1",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-001-AC1/negative:LOGIN-001-AC1.record.json",
+        "record_sha256": "6de1a4148235f382eb77d1b338030beb6d3df09a0c5cc08adb45e1a3a19f89bd",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "4c56fad32f031e4a7b464f0046e2d31145f2adb18456c2ae39e55bb99169bc18",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 1.538
+      },
+      {
+        "id": "LOGIN-001-AC2",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-001-AC2/negative:LOGIN-001-AC2.record.json",
+        "record_sha256": "27691352034cbaf981dc9690f2e6d644c77ee20e68a342bf69e6a258bae4f7f1",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "0c3f2f45df3781f315ed2d7026116edbf0e362dc30916cc9266a9db6e68e79fc",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 42.358
+      },
+      {
+        "id": "LOGIN-001-AC3",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-001-AC3/negative:LOGIN-001-AC3.record.json",
+        "record_sha256": "5d90f35f1a74fa070b1728354a0c6ada473c3ac684bbad8b43918041ba2bc84b",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "383905f829ff0319869629ea145da84cc0fef6260a9c0136b66f5e2655850e70",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 78.202
+      },
+      {
+        "id": "LOGIN-002-AC1",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-002-AC1/negative:LOGIN-002-AC1.record.json",
+        "record_sha256": "1deec8b0da8ea882e9f3219ed1af2554545d751a88e69ea7170c05f1d5259899",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "45e07c734f1126f2a7a0425704aeb0eb0f8ebdfaa680901c14eac4e933352c7b",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 123.638
+      },
+      {
+        "id": "LOGIN-002-AC2",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-002-AC2/negative:LOGIN-002-AC2.record.json",
+        "record_sha256": "45373140a9bf620233824ba4dade5964956ce7e4b4f3d22fbeeb8e2dcaec9efe",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "d74c3d671ce312d57c0879e7f91321eeb67962e4d2b08a74967826b74564d38c",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 166.428
+      },
+      {
+        "id": "LOGIN-003-AC1",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC1/negative:LOGIN-003-AC1.record.json",
+        "record_sha256": "28c9011f964aad39fc2283c6ef593f80d331e7fd1abeb7f13918240cbff9a081",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "5662d5cb0bc7422a8fff1d69f256ee8db0a6662bc64d3fb1d0c607debb0e3880",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 211.164
+      },
+      {
+        "id": "LOGIN-003-AC2",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC2/negative:LOGIN-003-AC2.record.json",
+        "record_sha256": "a3710511022da356eba829a2aaa620689f66069b26f028888aff8ad5b0f9418e",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "1623023108e99259b509866d0d0f7bd19a48168c764892c1edb50426d2832df7",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 255.149
+      },
+      {
+        "id": "LOGIN-003-AC3",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC3/negative:LOGIN-003-AC3.record.json",
+        "record_sha256": "87927464faf64c4c2c34ffc9b32f2402b3ef0f7a87dc374a2bfc105461b0c279",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "80219de487bf5828097240d009c3960ed9e342001e7050d03a9ee808e60bc1f0",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 304.171
+      },
+      {
+        "id": "LOGIN-003-AC4",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC4/negative:LOGIN-003-AC4.record.json",
+        "record_sha256": "80e8a5ceb0e8877389b51ea53a09ea07922feaa74b966c9c1aa21001624007ab",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "9b3d40fbe23a56feefe5790fc65222bc52d255cc33be50c2cbbcbc8aece46912",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 352.199
+      },
+      {
+        "id": "LOGIN-003-AC5",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC5/negative:LOGIN-003-AC5.record.json",
+        "record_sha256": "8d9a61ec3b1a3169342a8366f3db85c08f5c49d1da7c542cbb87761ecb0bb870",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "b4752a34a9da0384fddc059c3c9af340463ee1b28a56b70c631de4c682a46227",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 396.851
+      },
+      {
+        "id": "LOGIN-003-AC6",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC6/negative:LOGIN-003-AC6.record.json",
+        "record_sha256": "b3e62dc4330ff5d75581730bd03e6d072cdbb1e84ca51f096e992c45ca6bd3db",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "a0671af16dd1e8f056a9daf307dcae94efebba176f0d80f56863d8c01d3fafcc",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 446.193
+      },
+      {
+        "id": "LOGIN-003-AC7",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC7/negative:LOGIN-003-AC7.record.json",
+        "record_sha256": "e5280024eeb4ba6369e893a25afcc4a4ef130a496f1d10a347a233123e07c941",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "beeca417a845619c3183f87b13ab98f9f6ad40b5f2b42c11793dd7962e3af75a",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 491.266
+      },
+      {
+        "id": "LOGIN-003-AC8",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC8/negative:LOGIN-003-AC8.record.json",
+        "record_sha256": "38bb67e2db9ebe4e41d4414712282451c3d5c5cd1378525a0b7e23e8abcddefc",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "0f224ad97eb65e469235048972b143b98e069da29164a7ceae0773b6d58f84fa",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 539.523
+      },
+      {
+        "id": "LOGIN-003-AC9",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC9/negative:LOGIN-003-AC9.record.json",
+        "record_sha256": "2bab623620a58c93f4100eb88c1bebab9d7d7b55c3787952218de9e9b1788580",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "b564e0bb09af83d4a6ac49798ba8976f852b4341c5106360a979cbebf4d091e0",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 576.366
+      },
+      {
+        "id": "LOGIN-003-AC10",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-003-AC10/negative:LOGIN-003-AC10.record.json",
+        "record_sha256": "eadeeb9a473db51b74911ebf9266b9f3b5544c65136266dd46b16d430f10b8a3",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "14adc4449a5062ced9644642142d2b48d1c8d901da28f96ab2d370eb5d091f78",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 622.049
+      },
+      {
+        "id": "LOGIN-004-AC1",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-004-AC1/negative:LOGIN-004-AC1.record.json",
+        "record_sha256": "f13c79d543e20e4ef61c9fa4678b2f11e6603d52f993cecd9c876db87d03ee31",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "19c8d5ae187122d1b640d09f7224d21cc7e48a2a326150b28de31cbddd4cf9f8",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 665.521
+      },
+      {
+        "id": "LOGIN-004-AC2",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-004-AC2/negative:LOGIN-004-AC2.record.json",
+        "record_sha256": "ff27fed8f08952ce7ec7732a2641925c5290c9c91d3f960127f0e35bd46980ef",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "f5bc57ba8720917e5cfb389ac9715c1536be418af72c68b19beb9c1bab054dd3",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 715.427
+      },
+      {
+        "id": "LOGIN-005-AC1",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-005-AC1/negative:LOGIN-005-AC1.record.json",
+        "record_sha256": "e2cabc0ddcbea015bb5e8dd38c9bd41f341f4e26c06e90499d265c38ce167f74",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "8b9bac1dee41431e00eb1753723b4948ca405fca9dc871565d7794ae76905041",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 751.333
+      },
+      {
+        "id": "LOGIN-005-AC2",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-005-AC2/negative:LOGIN-005-AC2.record.json",
+        "record_sha256": "e90c3bc4760be5a7301e732240283f1dc334d25b8e457c9c49330d625253262a",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "366ef79a931b5c3a7676caab86798e4416948d3fec7bad74e9103e0d2bb5adfe",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 786.693
+      },
+      {
+        "id": "LOGIN-005-AC3",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-005-AC3/negative:LOGIN-005-AC3.record.json",
+        "record_sha256": "4abcaa99785ca831957f6328e82b2108d9772c6af510520a3dd810c7dc01ef13",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "5cead9d59b2f61c45274a61bc5452cb8c889c88ea38144c8d67af9d2052bbcb2",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 852.782
+      },
+      {
+        "id": "LOGIN-006-AC1",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-006-AC1/negative:LOGIN-006-AC1.record.json",
+        "record_sha256": "4a3c16cb02e7fb60621fce71f6f30f66dd0e868113f5f6ff4c7657d4c99446cc",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "ff97c3d85c231e7758caeaaff4387a76f916153f60b6e660aac561df98b237c1",
+        "mutated_paths": [
+          "src/server.js"
+        ],
+        "phase_elapsed_s": 899.132
+      },
+      {
+        "id": "LOGIN-006-AC2",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-006-AC2/negative:LOGIN-006-AC2.record.json",
+        "record_sha256": "9ddfdb504aa6f242814e90d637857d7ad4ae0dac9930f30b3a4f45b12f11ad58",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "0956eaa6b1a66df83bae34f64f37e732a8f0970c911064a485e142c9cc49adc2",
+        "mutated_paths": [
+          "src/server.js"
+        ],
+        "phase_elapsed_s": 935.759
+      },
+      {
+        "id": "LOGIN-007-AC1",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC1/negative:LOGIN-007-AC1.record.json",
+        "record_sha256": "1e42ab3ad9b87e2acce7b9ef8b13e54cfea92ca1efbb492d29acfccb62dc973b",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "9301d4615b132966b335602d7b7988f2ded1ce687fb150bd0c609aa498920459",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 998.873
+      },
+      {
+        "id": "LOGIN-007-AC2",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC2/negative:LOGIN-007-AC2.record.json",
+        "record_sha256": "fd11320f21e7b1d8d19ad36faad984c91fdc35e1e00747c4891b4ef3a09c0562",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "e303fec2759b0835b6285b078851ee89004bf667a25a547bbfc971edf7d4bdd1",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 1064.773
+      },
+      {
+        "id": "LOGIN-007-AC3",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC3/negative:LOGIN-007-AC3.record.json",
+        "record_sha256": "f526da8d54451820983aff7337935c54cb344f6920c5c47ece6fc43b7dfca929",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "49a4ec71e02509bb2e35b582ccc6e58d0093e587a8db21b1461ae6391a276d72",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 1109.737
+      },
+      {
+        "id": "LOGIN-007-AC4",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC4/negative:LOGIN-007-AC4.record.json",
+        "record_sha256": "702b5d68478a3a33a19ed9ad51fc232e5deb984a8a5e4a3b6ab262653987f5e5",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "39fe036253f463a09f711bed4bd213eef2d38dd8c5090c8674912e8aa428e7c5",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 1152.865
+      },
+      {
+        "id": "LOGIN-007-AC5",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC5/negative:LOGIN-007-AC5.record.json",
+        "record_sha256": "b3a44437937f8a1fe61987f05bcb7a93cebd857b79fab18895c1caf4ca3a492b",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "ee98781ffa39ac95d1154ccb9eed9cb4532e699858c48edc87585572bd031bfa",
+        "mutated_paths": [
+          "src/login.js"
+        ],
+        "phase_elapsed_s": 1194.599
+      },
+      {
+        "id": "LOGIN-007-AC6",
+        "record_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/negative/LOGIN-007-AC6/negative:LOGIN-007-AC6.record.json",
+        "record_sha256": "4b06e8868725a1729b542d065ad8ea28055a52682565d6a855b2dc4c9fd6d868",
+        "baseline_exit_code": 0,
+        "mutated_exit_code": 1,
+        "mutation_patch_sha256": "a499db60c936fd4a767b94d8e48bfed44227add51dd19433cd9233b99a0a240f",
+        "mutated_paths": [
+          "src/users.js"
+        ],
+        "phase_elapsed_s": 1232.66
+      }
+    ],
+    "exempt": [
+      {
+        "id": "LOGIN-006-AC3",
+        "reason": "A static acceptance cannot have a runtime mutation; the runtime proofs of LOGIN-001 to LOGIN-005 and LOGIN-007 already fail if any of these files is missing."
+      }
+    ],
+    "counts": {
+      "isolated": 28,
+      "exempt": 1
+    }
+  },
+  "repo_config": {
+    "build": {
+      "lock_note": "npm test runs the whole suite; no lock needed. Commit messages in this toy repo are a plain subject and body with no trailer lines at all (no Co-Authored-By, no Claude-Session, no session links, no AI attribution); the local identity \"gp-v2 toy\" with an empty email is already configured, never change it."
+    },
+    "verify": {
+      "scan_log": null,
+      "require_scan_row": false
+    }
+  },
+  "trunk_qualification": {
+    "ref": "origin/main",
+    "sha": "ee05971e0c2f6406a2eff013fcfc0df7b5bd180a",
+    "pre_design_range_empty": true,
+    "pr_paths": [
+      ".pipeline/features/session-login.feature.json",
+      "README.md",
+      "src/login.js",
+      "src/server.js",
+      "src/users.js",
+      "test/login-concurrency.test.js",
+      "test/login-failure.test.js",
+      "test/login-logging.test.js",
+      "test/login-ratelimit.test.js",
+      "test/login-success.test.js",
+      "test/login-validation.test.js"
+    ]
+  },
+  "resume": {
+    "manifest_path": "/srv/gp-v2/state/session-login/a3/design/frozen/execution-plan.json",
+    "verify_result_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/verify-result.json",
+    "original_base_commit": "1bebd14b5cbb433960cc357e71d8b8b41fde0c1a",
+    "note": "Retain the frozen dir, the approvals ledger and the evidence. On interruption, rerun the stage as a new call with a fresh run_dir."
+  },
+  "handoff": {
+    "manifest_path": "/srv/gp-v2/state/session-login/a3/design/frozen/execution-plan.json",
+    "frozen_dir": "/srv/gp-v2/state/session-login/a3/design/frozen",
+    "spec_path": "/srv/gp-v2/a3/.pipeline/features/session-login.feature.json",
+    "approvals_path": "/srv/gp-v2/state/session-login/a3/design/approvals-2.json",
+    "build_result_path": "/srv/gp-v2/state/session-login/a3/build.result.json",
+    "verify_result_path": "/srv/gp-v2/state/session-login/a3/g/verify-3/verify-result.json",
+    "note": "Only this reviewed commit is certified. The human or orchestrator decides whether to merge."
+  },
+  "checked_at": "2026-11-10T13:14:05.675Z"
+}

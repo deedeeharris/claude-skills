@@ -1,0 +1,12 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..cc31710 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -235,6 +235,7 @@ function createLoginHandler({ users, sessions, limiter, gate }) {
+       return { ok };
+     });
+     if (verification === null) {
++      limiter.recordFailure(username);
+       sendJson(res, 503, INVALID_CREDENTIALS, { 'retry-after': String(BUSY_RETRY_AFTER_S) });
+       return;
+     }

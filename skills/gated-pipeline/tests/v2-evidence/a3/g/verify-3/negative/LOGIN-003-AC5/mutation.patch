@@ -1,0 +1,12 @@
+diff --git a/src/login.js b/src/login.js
+index ae8fd05..40f0a2f 100644
+--- a/src/login.js
++++ b/src/login.js
+@@ -112,6 +112,7 @@ function createFailureLimiter({ maxFailures = MAX_FAILURES, windowMs = WINDOW_MS
+       const record = records.get(username);
+       if (record && record.pending > 0) record.pending--;
+       if (failed) recordFailure(username);
++      else records.delete(username);
+     },
+     recordFailure,
+     size() {

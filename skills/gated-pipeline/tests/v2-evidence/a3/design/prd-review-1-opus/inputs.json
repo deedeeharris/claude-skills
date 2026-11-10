@@ -1,0 +1,14 @@
+{
+  "inputs": [
+    {
+      "role": "files",
+      "path": "/srv/gp-v2/state/session-login/a3/design/rev-1/out/prd.view.md",
+      "sha256": "0a09c14d776ab5f74980cedfe600b630f0f132cb14387da80c1ef3acb8c09cfe"
+    },
+    {
+      "role": "against",
+      "path": "/srv/gp-v2/state/session-login/a3/design/source-request.txt",
+      "sha256": "e700dd61fea11b4b7aed0b14c22b488cda8b82b14308471c0d1afccd9674efd7"
+    }
+  ]
+}

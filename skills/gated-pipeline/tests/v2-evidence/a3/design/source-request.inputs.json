@@ -1,0 +1,9 @@
+{
+  "inputs": [
+    {
+      "role": "files",
+      "path": "/srv/gp-v2/state/session-login/a3/design/source-request.txt",
+      "sha256": "e700dd61fea11b4b7aed0b14c22b488cda8b82b14308471c0d1afccd9674efd7"
+    }
+  ]
+}
