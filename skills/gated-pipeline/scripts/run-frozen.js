@@ -135,10 +135,22 @@ function absOutside(value, label, realRepo) {
 
 // Directory-prefix rule of check-completion.js (statePath): an entry covers itself and everything under it.
 const covered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'));
+// The paths of one porcelain v1 status line, as check-completion.js reads them (statusLinePaths): git C-quotes a
+// name holding a space, so an unquoted name holds no space, and `old -> new` is a rename or copy (R or C) only.
+// An unreadable line is null, and never clean.
+function statusLinePaths(line) {
+  if (line.length < 4 || line[2] !== ' ') return null;
+  const tokens = line.slice(3).match(/"(?:[^"\\]|\\.)*"|[^ "]+| /g);
+  if (!tokens || tokens.join('') !== line.slice(3)) return null;
+  const parts = tokens.filter(x => x !== ' ');
+  const unquote = x => (x.startsWith('"') ? x.slice(1, -1) : x);
+  if (/[RC]/.test(line.slice(0, 2))) return parts.length === 3 && parts[1] === '->' && tokens.length === 5 ? [unquote(parts[0]), unquote(parts[2])] : null;
+  return parts.length === 1 && tokens.length === 1 ? [unquote(parts[0])] : null;
+}
 function checkoutState(cwd, ignores) {
   const head = git(cwd, ['rev-parse', 'HEAD']).stdout.trim();
   const status = git(cwd, ['status', '--porcelain=v1', '--untracked-files=all']).stdout.split('\n').filter(Boolean);
-  const dirty = status.filter(line => !line.slice(3).split(' -> ').map(p => p.replace(/^"|"$/g, '')).every(p => covered(p, ignores)));
+  const dirty = status.filter(line => { const files = statusLinePaths(line); return !(files && files.every(p => covered(p, ignores))); });
   return { head, status, dirty };
 }
 
@@ -192,12 +204,13 @@ function runFramed({ command, cwd, target, head, logPath, limitS }) {
   const started = process.hrtime.bigint();
   return new Promise(resolve => {
     const child = spawn('/bin/sh', ['-c', command], { cwd, detached: true, stdio: ['ignore', fd, fd] });
-    let timedOut = false, killTimer = null;
+    let timedOut = false, killTimer = null, termAt = 0;
     const group = sig => { try { process.kill(-child.pid, sig); return true; } catch { return false; } };
     const active = { group, fd, started };
     ACTIVE.add(active);
     const limit = setTimeout(() => {
       timedOut = true;
+      termAt = Date.now();
       group('SIGTERM');
       killTimer = setTimeout(() => group('SIGKILL'), KILL_GRACE_S() * 1000);
     }, Math.max(1, Math.round(limitS * 1000)));
@@ -218,8 +231,10 @@ function runFramed({ command, cwd, target, head, logPath, limitS }) {
       };
       if (!timedOut) { done(); return; }
       // After a timeout the rest of the group keeps its SIGTERM grace (the SIGKILL timer above ends it).
-      // A hard deadline too: an unreaped zombie (no init reaping in a container) must not hang the run.
-      const deadline = Date.now() + KILL_GRACE_S() * 1000 + 2000;
+      // A hard deadline too: an unreaped zombie (no init reaping in a container) must not hang the run. It counts from
+      // the SIGTERM, not from this exit: a direct child that ignores SIGTERM exits only at the SIGKILL, and a deadline
+      // from then would add the grace twice, past the RUN_GRACE_S every call budget assumes (scripts/lib/call-limits.js).
+      const deadline = termAt + KILL_GRACE_S() * 1000 + 2000;
       const poll = setInterval(() => { if (!group(0) || Date.now() > deadline) { clearInterval(poll); done(); } }, 50);
     };
     child.on('error', () => finish(null, null));

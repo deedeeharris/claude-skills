@@ -400,8 +400,11 @@ preflight) makes its parent with `mkdir -p` (the parent computed by the workflow
 run_dir) and then the run_dir itself with a plain `mkdir`. An existing run_dir prints
 `GP_RUN_DIR_EXISTS` and is BLOCKED with code `E_RUN_DIR_EXISTS` before anything else runs; a
 parent that cannot be made prints `GP_RUN_DIR_PARENT` (any other `mkdir` failure
-`GP_RUN_DIR_CREATE`), code `E_RUN_DIR`. Design recovery (`recover: true`) reuses its run_dir
-and creates none. Certifying scripts re-derive identity live, so a replay that slips through still
+`GP_RUN_DIR_CREATE`), code `E_RUN_DIR`. Design also takes `repo` and `source_request_path` as
+normalized absolute paths and compares all three physically (`realpath`) in its start block,
+before the lock: a request inside the repo is `GP_SOURCE_IN_REPO` (`E_SOURCE_IN_REPO`), a run_dir
+inside it `GP_RUN_DIR_IN_REPO` (`E_RUN_DIR`, the new run_dir removed again). Design recovery
+(`recover: true`) reuses its run_dir and creates none. Certifying scripts re-derive identity live, so a replay that slips through still
 fails completion: verify ends INCOMPLETE at stage `completion` and land refuses.
 
 ### 6.2 design (contract 2)
@@ -415,7 +418,8 @@ in-script and returns `{ status: 'BLOCKED', code: 'E_SCOPE' }` on failure.
 
 Start `gp-exec` block: asserts `git symbolic-ref -q HEAD` = `refs/heads/<work_branch>`;
 creates the fresh `run_dir` with its parent (6.1), before the lock, so a run_dir failure
-leaves no lock; takes the run lock `<git-dir>/gp-design-<feature_id>.lock` with O_EXCL
+leaves no lock; takes the run lock `<git-common-dir>/gp-design-<feature_id>.lock` (the common
+git dir, so every linked worktree of the repo shares one lock per feature) with O_EXCL
 (`set -C`, content `run_dir`; exits nonzero if it exists); writes `<run_dir>/start-head.json`
 (`{ start_head, previous_design }`, start_head = the work_branch HEAD); saves rev-0: with
 `previous_design`, the blob `<commit>:<repo_path>` (if `<start_head>:<path>` also exists it
@@ -539,7 +543,9 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
 - `contract: 1` with `spec_path`: today's behaviour, stamped `build_mode: "v1"`.
 - `contract: 1` with only `charge`: the explicit `charge-only` mode, stamped
   `build_mode: "charge-only"`. Completion (v1 and v2) rejects a `charge-only` build result;
-  results without `build_mode` (written before this change) keep the v1 rules.
+  v1 completion also rejects a build result stamped `build_mode: "v2"` (a design-gated build
+  certifies only under contract 2); results without `build_mode` (written before this change)
+  keep the v1 rules.
 
 ### 6.4 verify (contract 2)
 - Args additionally need `frozen_dir`, `design_commit`, `approvals_path`, `approvals_sha256`
@@ -776,7 +782,11 @@ sections with no v2 field; `provenance_missing` is true when there is no `prd.md
 original request. `scope.test_paths` is always a todo (`/scope/test_paths/0`), with or without
 an `isolated_mutation`: contract-2 test-first needs at least one test path (G41). The draft
 never validates until a human or authorized review fills it;
-exit 0 means "draft written", never "certified".
+exit 0 means "draft written", never "certified". design enforces the human step: a
+`seed_feature_path` holding the literal `MIGRATION-TODO` is BLOCKED at start
+(`E_MIGRATION_TODO`) before the run_dir, the lock or any model call, and a snapshot whose
+working file holds the token, or whose diagnostics carry `E_MIGRATION_TODO`, is BLOCKED and
+never sent to the author as a repair.
 
 ## 9. What stays exactly as it was
 

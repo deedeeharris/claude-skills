@@ -382,7 +382,17 @@ const refusedStatus = (r, stage, reason, extra) => {
 // record from disk (hash, target, command, logs, patch, exit codes).
 const rbRefused = r => !r || r.blocked === true || (r.exit_code !== 0 && /^run-frozen: /m.test(String(r.stdout || '')))
 const rbCovered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'))
-const rbClean = (status, entries) => Array.isArray(status) && status.every(l => typeof l === 'string' && l.slice(3).split(' -> ').map(p => p.replace(/^"|"$/g, '')).every(p => rbCovered(p, entries)))
+// A porcelain v1 line's paths, read as run-frozen.js and check-completion.js read them: git C-quotes a name holding a
+// space, so `old -> new` is a rename or copy (R or C in XY) only; an unreadable line is null, never clean.
+const rbPaths = l => {
+  if (typeof l !== 'string' || l.length < 4 || l[2] !== ' ') return null
+  const t = l.slice(3).match(/"(?:[^"\\]|\\.)*"|[^ "]+| /g)
+  if (!t || t.join('') !== l.slice(3)) return null
+  const p = t.filter(x => x !== ' ').map(x => (x.startsWith('"') ? x.slice(1, -1) : x))
+  if (/[RC]/.test(l.slice(0, 2))) return t.length === 5 && t[2] === '->' ? [p[0], p[2]] : null
+  return t.length === 1 ? p : null
+}
+const rbClean = (status, entries) => Array.isArray(status) && status.every(l => { const f = rbPaths(l); return f !== null && f.every(p => rbCovered(p, entries)) })
 // The text a cat printed after a file's sha256sum line (up to the next sha256sum line), parsed as one JSON object, else null.
 function rbJsonAfter(stdout, file) {
   const lines = String(stdout || '').split('\n')

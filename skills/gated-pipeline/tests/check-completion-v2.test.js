@@ -140,7 +140,7 @@ test('v1: a build result stamped build_mode "v2" is rejected (a documented v1 ad
   fs.unlinkSync(f.out);
   const now = run(CHECKER);
   assert.equal(now.status, 1);
-  assert.match(now.stderr, /build_mode "v2"/);
+  assert.match(now.stderr, /build_mode \\?"v2\\?"/);
   assert.match(now.stderr, /contract 2/);
   assert.equal(fs.existsSync(f.out), false);
   // the stamps v1 builds carry still certify

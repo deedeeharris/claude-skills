@@ -111,6 +111,29 @@ function cleanReports(lines, ignores, label, protectedPaths) {
     }
   }
 }
+// The paths of one `git status --porcelain=v1` line (contract 2 records). Git C-quotes a name holding a space or a
+// special character, so an unquoted name holds no space; the `old -> new` form is a rename or copy (R or C in XY)
+// only. Anything else is null (an unreadable line is never clean).
+function statusLinePaths(line) {
+  if (typeof line !== 'string' || line.length < 4 || line[2] !== ' ') return null;
+  const tokens = line.slice(3).match(/"(?:[^"\\]|\\.)*"|[^ "]+| /g);
+  if (!tokens || tokens.join('') !== line.slice(3)) return null;
+  const parts = tokens.filter(x => x !== ' ');
+  const unquote = x => (x.startsWith('"') ? x.slice(1, -1) : x);
+  if (/[RC]/.test(line.slice(0, 2))) return parts.length === 3 && parts[1] === '->' && tokens.length === 5 ? [unquote(parts[0]), unquote(parts[2])] : null;
+  return parts.length === 1 && tokens.length === 1 ? [unquote(parts[0])] : null;
+}
+function cleanRecordStatus(lines, ignores, label, protectedPaths) {
+  for (const line of list(lines, label)) {
+    const files = statusLinePaths(line);
+    ensure(files, label + ' has an unreadable status line: ' + JSON.stringify(line));
+    for (const file of files) {
+      repoPath(file, false, label + ' path');
+      ensure(!protectedPaths.some(entry => matchPath(file, entry)), label + ' has a dirty protected path: ' + file);
+      ensure(statePath(file, ignores), label + ' must be clean outside frozen clean_ignore');
+    }
+  }
+}
 function pinned(report, sha, label, ignores, protectedPaths) {
   ensure(report && report.head_before === sha && report.head_after === sha, label + ' must have the reviewed SHA before and after');
   cleanReports(report.status_before, ignores, label + ' status_before', protectedPaths);
@@ -221,6 +244,7 @@ function check(args) {
   const build = buildSource.value;
   const verify = verifySource.value;
   ensure(build.build_mode !== 'charge-only', 'a charge-only build result never certifies completion (build_mode "charge-only")');
+  ensure(build.build_mode !== 'v2', 'a design-gated build result (build_mode "v2") certifies only under contract 2, never through a v1 manifest');
   for (const [label, report] of [['build', build], ['verify', verify]]) {
     ensure(report.status === 'PASS', label + ' result must PASS');
     ensure(report.feature_id === feature, label + ' feature does not match');
@@ -351,7 +375,7 @@ function check(args) {
 
 // ================================================================================================================
 // Contract 2 (manifest version 2): docs/v2-design.md sections 5, 6.2, 6.4 and 6.5. The v1 code above is untouched
-// except for the charge-only rejection; v2 is selected by `--mode approvals|design` or by any v2-only flag
+// except for the charge-only and v2 build_mode rejections; v2 is selected by `--mode approvals|design` or by any v2-only flag
 // (--frozen-dir, --approvals, --approvals-sha256, --trunk-ref, --commit, --expect-parent, --source). Without them a
 // v2 manifest fails the v1 path ("manifest version or feature does not match"), so nothing upgrades silently.
 //
@@ -391,7 +415,8 @@ function check(args) {
 // write-json.js as { gate_kind, reviewer, reply } (security: reply.findings, else reply.blocking).
 //
 // Choices where the design is silent (the simplest reading, fail closed):
-// - the source-request mode of the --source-request rules is the form F carries (text or ref);
+// - the source-request mode of the --source-request rules is the ledger's recorded source_request_mode, applied to
+//   every revision and to F (R03, R04); nothing infers it from the form a revision carries;
 // - the ledger's start_head must be the design commit's parent; review dirs and rev dirs lie in the ledger's
 //   run_dir; source_request_path is <run_dir>/source-request.txt;
 // - pipeline.yaml bound lines may carry a trailing `# comment` after the JSON array;
@@ -836,16 +861,17 @@ function modePlanV2(args) {
 }
 
 // A run-frozen record: hash, framed log, command, head, clean checkout.
-function frozenRecord(ctx, file, expectedSha, label, { target, command, sha, ignores, protectedPaths }) {
+function frozenRecord(ctx, file, expectedSha, label, { target, command, sha, ignores, protectedPaths, manifestSha }) {
   const loaded = strictJson(hashed(ctx, file, expectedSha, label), label);
   const r = loaded.value;
   need(isObj(r) && r.target === target, 'E_RECORD', `${label}: record target ${r && r.target} is not ${target}`);
   need(r.status !== 'NOT_RUN', 'E_RECORD', `${label}: NOT RUN`);
+  need(r.manifest_sha256 === manifestSha, 'E_RECORD', `${label}: the record's manifest_sha256 is not the frozen manifest's (run from another manifest)`);
   need(r.command === command, 'E_RECORD', `${label}: the recorded command is not the frozen one`);
   need(r.head_before === sha && r.head_after === sha, 'E_RECORD', `${label}: not run on the reviewed SHA`);
   try {
-    cleanReports(r.status_before, ignores, label + ' status_before', protectedPaths);
-    cleanReports(r.status_after, ignores, label + ' status_after', protectedPaths);
+    cleanRecordStatus(r.status_before, ignores, label + ' status_before', protectedPaths);
+    cleanRecordStatus(r.status_after, ignores, label + ' status_after', protectedPaths);
   } catch (e) { throw new GateError('E_RECORD', e.message); }
   framedLog(ctx, r.log_path, r.log_sha256, label, { target, command: r.command, cwd: r.cwd, head: r.head_before }, r);
   return { record: r, sha256: loaded.sha256, path: loaded.path };
@@ -1005,7 +1031,7 @@ function completionV2(args) {
   need(keysExactly(si, ['command', 'known_failure_ids', 'isolated', 'setup_command', 'timeout_min', 'record_path', 'record_sha256']), 'E_SUITE', 'build suite_identity has unexpected or missing fields');
   need(isDeepStrictEqual({ command: si.command, known_failure_ids: si.known_failure_ids, isolated: si.isolated, setup_command: si.setup_command, timeout_min: si.timeout_min },
     { command: ms.command, known_failure_ids: knownIds, isolated: ms.isolated, setup_command: ms.setup_command, timeout_min: ms.timeout_min }), 'E_SUITE', 'build suite_identity differs from the manifest suite');
-  const sr = frozenRecord(ctx, si.record_path, si.record_sha256, 'suite record', { target: 'suite', command: ms.command, sha, ignores: cleanIgnore, protectedPaths }).record;
+  const sr = frozenRecord(ctx, si.record_path, si.record_sha256, 'suite record', { target: 'suite', command: ms.command, sha, ignores: cleanIgnore, protectedPaths, manifestSha: manifestSource.sha256 }).record;
   need(sr.timed_out === false, 'E_SUITE', 'the suite timed out');
   need(sr.timeout_s > 0 && sr.timeout_s <= ms.timeout_min * 60, 'E_SUITE', 'the suite ran under another limit than its timeout_min');
   if (ms.setup_command !== null) {
@@ -1042,7 +1068,7 @@ function completionV2(args) {
   need(redPaths.length > 0, 'E_TEST_FIRST', `the red commit ${redCommit} changes no file since the design commit`);
   const redOutside = redPaths.filter(f => !testPaths.some(t => insideEntry(f, t)));
   need(!redOutside.length, 'E_TEST_FIRST', `the red range ${designCommit}..${redCommit} changes files outside scope.test_paths: ${redOutside.join(', ')}`);
-  const red = frozenRecord(ctx, tf.record_path, tf.record_sha256, 'test-first red record', { target: 'red', command: ms.unit_command, sha: redCommit, ignores: cleanIgnore, protectedPaths });
+  const red = frozenRecord(ctx, tf.record_path, tf.record_sha256, 'test-first red record', { target: 'red', command: ms.unit_command, sha: redCommit, ignores: cleanIgnore, protectedPaths, manifestSha: manifestSource.sha256 });
   const rr = red.record;
   need(typeof rr.cwd === 'string' && path.resolve(rr.cwd) !== repo && !within(repo, path.resolve(rr.cwd)), 'E_TEST_FIRST', 'the red run did not run in a throwaway worktree outside the work checkout');
   need(rr.base_commit === designCommit && JSON.stringify(rr.red_paths) === JSON.stringify(redPaths), 'E_TEST_FIRST', 'the red record names another base or other red paths than git');
@@ -1074,7 +1100,7 @@ function completionV2(args) {
     if (!c.applicable) { checks.push({ id: c.id, name: c.name, applicable: false, reason: c.reason }); continue; }
     need(recs.has(c.id), 'E_CHECK', 'missing check record: ' + c.id);
     const e = recs.get(c.id);
-    const fr = frozenRecord(ctx, e.record_path, e.record_sha256, c.id + ' check record', { target: 'check:' + c.id, command: c.command, sha, ignores: cleanIgnore, protectedPaths });
+    const fr = frozenRecord(ctx, e.record_path, e.record_sha256, c.id + ' check record', { target: 'check:' + c.id, command: c.command, sha, ignores: cleanIgnore, protectedPaths, manifestSha: manifestSource.sha256 });
     const r = fr.record;
     need(r.timeout_min === c.timeout_min && r.budget_min === c.budget_min, 'E_CHECK', `${c.id}: timeout_min or budget_min differ from the manifest`);
     const limitMin = c.budget_min > 0 ? c.budget_min : c.timeout_min;
@@ -1111,7 +1137,7 @@ function completionV2(args) {
         evidence.push({ kind: 'runtime', live: true, check_id: acc.check_id, head_sha: sha, command: acc.proof_command, exit_code: 0, record_path: fr.path, record_sha256: fr.sha256, log_path: fr.record.log_path, log_sha256: fr.record.log_sha256 });
       } else {
         need(keysExactly(e, ['id', 'live', 'record_path', 'record_sha256']) && e.live === false, 'E_PROOF', `${acc.id}: needs a proof: record`);
-        const fr = frozenRecord(ctx, e.record_path, e.record_sha256, acc.id + ' proof record', { target: 'proof:' + acc.id, command: acc.proof_command, sha, ignores: cleanIgnore, protectedPaths });
+        const fr = frozenRecord(ctx, e.record_path, e.record_sha256, acc.id + ' proof record', { target: 'proof:' + acc.id, command: acc.proof_command, sha, ignores: cleanIgnore, protectedPaths, manifestSha: manifestSource.sha256 });
         need(Number.isInteger(fr.record.exit_code) && fr.record.exit_code === 0 && fr.record.timed_out === false, 'E_PROOF', `${acc.id} proof must exit 0 without timing out (got ${fr.record.exit_code})`);
         need(fr.record.timeout_s > 0 && fr.record.timeout_s <= manifest.limits.proof_timeout_s, 'E_PROOF', `${acc.id}: run under a limit above proof_timeout_s`);
         evidence.push({ kind: 'runtime', live: false, head_sha: sha, command: acc.proof_command, exit_code: 0, record_path: fr.path, record_sha256: fr.sha256, log_path: fr.record.log_path, log_sha256: fr.record.log_sha256 });
@@ -1154,8 +1180,9 @@ function completionV2(args) {
     need(isObj(r) && r.target === 'negative:' + acc.id && r.id === acc.id, 'E_NEGATIVE_CONTROL', `${label}: not a negative:${acc.id} record`);
     need(r.status !== 'NOT_RUN', 'E_NEGATIVE_CONTROL', `negative control ${acc.id} is NOT RUN: ${r.reason || ''}`);
     need(r.command === acc.proof_command, 'E_NEGATIVE_CONTROL', `${label}: not the frozen proof command`);
+    need(r.manifest_sha256 === manifestSource.sha256, 'E_NEGATIVE_CONTROL', `${label}: the record's manifest_sha256 is not the frozen manifest's (run from another manifest)`);
     need(r.head_before === sha && r.head_after === sha, 'E_NEGATIVE_CONTROL', `${label}: the work checkout was not pinned at the reviewed SHA`);
-    try { cleanReports(r.status_before, cleanIgnore, label + ' status_before', protectedPaths); cleanReports(r.status_after, cleanIgnore, label + ' status_after', protectedPaths); }
+    try { cleanRecordStatus(r.status_before, cleanIgnore, label + ' status_before', protectedPaths); cleanRecordStatus(r.status_after, cleanIgnore, label + ' status_after', protectedPaths); }
     catch (err) { throw new GateError('E_NEGATIVE_CONTROL', err.message); }
     need(r.baseline_exit_code === 0 && r.baseline_timed_out === false, 'E_NEGATIVE_CONTROL', `${label}: the baseline proof must pass (exit ${r.baseline_exit_code}${r.baseline_timed_out ? ', timed out' : ''})`);
     need(r.timed_out === false, 'E_NEGATIVE_CONTROL', `${label}: the mutated proof timed out, which proves nothing`);
