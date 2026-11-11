@@ -4,6 +4,8 @@ param(
   [string]$RepoDir = (Get-Location).Path,
   [ValidateSet('Hidden', 'Minimized', 'Normal')][string]$Window = 'Hidden',
   [string]$LogDir = (Join-Path $env:TEMP 'cloud-mailbox'),
+  [ValidateSet('acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan')][string]$PermissionMode = 'auto',
+  [string]$Environment = '',
   [switch]$Inner
 )
 # Windows. Start one Claude Code cloud session from $RepoDir's current, pushed branch, without leaving
@@ -12,7 +14,8 @@ param(
 # tool. This script re-launches itself in its own console (hidden by default), runs `claude --cloud`
 # there, writes a log, and the console closes when claude returns.
 # The cloud environment comes from `remote.defaultEnvironmentId` (repo .claude/settings.json wins over
-# the user's /remote-env pick); this script does not choose one.
+# the user's /remote-env pick). -Environment ccpool_<id> passes `--environment` (the CLI accepts only self-hosted ccpool_ ids there; an Anthropic-hosted env_ id comes from settings).
+if ($Environment -and $Environment -notmatch '^ccpool_[A-Za-z0-9]+$') { throw "-Environment takes a self-hosted ccpool_... id only (got '$Environment'); an env_... id comes from /remote-env in user settings" }
 if ($Name -notmatch '^[A-Za-z0-9._-]+$') { throw "-Name must be letters, digits, . _ - only (got '$Name')" }
 $PromptFile = (Resolve-Path $PromptFile).Path
 $RepoDir = (Resolve-Path $RepoDir).Path
@@ -34,9 +37,10 @@ if (-not $Inner) {
   $q = { param($s) '"' + $s + '"' }
   $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (& $q $PSCommandPath),
             '-Inner', '-PromptFile', (& $q $PromptFile), '-Name', $Name,
-            '-RepoDir', (& $q $RepoDir), '-LogDir', (& $q $LogDir))
+            '-RepoDir', (& $q $RepoDir), '-LogDir', (& $q $LogDir), '-PermissionMode', $PermissionMode)
+  if ($Environment) { $argv += @('-Environment', $Environment) }
   $p = Start-Process powershell -ArgumentList $argv -WindowStyle $Window -PassThru
-  Write-Output "LAUNCHED name=$Name pid=$($p.Id) window=$Window branch=$branch log=$log"
+  Write-Output "LAUNCHED name=$Name pid=$($p.Id) window=$Window branch=$branch mode=$PermissionMode env=$(if ($Environment) { $Environment } else { 'settings' }) log=$log"
   exit 0
 }
 
@@ -49,7 +53,8 @@ try {
   # quote are doubled and the quote becomes \", and trailing backslashes are doubled.
   # Read as UTF-8 explicitly: 5.1 otherwise decodes a BOM-less file with the ANSI code page.
   $prompt = (Get-Content -Raw -Encoding UTF8 $PromptFile) -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1'
-  claude --cloud $prompt -n $Name
+  $envArgs = @(); if ($Environment) { $envArgs = @('--environment', $Environment) }
+  claude --cloud $prompt -n $Name --permission-mode $PermissionMode @envArgs
   Write-Host "===EXIT=== $LASTEXITCODE"
 } finally {
   Stop-Transcript | Out-Null
