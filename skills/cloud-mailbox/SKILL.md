@@ -62,7 +62,7 @@ If workers need tools the default image lacks (a database, system packages, the 
      ```powershell
      powershell -NoProfile -ExecutionPolicy Bypass -File <skill-dir>/scripts/launch.ps1 -PromptFile <path> -Name <name>
      ```
-     It re-launches itself in a hidden console. `claude --cloud` refuses to start without a terminal. `claude --cloud` creates the session and exits by itself, within seconds. The console then closes. The log `%TEMP%\cloud-mailbox\launch-<name>.log` holds the session link and `===EXIT=== 0`. Pass `-Window Minimized` to keep the console visible in the taskbar while you debug.
+     It re-launches itself in a hidden console. `claude --cloud` refuses to start without a terminal. `claude --cloud` creates the session and exits by itself, within seconds. The console then closes. The log `%TEMP%\cloud-mailbox\launch-<name>.log` holds the session link and `===EXIT=== 0`. Pass `-Window Minimized` to keep the console visible in the taskbar while you debug. `-PermissionMode <mode>` (default `auto`) sets the worker's permission mode. `-Environment ccpool_<id>` pins one session to a self-hosted environment; an Anthropic-hosted `env_...` id cannot be passed this way and comes from `remote.defaultEnvironmentId`.
    - macOS / Linux:
      ```bash
      bash <skill-dir>/scripts/launch.sh --prompt-file <path> --name <name>
