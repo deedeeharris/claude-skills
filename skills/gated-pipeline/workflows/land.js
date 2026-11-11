@@ -112,7 +112,7 @@ const HEAD = {
   reviewed_is_ancestor: { type: 'boolean' },
   files_after_review: { type: 'array', items: { type: 'string' } },
 }
-const headNote = `Report head_sha (the PR's current head commit: gh pr view <n> --json headRefOid), reviewed_is_ancestor (git -C ${q(A.repo)} merge-base --is-ancestor ${A.reviewed_sha} <head_sha>, after git fetch), ` +
+const headNote = `Report head_sha (the PR's current head commit: gh api repos/{owner}/{repo}/pulls/<n> --jq .head.sha), reviewed_is_ancestor (git -C ${q(A.repo)} merge-base --is-ancestor ${A.reviewed_sha} <head_sha>, after git fetch), ` +
   `and files_after_review = every path touched by ANY commit after the reviewed one (git -C ${q(A.repo)} log --name-only --no-renames --diff-merges=separate --format= ${A.reviewed_sha}..<head_sha>, de-duplicated; ` +
   `per-commit and per merge parent, so an edit made inside a merge commit shows, a file added then removed again still shows, and a rename lists both paths; empty when head_sha is ${A.reviewed_sha}).`
 
@@ -147,9 +147,9 @@ function unreviewed(h) {
 
 phase('PR')
 const pr = await agent(
-  `Open a pull request for feature ${A.feature_id} in ${A.repo} from ${A.work_branch} into ${A.trunk_branch} with gh (run gh from ${A.repo}). ` +
-  `First check: gh pr list --head ${q(A.work_branch)} --base ${q(A.trunk_branch)} --state open. If one is open, reuse it. ` +
-  `Otherwise run exactly: gh pr create --base ${q(A.trunk_branch)} --head ${q(A.work_branch)} --title ${q(A.title)} --body-file ${q(A.body_path)}\n` +
+  `Open a pull request for feature ${A.feature_id} in ${A.repo} from ${A.work_branch} into ${A.trunk_branch} with gh, through the REST API only (run gh from ${A.repo}; gh pr list/create/view/checks use GraphQL, which some hosts refuse). ` +
+  `First check: gh api "repos/{owner}/{repo}/pulls?state=open&base=${A.trunk_branch}&head={owner}:${A.work_branch}" --jq '.[] | [.number, .html_url] | @tsv'. If one is open, reuse it. ` +
+  `Otherwise run exactly: gh api -X POST repos/{owner}/{repo}/pulls -f base=${q(A.trunk_branch)} -f head=${q(A.work_branch)} -f title=${q(A.title)} -F body=@${q(A.body_path)} --jq '[.number, .html_url] | @tsv'\n` +
   `${headNote}\n- ${RULES}`,
   { label: 'open PR', phase: 'PR', schema: PR, effort: 'low' })
 if (!pr || pr.blocked) return certified({ status: 'BLOCKED', stage: 'pr', pr })
@@ -162,9 +162,9 @@ phase('CI')
 let ci = null
 for (let attempt = 1; attempt <= 2; attempt++) {
   ci = await agent(
-    `Watch the CI checks of PR #${pr.number} in ${A.repo} until they finish, with a HARD limit so the watcher can never outlive this step: timeout ${(A.ci_wait_min || 45) * 60} gh pr checks ${pr.number} --watch (if the timeout fires, the watcher is killed and the state is PENDING). ` +
-    `Classify each failing check: "flaky" (runner died, timeout, network, a known-flaky test that passed on the base), "real" (a genuine test or build failure), or "unknown". Quote the key log lines (gh run view --log-failed). ` +
-    (attempt === 1 ? 'If every failure is flaky, re-run only the failed jobs once (gh run rerun <id> --failed) and set rerun_done=true; do not wait for the re-run here. ' : 'Do not re-run anything. ') +
+    `Watch the CI checks of PR #${pr.number} in ${A.repo} until they finish, with a HARD limit so the watcher can never outlive this step: timeout ${(A.ci_wait_min || 45) * 60} bash -c over a loop that reads gh api "repos/{owner}/{repo}/commits/<head_sha>/check-runs?per_page=100" every 30 s and stops when no run is queued or in_progress (if the timeout fires, the loop is killed and the state is PENDING). Use the REST API only; gh pr checks uses GraphQL. ` +
+    `Classify each failing check: "flaky" (runner died, timeout, network, a known-flaky test that passed on the base), "real" (a genuine test or build failure), or "unknown". Quote the key log lines (gh api repos/{owner}/{repo}/actions/jobs/<job_id>/logs, the job id from the check run). ` +
+    (attempt === 1 ? 'If every failure is flaky, re-run only the failed jobs once (gh api -X POST repos/{owner}/{repo}/actions/runs/<run_id>/rerun-failed-jobs) and set rerun_done=true; do not wait for the re-run here. ' : 'Do not re-run anything. ') +
     `Return PENDING if checks are still running at the wait limit, NONE if the PR has no checks. ${headNote.replace('<n>', String(pr.number))} head_sha is the PR's CURRENT head at the moment you finish. ` +
     `Separately report checks_head_sha = the commit the checks you describe ran on (the headSha of those check runs).\n- ${RULES}`,
     { label: `CI ${attempt}`, phase: 'CI', schema: CI, effort: 'low' })
