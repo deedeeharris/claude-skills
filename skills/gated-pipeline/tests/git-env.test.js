@@ -157,7 +157,7 @@ test('with GIT_DIR and the GIT_CONFIG* family pointing at a decoy repo, the git-
   assert.equal(path.resolve(out.v2_toplevel), path.resolve(out.v2_repo), 'v2-repo git runs in its own temp repo');
   assert.equal(out.v1_author, 'Gate Test', 'v1 completion fixture commits carry its own identity');
   assert.deepEqual(out.stub, { exit_code: 0, stdout: 'stub' }, 'the script-executing stub runs git in its cwd');
-  assert.equal(out.run_workflow_root, SKILLS_REPO, 'run-workflow resolves this repository, not the decoy');
+  assert.equal(path.resolve(out.run_workflow_root), path.resolve(SKILLS_REPO), 'run-workflow resolves this repository, not the decoy');
   assert.equal(out.source_at_head, true);
   assert.deepEqual(out.codex_status, [0, 0, 0, 0]);
   assert.equal(out.codex_author, 'test', 'codex-review test git() commits carry the scratch identity');
