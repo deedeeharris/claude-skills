@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
 const { test, describe, after } = require('node:test');
 const { run, gpBlocks, pollLimit, STOP } = require('./helpers/run-workflow');
-const { scriptStep, gpExecBlocks } = require('./helpers/script-stub');
+const { scriptStep, gpExecBlocks, fallbackRecord } = require('./helpers/script-stub');
 const { makeRepo, baseFeature, cleanEnv, sha256, clone, IMPL_FILES, SCRIPTS, FALLBACK_REVIEWER } = require('./helpers/v2-repo');
 const { gitEnv } = require('./helpers/git-env.js');
 
@@ -136,17 +136,20 @@ function codexCompliance(c, out, extraIds = []) {
 }
 const UNAVAILABLE = { verdict: 'ERROR', verdict_reasons: [], findings: [], ...NULLS, codex_available: false, note: 'codex: command not found' };
 // The Opus fallback runs the setup and cleanup blocks of its prompt (fresh <out>-opus dir, isolated checkout, inputs
-// hashed) and replies; the record step that follows (write-json.js) runs through the stub.
-function opus(reply) {
+// hashed), then writes its own reply with the record block (write-json.js) and returns only the record path and hash;
+// the record step that follows (hash-inputs.js --verify, write-json.js --check) runs through the stub.
+const hasRecord = prompt => /```gp-exec record\n/.test(prompt);
+function opus(reply, extra = {}) {
   return (prompt) => {
-    const b = gpBlocks(prompt, ['setup', 'cleanup']);
+    const b = gpBlocks(prompt, hasRecord(prompt) ? ['setup', 'cleanup', 'record'] : ['setup', 'cleanup']);
     const setup = bash(b.setup);
     assert.equal(setup.status, 0, 'fallback setup: ' + setup.stdout + setup.stderr);
     const cleanup = bash(b.cleanup);
     assert.equal(cleanup.status, 0, 'fallback cleanup: ' + cleanup.stderr);
     const headSha = (setup.stdout.match(/^head_sha: ([0-9a-f]{40})$/m) || [])[1];
     const changed = setup.stdout.includes('\nchanged:\n') ? setup.stdout.split('\nchanged:\n')[1].trim().split('\n').map(l => ({ status: l.split('\t')[0], path: l.split('\t')[1] })) : undefined;
-    return typeof reply === 'function' ? reply({ headSha, changed }) : reply;
+    const value = typeof reply === 'function' ? reply({ headSha, changed }) : reply;
+    return hasRecord(prompt) ? { ...fallbackRecord(prompt, value), ...extra } : value;
   };
 }
 function implement(c, files = IMPL_FILES) {
@@ -868,7 +871,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
   });
 
   // ---- the Opus fallback path ---------------------------------------------------------------------------------------------
-  test('L3.4 fallback: codex unavailable -> fallback reviews recorded by script (inputs hashed, reply written verbatim), completion derives cross_family false', async (t) => {
+  test('L3.4 fallback: codex unavailable -> fallback reviews recorded by the reviewer itself and re-read by script (inputs hashed and re-verified, record checked), completion derives cross_family false', async (t) => {
     const c = frozenRepo(t);
     const log = path.join(c.root, 'ci-red.log');
     fs.writeFileSync(log, 'unit: AssertionError: tok-ci-log\n');
@@ -916,6 +919,56 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       '--approvals', c.approvalsPath, '--approvals-sha256', c.approvalsSha]);
     assert.equal(cc.status, 1);
     assert.equal(stderrJson(cc).code, 'E_REVIEW');
+  });
+
+  // The fallback reviewer writes its own record (no verbatim relay): a relay asked to reproduce another model's whole reply
+  // was refused by the API's safety filter ([reasoning_extraction]), which left a passed review unrecordable.
+  test('fallback record: the Opus reviewer writes its own reply; no other prompt carries or copies it; the verdict is the one parsed from the file', async (t) => {
+    const TOK = 'tok-reply-only-in-the-reviewer-file';
+    const c = frozenRepo(t);
+    const finding = { severity: 'MINOR', confidence: 0.9, iso_property: null, location: 'src/hello.js:1', title: TOK, detail: 'style' };
+    const b = await buildV2(c, { fallback: true, args: { review_fallback: 'opus-high' }, table: {
+      'opus review 1 (codex unavailable)': opus(({ headSha, changed }) => ({ findings: [finding], head_sha: headSha, changed })) } });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    for (const label of ['opus review 1 (codex unavailable)', 'opus security 1 (codex unavailable)']) {
+      const p = b.calls.find(x => x.options.label === label).prompt;
+      gpBlocks(p, ['setup', 'cleanup', 'record']);
+      assert.match(p, /GP_REPLY/, `${label}: the reviewer writes its own reply into the record block`);
+      assert.deepEqual(b.calls.find(x => x.options.label === label).options.schema.required.slice().sort(), ['record_path', 'record_sha256'], `${label}: it returns only the record path and hash`);
+    }
+    for (const x of b.calls.filter(x => !/^opus /.test(x.options.label))) {
+      assert.ok(!x.prompt.includes(TOK), `${x.options.label}: no other prompt carries the reviewer's reply`);
+      assert.doesNotMatch(x.prompt, /reply verbatim/, `${x.options.label}: no prompt asks to copy a reply`);
+    }
+    const impl = b.result.review_files[0];
+    assert.equal(impl.fallback_review_sha256, sha256(fs.readFileSync(impl.fallback_review_path)));
+    assert.equal(JSON.parse(fs.readFileSync(impl.fallback_review_path, 'utf8')).reply.findings[0].title, TOK);
+    // verify: the reviewer's answer claims no findings, its file holds a confirmed MAJOR: the file decides, so verify FAILs
+    const v = await verifyV2(c, b, { fallback: true, args: { review_fallback: 'opus-high' }, table: {
+      'opus final review (codex unavailable)': opus(({ headSha }) => ({ findings: [{ ...finding, severity: 'MAJOR' }], head_sha: headSha }), { findings: [], verdict: 'PASS' }) } });
+    assert.equal(v.result.status, 'FAIL', JSON.stringify(v.result).slice(0, 2000));
+    assert.equal(v.result.final_review.verdict, 'FAIL');
+    assert.deepEqual(v.result.final_review.confirmed_findings.map(x => x.title), [TOK]);
+    for (const x of v.calls.filter(x => !/^opus /.test(x.options.label))) assert.ok(!x.prompt.includes(TOK), `${x.options.label}: no other prompt carries the reviewer's reply`);
+  });
+
+  test('fallback record: a tampered, missing or misreported record BLOCKS the stage, never a pass', async (t) => {
+    const reply = ({ headSha, changed }) => ({ findings: [], head_sha: headSha, changed });
+    const cases = [
+      ['tampered after the write', ack => { fs.writeFileSync(ack.record_path, fs.readFileSync(ack.record_path, 'utf8').replace('"findings":[]', '"findings":[ ]')); return ack; }, /sha256/],
+      ['deleted after the write', ack => { fs.rmSync(ack.record_path); return ack; }, /missing/],
+      ['another hash reported', ack => ({ ...ack, record_sha256: 'f'.repeat(64) }), /sha256/],
+      ['no record reported', ack => ({ ...ack, record_path: null, record_sha256: null }), /not written/],
+    ];
+    for (const [name, mutate, re] of cases) {
+      const c = frozenRepo(t);
+      const base = opus(reply);
+      const b = await buildV2(c, { fallback: true, args: { review_fallback: 'opus-high' }, table: {
+        'opus review 1 (codex unavailable)': (prompt, o, calls) => mutate(base(prompt, o, calls)) } });
+      assert.equal(b.result.status, 'BLOCKED', `${name}: ${JSON.stringify(b.result).slice(0, 1500)}`);
+      assert.match(JSON.stringify(b.result), re, name);
+      assert.ok(!labels(b.calls).includes('suite 1'), `${name}: nothing ran after the unrecorded review`);
+    }
   });
 
   // reviews.reviewer: opus-high (the either/or reviewer choice): every review runs with Opus directly, no codex relay at all,
