@@ -862,6 +862,8 @@ function modePlanV2(args) {
     runtime_acceptance_ids: m.requirements.filter(r => r.kind === 'runtime' && !r.live).map(r => r.id),
     live_acceptances: m.requirements.filter(r => r.kind === 'runtime' && r.live).map(r => ({ id: r.id, check_id: r.check_id })),
     negative_controls: m.requirements.filter(r => r.negative_control.method === 'isolated_mutation').map(r => ({ id: r.id, mutation_sha256: hash(Buffer.from(r.negative_control.mutation, 'utf8')) })),
+    // The acceptances completion holds to an alternate_evidence_paths citation (see proofs below), so the compliance prompt can name them.
+    alternate_citation_ids: m.requirements.filter(r => r.negative_control.method === 'exempt' && r.alternate_evidence_paths.length).map(r => r.id),
   };
 }
 
