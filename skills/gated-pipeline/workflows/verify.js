@@ -81,8 +81,9 @@ const freshRunDir = run => [
   `mkdir ${q(run)} || { if [ -e ${q(run)} ] || [ -L ${q(run)} ]; then echo GP_RUN_DIR_EXISTS; else echo GP_RUN_DIR_CREATE; fi; exit 4; }`,
 ]
 const runDirCode = stdout => /GP_RUN_DIR_EXISTS/.test(stdout || '') ? 'E_RUN_DIR_EXISTS' : /GP_RUN_DIR_(PARENT|CREATE)/.test(stdout || '') ? 'E_RUN_DIR' : null
-// The validator reports Windows paths with backslashes; compare by form, not by spelling.
-const pathForm = p => p.replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase())
+// Windows tools print the path node resolved (drive letter, backslashes) while run_dir is the Git Bash spelling
+// (/c/x/run/...). pathForm gives both one form, the drive as /x/; a POSIX path comes back unchanged.
+const pathForm = p => p.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (m, d) => `/${d.toLowerCase()}/`)
 const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
 // Every check and the compliance trace must run with HEAD at reviewed_sha and a clean tree, before AND after.
 // clean_ignore: repo-relative prefixes whose dirty/untracked status is tolerated (e.g. a harness state dir).
@@ -337,7 +338,7 @@ const fbRecord = (writeJson, file, gate, schema) => ({ schema, body: `node ${q(w
   `${JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1)},"reply":GP_REPLY}\nGP_JSON` })
 const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --check ${q(file)} --sha256 ${sha} 2>&1 <<'GP_JSON'\n` +
   `${JSON.stringify(fbRecordSchema(gate, schema))}\nGP_JSON`
-const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
+const fbAckError = (ack, file) => (samePath(ack.record_path, file) && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
 // The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
@@ -503,7 +504,7 @@ async function readback({ step, ph, sha, clean, reads, files = [] }) {
 // accepted readback (listed in READBACK); else { why }, naming the missing line and the readback result.
 async function recordLine(r, { step, ph, records, target, patch }) {
   const [record, alt] = records
-  const line = r && !r.blocked ? jsonLines(r.stdout).find(o => records.includes(o.record_path) && HEX64.test(o.record_sha256 || '')) : null
+  const line = r && !r.blocked ? jsonLines(r.stdout).find(o => records.some(f => samePath(f, o.record_path)) && HEX64.test(o.record_sha256 || '')) : null
   if (line) return { printed: line, relayed: true }
   const why = `no printed record line with record_path ${record}`
   if (rbRefused(r) || (stateDrift(r.stdout) || []).length) return { why }
@@ -658,8 +659,8 @@ if (C2) {
     // missing records and the ledger; every recovered record must be listed in the ledger as run-frozen.js appends it.
     const last = i === batches.length - 1
     const here = jsonLines(proofs.stdout)
-    const lostIds = batchIds[i].filter(id => !here.some(o => proofRecs(id).includes(o.record_path) && HEX64.test(o.record_sha256 || '')))
-    const lostLive = last ? p.live_acceptances.filter(x => !here.some(o => o.linked === true && liveRecs(x).includes(o.record_path) && HEX64.test(o.record_sha256 || ''))) : []
+    const lostIds = batchIds[i].filter(id => !here.some(o => proofRecs(id).some(f => samePath(f, o.record_path)) && HEX64.test(o.record_sha256 || '')))
+    const lostLive = last ? p.live_acceptances.filter(x => !here.some(o => o.linked === true && liveRecs(x).some(f => samePath(f, o.record_path)) && HEX64.test(o.record_sha256 || ''))) : []
     const lost = [...lostIds.map(id => proofRecs(id)[0]), ...lostLive.map(x => `the live link ${x.id}`), ...(last && !HEX64.test(shaOf(proofs.stdout, ledger) || '') ? [`the sha256sum line of ${ledger}`] : [])]
     let rb = null
     if (lost.length && !rbRefused(proofs) && !(stateDrift(proofs.stdout) || []).length) {
@@ -667,7 +668,7 @@ if (C2) {
       const checkSha = x => (checks.find(ch => ch.check_id === x.check_id) || {}).record_sha256
       if (!rb.error) {
         const entries = Array.isArray(rb.files[ledger].value.entries) ? rb.files[ledger].value.entries : []
-        const listed = (id, live, recPath, recSha, checkId) => entries.some(e => e && e.id === id && e.live === live && e.record_path === recPath && e.record_sha256 === recSha && (!live || e.check_id === checkId))
+        const listed = (id, live, recPath, recSha, checkId) => entries.some(e => e && e.id === id && e.live === live && samePath(e.record_path, recPath) && e.record_sha256 === recSha && (!live || e.check_id === checkId))
         const unlisted = [...lostIds.filter((id, k) => !listed(id, false, rb.records[k].record_path, rb.records[k].record_sha256)),
           ...lostLive.filter(x => !listed(x.id, true, liveRec(x), checkSha(x), x.check_id)).map(x => x.id)]
         if (unlisted.length) rb = { error: `the ledger ${ledger} does not list ${unlisted.join(', ')} with the record read back` }
@@ -687,8 +688,8 @@ if (C2) {
     if (last) ledgerSha = recovered ? rb.files[ledger].sha256 : shaOf(proofs.stdout, ledger)
   }
   const proofPrinted = [...proofRuns.flatMap(r => jsonLines(r.stdout)), ...recoveredLines]
-  const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => proofRecs(id).includes(o.record_path))),
-    ...p.live_acceptances.filter(x => !proofPrinted.some(o => o.linked === true && liveRecs(x).includes(o.record_path))).map(x => x.id)]
+  const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => proofRecs(id).some(f => samePath(f, o.record_path)))),
+    ...p.live_acceptances.filter(x => !proofPrinted.some(o => o.linked === true && liveRecs(x).some(f => samePath(f, o.record_path)))).map(x => x.id)]
   if (!HEX64.test(ledgerSha || '') || missingProof.length) {
     return disclose({ status: 'BLOCKED', stage: 'acceptance proofs', reason: 'the ledger hash or a proof record was not printed: ' + missingProof.join(', ') + (rbErrors.length ? ` (${rbErrors.join('; ')})` : ''), proofs, proof_batches: proofRuns, checks })
   }

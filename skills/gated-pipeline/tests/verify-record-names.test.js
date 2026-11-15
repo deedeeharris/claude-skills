@@ -65,3 +65,39 @@ test('when the proof batch prints the win32 name proof_<ID>.record.json and the 
   assert.equal(labels[2], 'acceptance proofs 1');
   assert.ok(labels.length === 4 && !labels[3].startsWith('readback'), labels.join(', '));
 });
+
+// On Windows run-frozen.js prints, and writes into the ledger, the record path node resolved (C:\...), while the
+// workflow's run_dir is the Git Bash spelling (/c/...). Both name one file.
+const { STOPPED } = require('./helpers/run-workflow.js');
+const path = require('node:path');
+const winPath = posix => path.win32.join(posix[1].toUpperCase() + ':' + path.win32.sep, ...posix.split('/').slice(2));
+
+test('when a paraphrased proof batch is read back and the ledger lists the record as C:\..., verify accepts the proof and goes on', async () => {
+  const rec = `${RUN}/frozen-runs/proof_HELLO-001-AC1.record.json`, ledger = `${RUN}/acceptance-ledger.json`;
+  const readback = () => ({ stdout: `${'f'.repeat(64)}  ${rec}\n${JSON.stringify(recordAt(rec, 'proof:HELLO-001-AC1'))}\n${'9'.repeat(64)}  ${ledger}\n` +
+    JSON.stringify({ version: 2, entries: [{ id: 'HELLO-001-AC1', live: false, record_path: winPath(rec), record_sha256: 'f'.repeat(64) }] }) + '\n', exit_code: 0 });
+  const replies = [{ stdout: JSON.stringify(PLAN) + '\n', exit_code: 0 },
+    { stdout: line(`${RUN}/frozen-runs/check:CHECK-LINT.record.json`) + '\n', exit_code: 0 },
+    { stdout: 'the proofs ran\n', exit_code: 0 }, readback, () => STOP];
+  const { calls, result } = await run('verify', ARGS, replies);
+  assert.equal(result, STOPPED, JSON.stringify(result));
+  assert.deepEqual(calls.map(c => c.options.label).slice(0, 4), ['plan preflight', 'check CHECK-LINT', 'acceptance proofs 1', 'readback acceptance proofs 1']);
+});
+
+test('when a live link prints its check record as C:\..., verify accepts the link with no readback and goes on', async () => {
+  const plan = { ...PLAN, checks: [...PLAN.checks, { id: 'CHECK-LIVE', name: 'Live', quiet: false, effort: 'low', budget_min: 1, timeout_min: 1 }],
+    live_acceptances: [{ id: 'HELLO-001-AC2', check_id: 'CHECK-LIVE' }] };
+  const liveRecord = `${RUN}/frozen-runs/check_CHECK-LIVE.record.json`;
+  const replies = [{ stdout: JSON.stringify(plan) + '\n', exit_code: 0 },
+    { stdout: line(`${RUN}/frozen-runs/check:CHECK-LINT.record.json`) + '\n', exit_code: 0 },
+    { stdout: line(liveRecord) + '\n', exit_code: 0 },
+    { stdout: line(`${RUN}/frozen-runs/proof_HELLO-001-AC1.record.json`) + '\n' +
+      JSON.stringify({ record_path: winPath(liveRecord), record_sha256: 'e'.repeat(64), exit_code: 0, timed_out: false, setup_exit_code: null, linked: true }) +
+      `\n${'9'.repeat(64)}  ${RUN}/acceptance-ledger.json\n`, exit_code: 0 },
+    () => STOP];
+  const { calls, result } = await run('verify', ARGS, replies);
+  assert.equal(result, STOPPED, JSON.stringify(result));
+  const labels = calls.map(c => c.options.label);
+  assert.deepEqual(labels.slice(0, 4), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE', 'acceptance proofs 1']);
+  assert.ok(!labels[4].startsWith('readback'), labels.join(', '));
+});

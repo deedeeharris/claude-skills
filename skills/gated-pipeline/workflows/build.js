@@ -349,7 +349,11 @@ const fbRecord = (writeJson, file, gate, schema) => ({ schema, body: `node ${q(w
   `${JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1)},"reply":GP_REPLY}\nGP_JSON` })
 const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --check ${q(file)} --sha256 ${sha} 2>&1 <<'GP_JSON'\n` +
   `${JSON.stringify(fbRecordSchema(gate, schema))}\nGP_JSON`
-const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
+// Windows tools print the path node resolved (drive letter, backslashes) while run_dir is the Git Bash spelling
+// (/c/x/run/...). pathForm gives both one form, the drive as /x/; a POSIX path comes back unchanged.
+const pathForm = p => p.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (m, d) => `/${d.toLowerCase()}/`)
+const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
+const fbAckError = (ack, file) => (samePath(ack.record_path, file) && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
 // The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
@@ -698,7 +702,7 @@ async function testFirst(w) {
   // Completion needs the red commit to be a proper ancestor of the reviewed SHA (design 6.5): the same rule here.
   if (/GP_RED_IS_HEAD/.test(String(rep.stdout || ''))) return fail(`red_commit ${red} is the work branch HEAD: no implementation commit after it`, rep)
   const lines = jsonLines(rep.stdout)
-  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let printed = lines.find(o => samePath(o.record_path, rec) && HEX64.test(o.record_sha256 || ''))
   let record = lines.find(o => o.target === 'red' && o.log_path)
   // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
   let rb = null
@@ -837,7 +841,7 @@ async function suiteV2(round) {
       required: [...EXEC.required, 'failures', 'other_failures'] } })
   if (!rep || rep.blocked) return { blocked: true, reason: 'the suite step was blocked', report: rep }
   const lines = jsonLines(rep.stdout)
-  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let printed = lines.find(o => samePath(o.record_path, rec) && HEX64.test(o.record_sha256 || ''))
   let record = lines.find(o => o.target === 'suite' && o.log_path)
   // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
   let rb = null
