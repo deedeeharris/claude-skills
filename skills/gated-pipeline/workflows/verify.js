@@ -873,7 +873,7 @@ const proofs = await agent(
   `In ${A.repo} at ${A.reviewed_sha}, execute each runtime proof_command exactly, sequentially, with the repo's test lock rules. ` +
   `Capture the full output in a distinct file under ${A.run_dir}/acceptance/ and record id, status PASS/FAIL/NOT_RUN and evidence ` +
   `(kind, head_sha, command, exit_code, log_path, log_sha256, file, line; unused values are null). Hash the actual saved output bytes at capture. Use actual source file/line for static items. ` +
-  `Do not edit code or run negative-control mutations on this checkout. Do not make live or paid calls here: reuse final-commit outputs ` +
+  `Do not edit code on this checkout and never apply a mutation to it. A frozen proof_command that creates its own throwaway git worktree outside ${A.repo} and changes files only there is an ordinary runtime proof: execute it exactly as frozen, like every other proof, never skip it. Do not make live or paid calls here: reuse final-commit outputs ` +
   `from the budgeted configured checks when their exact command matches, or mark that item NOT_RUN. ` +
   `Save the per-ID records atomically to ${ledger}; preserve failed output too. ${stateNote}\n- ${RULES}`,
   { label: 'acceptance proofs', phase: 'Acceptance proofs', effort: 'medium', schema: {
