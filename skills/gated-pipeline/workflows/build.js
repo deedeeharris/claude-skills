@@ -349,7 +349,11 @@ const fbRecord = (writeJson, file, gate, schema) => ({ schema, body: `node ${q(w
   `${JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1)},"reply":GP_REPLY}\nGP_JSON` })
 const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --check ${q(file)} --sha256 ${sha} 2>&1 <<'GP_JSON'\n` +
   `${JSON.stringify(fbRecordSchema(gate, schema))}\nGP_JSON`
-const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
+// Windows tools print the path node resolved (drive letter, backslashes) while run_dir is the Git Bash spelling
+// (/c/x/run/...). pathForm gives both one form, the drive as /x/; a POSIX path comes back unchanged.
+const pathForm = p => p.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (m, d) => `/${d.toLowerCase()}/`)
+const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
+const fbAckError = (ack, file) => (samePath(ack.record_path, file) && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
 // The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
@@ -457,7 +461,8 @@ const reviewFiles = []
 // it holds integer baseline_exit_code and exit_code and a mutation_patch_sha256 equal to the printed patch hash. A
 // blocked reply, or one that shows run-frozen's own refusal (a nonzero exit with a run-frozen: line), gets no
 // readback. The workflow cannot hash, so a wrong printed record hash is caught by completion, which re-derives every
-// record from disk (hash, target, command, logs, patch, exit codes).
+// record from disk (hash, target, command, logs, patch, exit codes). A read may name alt, a second spelling of the
+// record (verify: the Windows name); the one whose sha256sum line printed is the record read.
 const rbRefused = r => !r || r.blocked === true || (r.exit_code !== 0 && /^run-frozen: /m.test(String(r.stdout || '')))
 const rbCovered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'))
 // A porcelain v1 line's paths, read as run-frozen.js and check-completion.js read them: git C-quotes a name holding a
@@ -481,17 +486,18 @@ function rbJsonAfter(stdout, file) {
   while (end < lines.length && !shaLine(lines[end])) end++
   try { const v = JSON.parse(lines.slice(at + 1, end).join('\n')); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null }
 }
-// reads: [{ record, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
+// reads: [{ record, alt?, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
 // Returns { records: [{ record_path, record_sha256, record, printed }], files: { <path>: { sha256, value } } } or { error }.
 async function readback({ step, ph, sha, clean, reads, files = [] }) {
-  const body = [...reads.map(x => `test -f ${q(x.record)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(x.record)} && cat ${q(x.record)}`),
+  const body = [...reads.flatMap(x => [x.record, ...(x.alt ? [x.alt] : [])].map(f => `test -f ${q(f)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(f)} && cat ${q(f)}`)),
     ...files.map(f => `test -f ${q(f)} && sha256sum ${q(f)} && cat ${q(f)}`)].join('\n')
   const r = await agent(`Step ${step} ran run-frozen.js, but its reply did not carry the record line run-frozen.js prints. Read the files back: the block below only reads; ` +
     `it never runs or writes anything. Return its stdout exactly as printed, byte for byte, with nothing added, dropped or reformatted. ${EXEC_NOTE}` + execBlock(body) + `\n- ${RULES}`,
     { label: `readback ${step}`, phase: ph, schema: EXEC, effort: 'low' })
   if (!r || r.blocked) return { error: 'the readback was blocked' }
   const records = []
-  for (const x of reads) {
+  for (const read of reads) {
+    const x = read.alt && !HEX64.test(shaOf(r.stdout, read.record) || '') && HEX64.test(shaOf(r.stdout, read.alt) || '') ? { ...read, record: read.alt } : read
     const recSha = shaOf(r.stdout, x.record)
     const rec = rbJsonAfter(r.stdout, x.record)
     const patchSha = x.patch ? shaOf(r.stdout, x.patch) : null
@@ -696,7 +702,7 @@ async function testFirst(w) {
   // Completion needs the red commit to be a proper ancestor of the reviewed SHA (design 6.5): the same rule here.
   if (/GP_RED_IS_HEAD/.test(String(rep.stdout || ''))) return fail(`red_commit ${red} is the work branch HEAD: no implementation commit after it`, rep)
   const lines = jsonLines(rep.stdout)
-  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let printed = lines.find(o => samePath(o.record_path, rec) && HEX64.test(o.record_sha256 || ''))
   let record = lines.find(o => o.target === 'red' && o.log_path)
   // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
   let rb = null
@@ -835,7 +841,7 @@ async function suiteV2(round) {
       required: [...EXEC.required, 'failures', 'other_failures'] } })
   if (!rep || rep.blocked) return { blocked: true, reason: 'the suite step was blocked', report: rep }
   const lines = jsonLines(rep.stdout)
-  let printed = lines.find(o => o.record_path === rec && HEX64.test(o.record_sha256 || ''))
+  let printed = lines.find(o => samePath(o.record_path, rec) && HEX64.test(o.record_sha256 || ''))
   let record = lines.find(o => o.target === 'suite' && o.log_path)
   // A reply that lacks the record line or the record itself gets ONE readback (the record readback block).
   let rb = null

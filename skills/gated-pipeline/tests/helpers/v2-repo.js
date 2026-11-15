@@ -208,11 +208,13 @@ function makeRepo(t, opts = {}) {
   c.lastRev = () => Math.max(...Object.keys(c.snapshots).map(Number));
 
   // The design commit block of design 6.2, run with bash (temp index, commit-tree, update-ref against start_head).
+  // Unquoted in bash, a Windows path loses its backslashes; Git for Windows reads the forward-slash spelling.
+  const bashPath = p => (process.platform === 'win32' ? p.split(path.sep).join('/') : p);
   c.commitBlock = (rev = c.lastRev()) => c.sh([
     'set -e',
     `test "$(git symbolic-ref -q HEAD)" = refs/heads/feature/greet`,
-    `export GIT_INDEX_FILE=${run}/design.index; git read-tree ${c.startHead}`,
-    `B=$(git hash-object -w --no-filters -- ${c.revDir(rev)}/feature.json)`,
+    `export GIT_INDEX_FILE=${bashPath(run)}/design.index; git read-tree ${c.startHead}`,
+    `B=$(git hash-object -w --no-filters -- ${bashPath(c.revDir(rev))}/feature.json)`,
     `git update-index --add --cacheinfo 100644,"$B",${REPO_PATH}`,
     `C=$(git commit-tree "$(git write-tree)" -p ${c.startHead} -m 'design: greet'); unset GIT_INDEX_FILE`,
     `git update-ref refs/heads/feature/greet "$C" ${c.startHead}`,

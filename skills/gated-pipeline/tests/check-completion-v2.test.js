@@ -1104,7 +1104,7 @@ test('negative controls: a weak control (the mutated proof still passes) is reje
 });
 
 // Review fix: a content-only `git diff` of an executable owned file carries `index <a>..<b> 100755` and certifies.
-test('negative controls: a git-generated patch editing an executable owned file certifies', t => {
+test('negative controls: a git-generated patch editing an executable owned file certifies', { skip: process.platform === 'win32' && 'POSIX-only: NTFS has no executable bit (core.filemode is false), so git never writes mode 100755' }, t => {
   let text;
   const c = completeRun(t, { executable: ['src/hello.js'], mutation: x => (text = x.gitDiff('src/hello.js', "module.exports = () => 'goodbye';\n")) });
   assert.match(text, /^index [0-9a-f]+\.\.[0-9a-f]+ 100755$/m);

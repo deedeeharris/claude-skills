@@ -10,7 +10,7 @@
 // nothing is written.
 // --out <dir>: must not exist and must lie outside realpath(--repo) (else exit 2). The four files
 // (execution-plan.json, prd.view.md, spec.view.md, compile-identity.json; scripts/lib/feature-render.js) are
-// written into <out>.tmp-<pid>-<rand>, each fsynced, the directory fsynced, and only then renamed to <out>, so an
+// written into <out>.tmp-<pid>-<rand>, each fsynced, the directory fsynced (not on win32), and only then renamed to <out>, so an
 // interrupted compile never leaves a valid-looking directory at <out> (a stale .tmp-* sibling may remain).
 // --check <dir>: recompiles in memory and compares the four files byte for byte, and that <dir> holds no other
 // entry; exit 1 with one E_DRIFT error per differing, missing or extra file. Nothing is written.
@@ -34,6 +34,7 @@ const path = require('node:path');
 const { validateFeature, loadSchema, DEFAULT_SCHEMA } = require('./validate-feature.js');
 const { parse } = require('./lib/strict-json.js');
 const { renderAll, FILE_NAMES } = require('./lib/feature-render.js');
+const { fsyncDir } = require('./write-json.js');
 
 const FLAGS = ['file', 'repo', 'repo-path', 'out', 'check'];
 class SetupError extends Error {}
@@ -94,11 +95,6 @@ function driftErrors(dir, files) {
   return errors.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
-function fsyncPath(p, flags) {
-  const fd = fs.openSync(p, flags);
-  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-}
-
 function abortHook(count) {
   const n = process.env.GP_COMPILE_ABORT_AFTER;
   if (n !== undefined && n !== '' && Number(n) === count) process.kill(process.pid, 'SIGKILL');
@@ -115,7 +111,7 @@ function writeOut(target, files) {
       try { fs.writeSync(fd, files[name]); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       abortHook(i + 1);
     });
-    fsyncPath(tmp, 'r');
+    fsyncDir(tmp);
     // rename(2) would replace an empty directory created at <out> meanwhile: refuse instead.
     if (fs.existsSync(target) || isSymlink(target)) throw new SetupError(`--out ${target} appeared during the compile`);
     fs.renameSync(tmp, target);
@@ -123,7 +119,7 @@ function writeOut(target, files) {
     fs.rmSync(tmp, { recursive: true, force: true });
     throw e;
   }
-  fsyncPath(path.dirname(target), 'r');
+  fsyncDir(path.dirname(target));
 }
 
 function main(argv) {

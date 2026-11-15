@@ -50,8 +50,11 @@
 // /bin/sh -c in its own process group, cwd = that checkout, stdout and stderr to the log. At the limit the group
 // gets SIGTERM and, 10 s later, SIGKILL; when the shell exits, any process left in its group is killed too. The
 // log is framed: first line `gp-run-frozen header {target, command, cwd, head}`, last line
-// `gp-run-frozen footer {exit_code, signal, elapsed_s}`, so it is never empty. The record
-// <out-dir>/<target>.record.json (written once) is
+// `gp-run-frozen footer {exit_code, signal, elapsed_s}`, so it is never empty. On Windows (native, not WSL) the
+// shell is Git for Windows' bash.exe and the group kill is `taskkill /T /F` plus a kill of every MSYS process
+// carrying the run's GP_RUN_FROZEN_GROUP token (see frozenShell and runFramed). The record
+// <out-dir>/<target>.record.json (written once; on Windows the ':' of a target is '_' in every record and log name,
+// scripts/lib/frozen-files.js) is
 //   { target, command, cwd, head_before, head_after, status_before, status_after, timeout_s, timeout_min,
 //     budget_min, elapsed_s, exit_code, signal, timed_out, log_path, log_sha256, manifest_sha256,
 //     setup: { exit_code, log_path, log_sha256, timed_out } | null }
@@ -74,6 +77,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { parse, StrictJsonError } = require('./lib/strict-json.js');
 const { writeOnce, Refusal, SetupError } = require('./write-json.js');
+const { targetStem, recordName } = require('./lib/frozen-files.js');
 
 const FLAGS = ['repo', 'frozen-dir', 'manifest-sha256', 'reviewed-sha', 'target', 'out-dir', 'patch', 'ledger', 'base'];
 const REQUIRED = FLAGS.slice(0, 6);
@@ -197,15 +201,61 @@ function removeWorktree(repo, wt, opts) {
   return r;
 }
 
+// The shell a frozen command runs in: /bin/sh on POSIX. Windows has none, so there it is Git for Windows' bash.exe:
+// GP_SHELL when set (it must exist), else <git --exec-path>/../../../bin/bash.exe (or ../../bin), else
+// %ProgramFiles%\Git\bin\bash.exe; none found is a setup error (exit 2) before anything runs.
+const WIN = process.platform === 'win32';
+// Kills every MSYS process whose environment holds GP_RUN_FROZEN_GROUP=$1 (runFramed on Windows). Its own environment
+// lacks the variable: the token is an argument.
+const WIN_GROUP_KILL = 'for d in /proc/[0-9]*; do grep -qaF "GP_RUN_FROZEN_GROUP=$1" "$d/environ" 2>/dev/null && kill -9 "${d#/proc/}" 2>/dev/null; done; true';
+let SHELL = null;
+function frozenShell({ platform = process.platform, env = process.env, exists = fs.existsSync, execPath } = {}) {
+  if (platform !== 'win32') return '/bin/sh';
+  if (env.GP_SHELL) {
+    if (!exists(env.GP_SHELL)) throw new SetupError(`GP_SHELL ${env.GP_SHELL} does not exist`);
+    return env.GP_SHELL;
+  }
+  if (execPath === undefined) { const r = spawnSync('git', ['--exec-path'], { encoding: 'utf8', windowsHide: true }); execPath = r.status === 0 ? r.stdout.trim() : ''; }
+  const candidates = [...(execPath ? [path.win32.join(execPath, '..', '..', '..', 'bin', 'bash.exe'), path.win32.join(execPath, '..', '..', 'bin', 'bash.exe')] : []),
+    ...[env.ProgramFiles, env.PROGRAMFILES, env.ProgramW6432].filter(Boolean).map(p => path.win32.join(p, 'Git', 'bin', 'bash.exe'))];
+  const found = candidates.find(c => exists(c));
+  if (!found) throw new SetupError('no POSIX shell for the frozen command on Windows: install Git for Windows or set GP_SHELL to its bash.exe');
+  return found;
+}
+
 // Runs one command under its limit. Returns { exit_code, signal, timed_out, elapsed_s, log_path, log_sha256 }.
+// On Windows there are no process groups: the command runs undetached with GP_RUN_FROZEN_GROUP=<random token> in its
+// environment, and a signal to the group (any but 0) is `taskkill /T /F` of the shell's process tree while the shell
+// runs, then a kill -9 of every MSYS process whose environment holds the token (an MSYS exec leaves its new process
+// outside that tree; a token, unlike a pid, is never reused). Signal 0 asks only whether the shell still runs.
 function runFramed({ command, cwd, target, head, logPath, limitS }) {
-  fs.writeFileSync(logPath, 'gp-run-frozen header ' + JSON.stringify({ target, command, cwd, head }) + '\n', { flag: 'wx' });
-  const fd = fs.openSync(logPath, 'a');
+  const shell = SHELL || (SHELL = frozenShell());
+  const header = 'gp-run-frozen header ' + JSON.stringify({ target, command, cwd, head }) + '\n';
+  let fd;
+  if (!WIN) {
+    fs.writeFileSync(logPath, header, { flag: 'wx' });
+    fd = fs.openSync(logPath, 'a');
+  } else {
+    // An O_APPEND handle on Windows has no plain write access, so every MSYS write (bash's echo) to it fails. The log is
+    // created exclusively instead and the header written through the same handle, whose file position the command
+    // inherits and shares, so the command and the footer still append after it.
+    fd = fs.openSync(logPath, 'wx');
+    fs.writeSync(fd, header);
+  }
   const started = process.hrtime.bigint();
   return new Promise(resolve => {
-    const child = spawn('/bin/sh', ['-c', command], { cwd, detached: true, stdio: ['ignore', fd, fd] });
-    let timedOut = false, killTimer = null, termAt = 0;
-    const group = sig => { try { process.kill(-child.pid, sig); return true; } catch { return false; } };
+    const token = WIN ? 'gp-run-frozen-' + crypto.randomBytes(12).toString('hex') : null;
+    const child = spawn(shell, ['-c', command], WIN ? { cwd, env: { ...process.env, GP_RUN_FROZEN_GROUP: token }, stdio: ['ignore', fd, fd], windowsHide: true }
+      : { cwd, detached: true, stdio: ['ignore', fd, fd] });
+    let timedOut = false, killTimer = null, termAt = 0, exited = false;
+    child.on('exit', () => { exited = true; });
+    const group = !WIN ? sig => { try { process.kill(-child.pid, sig); return true; } catch { return false; } }
+      : sig => {
+        if (sig === 0) return !exited && child.pid !== undefined;
+        if (!exited && child.pid !== undefined) spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore', windowsHide: true });
+        spawnSync(shell, ['-c', WIN_GROUP_KILL, 'gp-run-frozen-kill', token], { stdio: 'ignore', windowsHide: true });
+        return true;
+      };
     const active = { group, fd, started };
     ACTIVE.add(active);
     const limit = setTimeout(() => {
@@ -380,7 +430,6 @@ function appendLedger(file, entry) {
   fs.renameSync(tmp, file);
 }
 
-const recordName = target => `${target}.record.json`;
 
 async function main(argv) {
   let args;
@@ -432,9 +481,16 @@ async function main(argv) {
       const s = manifest.suite;
       spec = { command: singleLine(s.unit_command, 'suite.unit_command'), limitS: s.timeout_min * spm, timeoutMin: s.timeout_min, budgetMin: null, setup: s.setup_command };
     }
+    // On Windows a path has more spellings: backslashes, forward slashes (C:/x/repo) and Git Bash's /c/x/repo, in any case.
+    const repoSpellings = [realRepo, args.repo, path.resolve(args.repo)];
+    const winSpellings = WIN ? [...new Set(repoSpellings.flatMap(r => {
+      const fwd = r.split(path.win32.sep).join('/');
+      return [r, fwd, /^[A-Za-z]:\//.test(fwd) ? '/' + fwd[0] + fwd.slice(2) : fwd];
+    }).map(x => x.toLowerCase()))] : [];
     for (const cmd of spec ? [spec.command, spec.setup].filter(x => typeof x === 'string') : []) {
-      if (cmd.includes(realRepo) || cmd.includes(args.repo) || cmd.includes(path.resolve(args.repo))) throw new Refusal(`the frozen command holds the repo's absolute path: ${cmd}`);
+      if (repoSpellings.some(r => cmd.includes(r)) || winSpellings.some(r => cmd.toLowerCase().includes(r))) throw new Refusal(`the frozen command holds the repo's absolute path: ${cmd}`);
     }
+    if (target.kind !== 'live') SHELL = frozenShell();
     fs.mkdirSync(outDir, { recursive: true });
     const recordPath = path.join(outDir, recordName(args.target));
     if (fs.existsSync(recordPath)) throw new Refusal(`${recordPath} already exists; use a fresh --out-dir`);
@@ -499,10 +555,10 @@ async function main(argv) {
       if (before.dirty.length) throw new Refusal(`the checkout ${cwd} is not clean outside clean_ignore: ${before.dirty.join('; ')}`);
       let setup = null;
       if ((target.kind === 'suite' || target.kind === 'red') && typeof spec.setup === 'string') {
-        const s = await runFramed({ command: spec.setup, cwd, target: args.target + '.setup', head: sha, logPath: path.join(outDir, args.target + '.setup.log'), limitS: spec.limitS });
+        const s = await runFramed({ command: spec.setup, cwd, target: args.target + '.setup', head: sha, logPath: path.join(outDir, targetStem(args.target) + '.setup.log'), limitS: spec.limitS });
         setup = { exit_code: s.exit_code, log_path: s.log_path, log_sha256: s.log_sha256, timed_out: s.timed_out };
       }
-      const logPath = path.join(outDir, args.target + '.log');
+      const logPath = path.join(outDir, targetStem(args.target) + '.log');
       let run;
       if (setup && (setup.exit_code !== 0 || setup.timed_out)) {
         fs.writeFileSync(logPath, 'gp-run-frozen header ' + JSON.stringify({ target: args.target, command: spec.command, cwd, head: sha }) +
@@ -558,16 +614,16 @@ async function negative({ args, target, manifest, manifestSha, sha, realRepo, ou
     let setup = null;
     const setupCommand = manifest.suite.setup_command;
     if (typeof setupCommand === 'string') {
-      const s = await runFramed({ command: setupCommand, cwd: wt, target: args.target + '.setup', head: sha, logPath: path.join(outDir, args.target + '.setup.log'), limitS: left() });
+      const s = await runFramed({ command: setupCommand, cwd: wt, target: args.target + '.setup', head: sha, logPath: path.join(outDir, targetStem(args.target) + '.setup.log'), limitS: left() });
       setup = { exit_code: s.exit_code, log_path: s.log_path, log_sha256: s.log_sha256, timed_out: s.timed_out };
     }
-    const baseline = await runFramed({ command: spec.command, cwd: wt, target: args.target + '.baseline', head: sha, logPath: path.join(outDir, args.target + '.baseline.log'), limitS: left() });
+    const baseline = await runFramed({ command: spec.command, cwd: wt, target: args.target + '.baseline', head: sha, logPath: path.join(outDir, targetStem(args.target) + '.baseline.log'), limitS: left() });
     // The bytes read and hashed before the baseline go to git on stdin; the --patch file is not read again.
     const check = git(wt, ['apply', '--check'], { allowFail: true, input: patchBytes });
     if (check.status !== 0) throw new Refusal(`the mutation patch does not apply to ${sha}: ${check.stderr.trim()}`);
     git(wt, ['apply'], { input: patchBytes });
     const mutatedLimitS = left();
-    const mutated = await runFramed({ command: spec.command, cwd: wt, target: args.target, head: sha, logPath: path.join(outDir, args.target + '.log'), limitS: mutatedLimitS });
+    const mutated = await runFramed({ command: spec.command, cwd: wt, target: args.target, head: sha, logPath: path.join(outDir, targetStem(args.target) + '.log'), limitS: mutatedLimitS });
     removeWorktree(realRepo, wt);
     const after = checkoutState(realRepo, ignores);
     const rec = { target: args.target, id: target.id, command: spec.command, cwd: wt, head_before: before.head, head_after: after.head,
@@ -592,4 +648,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).then(code => { if (!INTERRUPTED) process.exitCode = code; });
 }
 
-module.exports = { patchPaths, gitPatchPaths, checkedPatchPaths, CHECK_ID, ACC_ID };
+module.exports = { patchPaths, gitPatchPaths, checkedPatchPaths, frozenShell, CHECK_ID, ACC_ID };

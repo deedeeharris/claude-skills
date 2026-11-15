@@ -81,8 +81,9 @@ const freshRunDir = run => [
   `mkdir ${q(run)} || { if [ -e ${q(run)} ] || [ -L ${q(run)} ]; then echo GP_RUN_DIR_EXISTS; else echo GP_RUN_DIR_CREATE; fi; exit 4; }`,
 ]
 const runDirCode = stdout => /GP_RUN_DIR_EXISTS/.test(stdout || '') ? 'E_RUN_DIR_EXISTS' : /GP_RUN_DIR_(PARENT|CREATE)/.test(stdout || '') ? 'E_RUN_DIR' : null
-// The validator reports Windows paths with backslashes; compare by form, not by spelling.
-const pathForm = p => p.replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase())
+// Windows tools print the path node resolved (drive letter, backslashes) while run_dir is the Git Bash spelling
+// (/c/x/run/...). pathForm gives both one form, the drive as /x/; a POSIX path comes back unchanged.
+const pathForm = p => p.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (m, d) => `/${d.toLowerCase()}/`)
 const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
 // Every check and the compliance trace must run with HEAD at reviewed_sha and a clean tree, before AND after.
 // clean_ignore: repo-relative prefixes whose dirty/untracked status is tolerated (e.g. a harness state dir).
@@ -337,7 +338,7 @@ const fbRecord = (writeJson, file, gate, schema) => ({ schema, body: `node ${q(w
   `${JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1)},"reply":GP_REPLY}\nGP_JSON` })
 const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --check ${q(file)} --sha256 ${sha} 2>&1 <<'GP_JSON'\n` +
   `${JSON.stringify(fbRecordSchema(gate, schema))}\nGP_JSON`
-const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
+const fbAckError = (ack, file) => (samePath(ack.record_path, file) && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
 // The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
@@ -399,6 +400,10 @@ const shaOf = (s, file) => ((String(s || '').split('\n').map(l => /^([0-9a-f]{64
 const HEX64 = /^[0-9a-f]{64}$/
 const CHECK_ID = /^CHECK-[A-Z0-9][A-Z0-9-]*$/
 const ACC_ID = /^[A-Z][A-Z0-9]*-[0-9]{3}-AC[0-9]+$/
+// run-frozen.js writes <dir>/<target>.record.json, with the target's ':' as '_' on Windows (scripts/lib/frozen-files.js).
+// This script cannot see the OS, so both spellings name the expected record; CHECK_ID and ACC_ID hold no '_', so the
+// '_' spelling never names another target. [POSIX spelling, Windows spelling]
+const recordNames = (dir, target) => [`${dir}/${target}.record.json`, `${dir}/${target.replace(':', '_')}.record.json`]
 const SCRIPT = name => q(`${V2_SCRIPTS}/${name}`)
 const writeJsonBlock = (file, value) => `node ${SCRIPT('write-json.js')} --out ${q(file)} <<'GP_JSON'\n${JSON.stringify(value)}\nGP_JSON`
 const runFrozen = (target, outDir, extra = '') => `node ${SCRIPT('run-frozen.js')} --repo ${q(A.repo)} --frozen-dir ${q(A.frozen_dir)} --manifest-sha256 ${A.manifest_sha256} ` +
@@ -434,7 +439,8 @@ const refusedStatus = (r, stage, reason, extra) => {
 // it holds integer baseline_exit_code and exit_code and a mutation_patch_sha256 equal to the printed patch hash. A
 // blocked reply, or one that shows run-frozen's own refusal (a nonzero exit with a run-frozen: line), gets no
 // readback. The workflow cannot hash, so a wrong printed record hash is caught by completion, which re-derives every
-// record from disk (hash, target, command, logs, patch, exit codes).
+// record from disk (hash, target, command, logs, patch, exit codes). A read may name alt, a second spelling of the
+// record (verify: the Windows name); the one whose sha256sum line printed is the record read.
 const rbRefused = r => !r || r.blocked === true || (r.exit_code !== 0 && /^run-frozen: /m.test(String(r.stdout || '')))
 const rbCovered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'))
 // A porcelain v1 line's paths, read as run-frozen.js and check-completion.js read them: git C-quotes a name holding a
@@ -458,17 +464,18 @@ function rbJsonAfter(stdout, file) {
   while (end < lines.length && !shaLine(lines[end])) end++
   try { const v = JSON.parse(lines.slice(at + 1, end).join('\n')); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null }
 }
-// reads: [{ record, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
+// reads: [{ record, alt?, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
 // Returns { records: [{ record_path, record_sha256, record, printed }], files: { <path>: { sha256, value } } } or { error }.
 async function readback({ step, ph, sha, clean, reads, files = [] }) {
-  const body = [...reads.map(x => `test -f ${q(x.record)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(x.record)} && cat ${q(x.record)}`),
+  const body = [...reads.flatMap(x => [x.record, ...(x.alt ? [x.alt] : [])].map(f => `test -f ${q(f)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(f)} && cat ${q(f)}`)),
     ...files.map(f => `test -f ${q(f)} && sha256sum ${q(f)} && cat ${q(f)}`)].join('\n')
   const r = await agent(`Step ${step} ran run-frozen.js, but its reply did not carry the record line run-frozen.js prints. Read the files back: the block below only reads; ` +
     `it never runs or writes anything. Return its stdout exactly as printed, byte for byte, with nothing added, dropped or reformatted. ${EXEC_NOTE}` + execBlock(body) + `\n- ${RULES}`,
     { label: `readback ${step}`, phase: ph, schema: EXEC, effort: 'low' })
   if (!r || r.blocked) return { error: 'the readback was blocked' }
   const records = []
-  for (const x of reads) {
+  for (const read of reads) {
+    const x = read.alt && !HEX64.test(shaOf(r.stdout, read.record) || '') && HEX64.test(shaOf(r.stdout, read.alt) || '') ? { ...read, record: read.alt } : read
     const recSha = shaOf(r.stdout, x.record)
     const rec = rbJsonAfter(r.stdout, x.record)
     const patchSha = x.patch ? shaOf(r.stdout, x.patch) : null
@@ -495,14 +502,15 @@ async function readback({ step, ph, sha, clean, reads, files = [] }) {
 // verify: a run-frozen step's printed record line, else ONE readback (block above) when the reply lacks it and shows
 // neither a refusal nor checkout drift. { printed, relayed } when the reply printed it; { printed, recovered } after an
 // accepted readback (listed in READBACK); else { why }, naming the missing line and the readback result.
-async function recordLine(r, { step, ph, record, target, patch }) {
-  const line = r && !r.blocked ? jsonLines(r.stdout).find(o => o.record_path === record && HEX64.test(o.record_sha256 || '')) : null
+async function recordLine(r, { step, ph, records, target, patch }) {
+  const [record, alt] = records
+  const line = r && !r.blocked ? jsonLines(r.stdout).find(o => records.some(f => samePath(f, o.record_path)) && HEX64.test(o.record_sha256 || '')) : null
   if (line) return { printed: line, relayed: true }
   const why = `no printed record line with record_path ${record}`
   if (rbRefused(r) || (stateDrift(r.stdout) || []).length) return { why }
-  const rb = await readback({ step, ph, sha: A.reviewed_sha, clean: IGNORE, reads: [{ record, target, patch }] })
+  const rb = await readback({ step, ph, sha: A.reviewed_sha, clean: IGNORE, reads: [{ record, alt, target, patch }] })
   if (rb.error) return { why: `${why}; readback: ${rb.error}` }
-  READBACK.push({ step, record_path: record })
+  READBACK.push({ step, record_path: rb.records[0].record_path })
   return { printed: rb.records[0].printed, recovered: true }
 }
 // Review files (design 6.3/6.4): steps final and compliance, one entry per round, every path and hash printed by a script.
@@ -606,7 +614,7 @@ if (C2) {
       EXEC_NOTE + frozenBlock([runFrozen(`check:${c.id}`, frozenRuns)]) + `\n- ${RULES}`,
       { label: `check ${c.id}`, phase: 'Checks', schema: EXEC, effort: c.effort })
     if (!r || r.blocked) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check', { check: r, checks })
-    const got = await recordLine(r, { step: `check ${c.id}`, ph: 'Checks', record: `${frozenRuns}/check:${c.id}.record.json`, target: `check:${c.id}` })
+    const got = await recordLine(r, { step: `check ${c.id}`, ph: 'Checks', records: recordNames(frozenRuns, `check:${c.id}`), target: `check:${c.id}` })
     if (r.exit_code !== 0 && !got.recovered) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check' + (got.why ? ` (${got.why})` : ''), { check: r, checks })
     if (!got.printed) return disclose({ status: 'BLOCKED', stage: `check ${c.id}`, reason: `the check record was not printed (${got.why})`, check: r, checks })
     const printed = got.printed
@@ -629,8 +637,10 @@ if (C2) {
   if (!batchIds.length) batchIds.push([])
   const batches = batchIds.map(ids => ids.map(id => runFrozen(`proof:${id}`, frozenRuns, ` --ledger ${q(ledger)}`)))
   batches[batches.length - 1].push(...p.live_acceptances.map(x => runFrozen(`live:${x.id}`, frozenRuns, ` --ledger ${q(ledger)}`)))
-  const proofRec = id => `${frozenRuns}/proof:${id}.record.json`
-  const liveRec = x => `${frozenRuns}/check:${x.check_id}.record.json`
+  const proofRecs = id => recordNames(frozenRuns, `proof:${id}`)
+  const liveRecs = x => recordNames(frozenRuns, `check:${x.check_id}`)
+  // A live link prints, and its ledger entry holds, the record path of the check that ran it (either spelling).
+  const liveRec = x => (checks.find(ch => ch.check_id === x.check_id) || {}).record_path || liveRecs(x)[0]
   const proofRuns = []
   const recoveredLines = [] // record lines a readback recovered, as run-frozen.js would have printed them
   const rbErrors = []
@@ -649,16 +659,16 @@ if (C2) {
     // missing records and the ledger; every recovered record must be listed in the ledger as run-frozen.js appends it.
     const last = i === batches.length - 1
     const here = jsonLines(proofs.stdout)
-    const lostIds = batchIds[i].filter(id => !here.some(o => o.record_path === proofRec(id) && HEX64.test(o.record_sha256 || '')))
-    const lostLive = last ? p.live_acceptances.filter(x => !here.some(o => o.linked === true && o.record_path === liveRec(x) && HEX64.test(o.record_sha256 || ''))) : []
-    const lost = [...lostIds.map(proofRec), ...lostLive.map(x => `the live link ${x.id}`), ...(last && !HEX64.test(shaOf(proofs.stdout, ledger) || '') ? [`the sha256sum line of ${ledger}`] : [])]
+    const lostIds = batchIds[i].filter(id => !here.some(o => proofRecs(id).some(f => samePath(f, o.record_path)) && HEX64.test(o.record_sha256 || '')))
+    const lostLive = last ? p.live_acceptances.filter(x => !here.some(o => o.linked === true && liveRecs(x).some(f => samePath(f, o.record_path)) && HEX64.test(o.record_sha256 || ''))) : []
+    const lost = [...lostIds.map(id => proofRecs(id)[0]), ...lostLive.map(x => `the live link ${x.id}`), ...(last && !HEX64.test(shaOf(proofs.stdout, ledger) || '') ? [`the sha256sum line of ${ledger}`] : [])]
     let rb = null
     if (lost.length && !rbRefused(proofs) && !(stateDrift(proofs.stdout) || []).length) {
-      rb = await readback({ step, ph: 'Acceptance proofs', sha, clean: IGNORE, reads: lostIds.map(id => ({ record: proofRec(id), target: `proof:${id}` })), files: [ledger] })
+      rb = await readback({ step, ph: 'Acceptance proofs', sha, clean: IGNORE, reads: lostIds.map(id => ({ record: proofRecs(id)[0], alt: proofRecs(id)[1], target: `proof:${id}` })), files: [ledger] })
       const checkSha = x => (checks.find(ch => ch.check_id === x.check_id) || {}).record_sha256
       if (!rb.error) {
         const entries = Array.isArray(rb.files[ledger].value.entries) ? rb.files[ledger].value.entries : []
-        const listed = (id, live, recPath, recSha, checkId) => entries.some(e => e && e.id === id && e.live === live && e.record_path === recPath && e.record_sha256 === recSha && (!live || e.check_id === checkId))
+        const listed = (id, live, recPath, recSha, checkId) => entries.some(e => e && e.id === id && e.live === live && samePath(e.record_path, recPath) && e.record_sha256 === recSha && (!live || e.check_id === checkId))
         const unlisted = [...lostIds.filter((id, k) => !listed(id, false, rb.records[k].record_path, rb.records[k].record_sha256)),
           ...lostLive.filter(x => !listed(x.id, true, liveRec(x), checkSha(x), x.check_id)).map(x => x.id)]
         if (unlisted.length) rb = { error: `the ledger ${ledger} does not list ${unlisted.join(', ')} with the record read back` }
@@ -678,8 +688,8 @@ if (C2) {
     if (last) ledgerSha = recovered ? rb.files[ledger].sha256 : shaOf(proofs.stdout, ledger)
   }
   const proofPrinted = [...proofRuns.flatMap(r => jsonLines(r.stdout)), ...recoveredLines]
-  const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => o.record_path === proofRec(id))),
-    ...p.live_acceptances.filter(x => !proofPrinted.some(o => o.linked === true && o.record_path === liveRec(x))).map(x => x.id)]
+  const missingProof = [...p.runtime_acceptance_ids.filter(id => !proofPrinted.some(o => proofRecs(id).some(f => samePath(f, o.record_path)))),
+    ...p.live_acceptances.filter(x => !proofPrinted.some(o => o.linked === true && liveRecs(x).some(f => samePath(f, o.record_path)))).map(x => x.id)]
   if (!HEX64.test(ledgerSha || '') || missingProof.length) {
     return disclose({ status: 'BLOCKED', stage: 'acceptance proofs', reason: 'the ledger hash or a proof record was not printed: ' + missingProof.join(', ') + (rbErrors.length ? ` (${rbErrors.join('; ')})` : ''), proofs, proof_batches: proofRuns, checks })
   }
@@ -790,7 +800,7 @@ if (C2) {
       `3. Then: ${EXEC_NOTE}` + frozenBlock([runFrozen(`negative:${n.id}`, dir, ` --patch ${q(patch)}`)]) + `\n- ${RULES}`,
       { label: `negative control ${n.id}`, phase: 'Negative controls', schema: EXEC, effort: 'medium' })
     if (!r || r.blocked) return reportOf('BLOCKED', { stage: 'negative controls', reason: `negative control ${n.id} was blocked`, negative: r, negative_controls: negatives })
-    const got = await recordLine(r, { step: `negative control ${n.id}`, ph: 'Negative controls', record: `${dir}/negative:${n.id}.record.json`, target: `negative:${n.id}`, patch })
+    const got = await recordLine(r, { step: `negative control ${n.id}`, ph: 'Negative controls', records: recordNames(dir, `negative:${n.id}`), target: `negative:${n.id}`, patch })
     const printed = got.printed
     if (printed && printed.not_run) {
       negatives.push({ id: n.id, record_path: printed.record_path, record_sha256: printed.record_sha256 })
