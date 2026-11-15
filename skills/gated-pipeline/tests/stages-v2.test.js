@@ -948,8 +948,85 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       'opus final review (codex unavailable)': opus(({ headSha }) => ({ findings: [{ ...finding, severity: 'MAJOR' }], head_sha: headSha }), { findings: [], verdict: 'PASS' }) } });
     assert.equal(v.result.status, 'FAIL', JSON.stringify(v.result).slice(0, 2000));
     assert.equal(v.result.final_review.verdict, 'FAIL');
-    assert.deepEqual(v.result.final_review.confirmed_findings.map(x => x.title), [TOK]);
+    // the verdict comes from the file's digest: the confirmed finding is named by id, with the record that holds its text
+    assert.deepEqual(v.result.final_review.confirmed_findings.map(x => x.id), ['F1']);
+    const fin = v.result.review_files.find(e => e.step === 'final');
+    assert.equal(v.result.final_review.record_path, fin.fallback_review_path);
+    assert.equal(v.result.final_review.record_sha256, fin.fallback_review_sha256);
     for (const x of v.calls.filter(x => !/^opus /.test(x.options.label))) assert.ok(!x.prompt.includes(TOK), `${x.options.label}: no other prompt carries the reviewer's reply`);
+  });
+
+  // The record check prints no review text (a relay that returned the check's stdout with the reviewer's prose in it
+  // was stopped by the API's safety filter, [reasoning_extraction], although the check had passed): a unique marker in
+  // every prose field of every fallback record reaches no agent prompt, no reply any stub returns, and no stage result.
+  test('fallback record: no review text reaches any prompt, relayed stdout or result; fixers get the record path and finding ids', async (t) => {
+    const MARK = 'tok-prose-marker-7f3a';
+    const prose = n => ({ location: `${MARK}-loc-${n}`, title: `${MARK}-title-${n}`, detail: `${MARK}-detail-${n}` });
+    const c = frozenRepo(t);
+    const seen = [];
+    const tap = table => Object.fromEntries(Object.entries(table).map(([k, fn]) => [k, async (prompt, o, calls) => {
+      const r = await (typeof fn === 'function' ? fn(prompt, o, calls) : fn);
+      seen.push({ label: k, reply: JSON.stringify(r) });
+      return r;
+    }]));
+    // round 1: a confirmed MAJOR (fix round) with prose everywhere, and a note; round 2: a clean review
+    const b = await buildV2(c, { fallback: true, args: { review_fallback: 'opus-high' }, table: tap({
+      'design preflight': stub(), 'test-first red': stub(), 'suite 1': suiteStep(), 'suite 2': suiteStep(),
+      'record opus review 1': stub(), 'record opus review 2': stub(), 'record opus security 2': stub(),
+      'opus review 1 (codex unavailable)': opus(({ headSha, changed }) => ({ findings: [{ severity: 'MINOR', confidence: 0.9, iso_property: null, ...prose(1) },
+        { severity: 'MAJOR', confidence: 0.95, iso_property: null, ...prose(2) }], note: `${MARK}-note`, head_sha: headSha, changed })),
+      'codex review 2': { ...UNAVAILABLE, head_sha: '', changed: [] },
+      'opus review 2 (codex unavailable)': opus(({ headSha, changed }) => ({ findings: [], note: `${MARK}-note-2`, head_sha: headSha, changed })),
+      'codex security 2': { verdict: 'ERROR', blocking: [], codex_available: false, raw_sha256: null },
+      'opus security 2 (codex unavailable)': opus({ verdict: 'PASS', blocking: [], note: `${MARK}-sec-note` }),
+      'fix 1': () => ({ blocked: false, summary: 'fixed', files_changed: [], commit: head(c), base_commit: c.designCommit, ...(c.redCommit ? { red_commit: c.redCommit } : {}) }),
+    }) });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    const rec1 = b.result.review_files.find(e => e.step === 'implementation' && e.round === 1).fallback_review_path;
+    assert.ok(fs.readFileSync(rec1, 'utf8').includes(`${MARK}-title-2`), 'the record file holds the prose');
+    for (const x of b.calls) assert.ok(!x.prompt.includes(MARK), `${x.options.label}: no prompt carries review text`);
+    for (const x of seen) assert.ok(!x.reply.includes(MARK), `${x.label}: no relayed reply or stdout carries review text`);
+    assert.ok(!JSON.stringify(b.result).includes(MARK), 'the build result carries no review text');
+    // the record check printed only the allowed digest
+    const chk = seen.find(x => x.label === 'record opus review 1');
+    const line = JSON.parse(JSON.parse(chk.reply).stdout.split('\n').find(l => l.includes('"verdict_inputs"')));
+    assert.deepEqual(Object.keys(line).sort(), ['path', 'sha256', 'verdict_inputs']);
+    assert.deepEqual(line.verdict_inputs.reply.findings, [{ id: 'F1', severity: 'MINOR', confidence: 0.9, iso_property: null }, { id: 'F2', severity: 'MAJOR', confidence: 0.95, iso_property: null }]);
+    // the fixer is told where the finding is and which one, and reads its text from the file
+    const fix = b.calls.find(x => x.options.label === 'fix 1').prompt;
+    assert.ok(fix.includes(rec1), 'the fix prompt names the record file');
+    assert.match(fix, /\] F2: read its location, title and detail in the review record [^\n]+\(reply\.findings\[1\]\)/);
+    assert.ok(!/\] F1:/.test(fix), 'only the confirmed finding goes to the fixer');
+    const r1 = b.result.history.find(h => h.round === 1 && Array.isArray(h.findings));
+    assert.ok(r1 && r1.findings.length === 1 && !r1.findings[0].includes(MARK), 'the fix history holds the reference, not the text');
+
+    // verify: the final review and the compliance trace, both with prose; a failing compliance names B1 and its record
+    const v = await verifyV2(c, b, { fallback: true, args: { review_fallback: 'opus-high' }, table: tap({
+      'opus final review (codex unavailable)': opus(({ headSha }) => ({ findings: [{ severity: 'MINOR', confidence: 0.9, iso_property: null, ...prose(3) }], note: `${MARK}-fin-note`, head_sha: headSha })),
+      'record opus final review': stub(), 'record opus compliance': stub(),
+      'opus spec compliance (codex unavailable)': opus(() => ({ verdict: 'FAIL', blocking: [{ severity: 'high', ...prose(4) }], requirements: complianceReqs(head(c)), note: `${MARK}-comp-note`, ...pinnedAt(head(c)) })),
+    }) });
+    assert.equal(v.result.status, 'FAIL', JSON.stringify(v.result).slice(0, 2000));
+    assert.equal(v.result.compliance.verdict, 'FAIL');
+    assert.deepEqual(v.result.compliance.blocking, [{ id: 'B1', severity: 'high' }]);
+    assert.equal(v.result.compliance.record_path, v.result.review_files.find(e => e.step === 'compliance').raw_path);
+    for (const x of v.calls) assert.ok(!x.prompt.includes(MARK), `${x.options.label}: no prompt carries review text`);
+    for (const x of seen) assert.ok(!x.reply.includes(MARK), `${x.label}: no relayed reply or stdout carries review text`);
+    assert.ok(!JSON.stringify(v.result).includes(MARK), 'the verify result carries no review text');
+  });
+
+  test('fallback record: a failing security record reaches the fixer as its path and blocking ids, not its text', async (t) => {
+    const MARK = 'tok-sec-prose-91c2';
+    const c = frozenRepo(t);
+    const b = await buildV2(c, { fallback: true, args: { review_fallback: 'opus-high' }, table: {
+      'opus security 1 (codex unavailable)': opus({ verdict: 'FAIL', blocking: [{ severity: 'high', location: `${MARK}-loc`, title: `${MARK}-title`, detail: `${MARK}-detail` }] }),
+      'fix 1': STOP } });
+    const fix = b.calls.find(x => x.options.label === 'fix 1');
+    assert.ok(fix, JSON.stringify(b.result).slice(0, 1500));
+    const rec = path.join(b.runDir, 'security-1-opus', 'fallback-review.json');
+    assert.ok(fs.readFileSync(rec, 'utf8').includes(MARK));
+    assert.ok(!fix.prompt.includes(MARK), 'the fix prompt carries no review text');
+    assert.ok(fix.prompt.includes(`[security claude-opus-high (codex unavailable) high] B1: read its location, title and detail in the review record ${rec} (reply.blocking[0])`), fix.prompt.slice(-800));
   });
 
   test('fallback record: a tampered, missing or misreported record BLOCKS the stage, never a pass', async (t) => {
@@ -968,6 +1045,23 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(b.result.status, 'BLOCKED', `${name}: ${JSON.stringify(b.result).slice(0, 1500)}`);
       assert.match(JSON.stringify(b.result), re, name);
       assert.ok(!labels(b.calls).includes('suite 1'), `${name}: nothing ran after the unrecorded review`);
+    }
+    // A relay that misreports the check's digest (another label, gate or hash than the file's) BLOCKS too.
+    const forged = [
+      ['another reviewer label', d => ({ ...d, verdict_inputs: { ...d.verdict_inputs, reviewer: 'codex' } })],
+      ['another gate', d => ({ ...d, verdict_inputs: { ...d.verdict_inputs, gate_kind: 'security' } })],
+      ['another hash', d => ({ ...d, sha256: 'e'.repeat(64) })],
+      ['no digest', d => ({ path: d.path, sha256: d.sha256 })],
+    ];
+    for (const [name, forge] of forged) {
+      const c = frozenRepo(t);
+      const relay = scriptStep(r => ({ exit_code: r.exit_code, stdout: r.stdout.split('\n').map(l => {
+        try { const d = JSON.parse(l); return d && d.verdict_inputs ? JSON.stringify(forge(d)) : l; } catch { return l; }
+      }).join('\n') }));
+      const b = await buildV2(c, { fallback: true, args: { review_fallback: 'opus-high' }, table: { 'record opus review 1': relay } });
+      assert.equal(b.result.status, 'BLOCKED', `${name}: ${JSON.stringify(b.result).slice(0, 1500)}`);
+      assert.match(JSON.stringify(b.result), /did not check/, name);
+      assert.ok(!labels(b.calls).includes('suite 1'), `${name}: nothing ran after the misreported check`);
     }
   });
 
@@ -2042,9 +2136,19 @@ const implementationRows = src => {
     }
     const forwarded = (row, side, out) => {
       if (!out.prompt) return;
+      // codex: the relayed claim is forwarded as text. Fallback: the fix prompt names the finding id (F<n> over the
+      // reported, non-refuted findings) in the review record, and carries no review text.
+      const kept = row.findings.filter(x => x.v !== 'refuted');
       for (const x of row.findings) {
         const t = P.tok(row, x.letter);
-        assert.equal(out.prompt.includes(t), row.forward.includes(x.letter), `${side}: the fix prompt ${row.forward.includes(x.letter) ? 'carries' : 'does not carry'} ${t}`);
+        if (side === 'codex') {
+          assert.equal(out.prompt.includes(t), row.forward.includes(x.letter), `${side}: the fix prompt ${row.forward.includes(x.letter) ? 'carries' : 'does not carry'} ${t}`);
+          continue;
+        }
+        assert.ok(!out.prompt.includes(t), `${side}: the fix prompt carries no review text (${t})`);
+        if (!kept.includes(x)) continue;
+        const ref = new RegExp(`\\] F${kept.indexOf(x) + 1}: read its location, title and detail in the review record [^\\n]*review-1-opus/fallback-review\\.json \\(reply\\.findings\\[${kept.indexOf(x)}\\]\\)`);
+        assert.equal(ref.test(out.prompt), row.forward.includes(x.letter), `${side}: the fix prompt ${row.forward.includes(x.letter) ? 'names' : 'does not name'} finding ${x.letter} in the record`);
       }
       assert.ok(!out.prompt.includes('undefined') && !out.prompt.includes('[object Object]'), `${side}: a clean fix prompt`);
     };

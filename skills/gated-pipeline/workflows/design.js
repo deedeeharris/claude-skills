@@ -177,18 +177,24 @@ function gateCodex(kind, reply) {
   return g.verdict === reply.verdict ? g : gateBlocked(reply, `relay inconsistency: relayed verdict ${reply.verdict}, its findings give ${g.verdict}`)
 }
 // Opus fallback: the reviewer self-validated, so every BLOCKING/MAJOR counts as confirmed; ids F1, F2, ... in reply order.
+// A checked record's reply (contract 2, record_path set) is its verdict inputs only: its findings carry no text, and
+// every reader of the text (fixer, author) reads it from the record file itself.
 // The model verdict passed is the rule's own: when computeVerdict reaches its model comparison, no trigger and no
 // 0.5-0.8 finding is left, so the rule's pre-verdict there is always PASS and the fallback never disagrees with itself.
 function gateFallback(kind, reply) {
   if (!reply || reply.blocked) return reply
   if (!Array.isArray(reply.findings)) return gateBlocked(reply, 'relay inconsistency: the fallback reply lacks findings')
+  const text = typeof reply.record_path !== 'string'
   const findings = reply.findings.map((x, i) => ({ id: `F${i + 1}`, severity: x.severity, confidence: Number(x.confidence) || 0,
     iso_property: kind === 'implementation' ? null : x.iso_property ?? null, validation_status: gateBig(x) ? 'confirmed' : 'not_required',
-    title: gateStr(x.title), detail: gateStr(x.detail), location: gateLoc(x.location) }))
+    ...(text ? { title: gateStr(x.title), detail: gateStr(x.detail), location: gateLoc(x.location) } : {}) }))
   return gateOf(kind, reply, findings, 'PASS')
 }
-// One item format for authors and fixers.
-const gateItem = (reviewer, x) => `[${reviewer} ${x.severity}] ${x.id} ${x.location} ${x.title}: ${x.detail}`
+// One item format for authors and fixers. record: the checked fallback record the finding is in; the item then names
+// the finding by id and the reader takes its text from the file (F<n> is reply.findings[n-1]), never from this prompt.
+const gateItem = (reviewer, x, record) => (record
+  ? `[${reviewer} ${x.severity}] ${x.id}: read its location, title and detail in the review record ${record} (reply.findings[${Number(String(x.id).slice(1)) - 1}])`
+  : `[${reviewer} ${x.severity}] ${x.id} ${x.location} ${x.title}: ${x.detail}`)
 // --- end of the gate rule block
 // --- review relays (plan 1b, design section 5): this block is the same in design.js, build.js and verify.js. A relay
 // runs fixed role-tagged blocks verbatim, in order: setup (availability probes, a fresh out dir made with plain mkdir,
@@ -246,7 +252,8 @@ const RELAY_REVIEW = (extra = {}) => ({
 // asked to reproduce a review verbatim is refused as reasoning extraction). The reviewer writes its reply once with
 // write-json.js (the record block, GP_REPLY replaced by its reply) and answers only the path and sha256 it printed; a
 // deterministic step then re-reads the file with write-json.js --check against fbRecordSchema, and the workflow gates
-// the reply parsed FROM THE FILE, so the record and the verdict cannot diverge.
+// the verdict inputs --check derived FROM THE FILE, so the record and the verdict cannot diverge. --check prints no
+// review text (no title, detail, location or note), so no agent ever carries the reviewer's prose either.
 const FB_RECORD_NOTE = 'Then record your review yourself, once, after cleanup: in the record block replace GP_REPLY with your whole reply (everything ' +
   'this prompt asks you to report or return) as ONE strict JSON object conforming to the schema below, change nothing else, and run it as one ' +
   'foreground Bash call. It is the only file you write. write-json.js writes the record once and atomically and prints { path, sha256 }: never run it ' +
@@ -264,9 +271,15 @@ const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --
 const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
-// The --check line for this record: the reported file at the reported hash, parsed from disk, of this gate and label.
-const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.value && typeof o.value === 'object' &&
-  o.value.gate_kind === gate && o.value.reviewer === OPUS_LABEL && o.value.reply && typeof o.value.reply === 'object' && !Array.isArray(o.value.reply))
+// The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
+const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
+  o.verdict_inputs.gate_kind === gate && o.verdict_inputs.reviewer === OPUS_LABEL && o.verdict_inputs.reply && typeof o.verdict_inputs.reply === 'object' && !Array.isArray(o.verdict_inputs.reply))
+// The reply the workflow gates: the checked record's verdict inputs, plus the record's path and sha256, which results
+// carry in place of finding text.
+const fbReply = (w, file) => {
+  const r = { ...w.verdict_inputs.reply, record_path: file, record_sha256: w.sha256 }
+  return r.blocked === true ? { ...r, reason: `the fallback reviewer reported blocked; its note is in ${file}` } : r
+}
 // --- end of the review relay block
 // The codex relay copies result.json field by field and also reports whether codex exists here at all.
 const RELAY = RELAY_REVIEW()
@@ -327,7 +340,7 @@ async function loop(kind, path, writePrompt, against, ph, rph, inventory) {
     if (!r || r.blocked || r.verdict === 'ERROR' || (r.verdict === 'NEEDS_HUMAN' && !r.confirmed_findings.length && !disagreementOnly(r))) return { status: 'BLOCKED', stage: `${kind} review`, round, review: r }
     if (r.verdict === 'PASS' && !r.confirmed_findings.length) return { status: 'PASS', rounds: round, path, reviewer: r.reviewer }
     if (round === MAX) return { status: 'FAIL', stage: `${kind} review`, rounds: round, review: r }
-    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => gateItem(r.reviewer, f)).join('\n')
+    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(f => gateItem(r.reviewer, f, r.record_path)).join('\n')
     doc = await agent(writePrompt(items), { label: `${kind} revise ${round}`, phase: ph, schema: DOC, effort: EFFORT })
     if (!doc || doc.blocked) return { status: 'BLOCKED', stage: kind, reason: doc ? doc.blocked_reason : 'author died' }
   }
@@ -687,8 +700,9 @@ async function designV2() {
     return { r, round, out, fb, gate, fbSha }
   }
   // The Opus fallback wrote its own record (fbRecord, in its prompt): one deterministic step re-hashes the review inputs
-  // and re-reads the record with write-json.js --check; the reply returned is the one parsed from that file, anything
-  // else is a blocked reply that stops the stage before any ledger record.
+  // and re-reads the record with write-json.js --check; the reply returned is the record's verdict inputs, as --check
+  // derived them from that file (no review text), with its path and sha256; anything else is a blocked reply that stops
+  // the stage before any ledger record.
   async function fallbackRecord(gate, round, fb, ack, ph) {
     const file = `${fb}/fallback-review.json`
     if (!ack || ack.blocked) return { reply: ack }
@@ -698,7 +712,7 @@ async function designV2() {
       fbCheck(SD + '/write-json.js', file, ack.record_sha256, gate, PARITY_SCHEMA())].join('\n'))
     const w = s.ok ? fbChecked(s.docs, file, ack, gate) : null
     if (!w) return { reply: { blocked: true, reason: `the fallback ${gate} review record ${file} did not check: ${shown(s)}` } }
-    return { reply: w.value.reply, sha256: w.sha256 }
+    return { reply: fbReply(w, file), sha256: w.sha256 }
   }
   // The gate verdict of design section 9 (scripts/lib/gate-rule.js): computeVerdict, then PASS with a confirmed finding -> FAIL.
   const gateVerdict = r => (r.verdict === 'PASS' && r.confirmed_findings.length ? 'FAIL' : r.verdict)
@@ -751,7 +765,7 @@ async function designV2() {
     if (gate === 'prd') lastPrd = { verdict: rec.verdict, projection: snap.prd_projection_sha256 }
     if (rec.verdict === 'PASS') { if (gate === 'spec') break; continue }
     if (rounds[gate] >= MAX) return end({ status: 'FAIL', stage: `${gate} review`, rounds: { ...rounds }, rev: snap.k, review: r })
-    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(x => gateItem(r.reviewer, x)).join('\n')
+    const items = (r.confirmed_findings.length ? r.confirmed_findings : r.other_findings).map(x => gateItem(r.reviewer, x, r.record_path)).join('\n')
     const ph = gate === 'prd' ? 'PRD' : 'Spec'
     phase(ph)
     const doc = await agent(`Revise the canonical feature file ${FEATURE} to resolve these ${gate === 'prd' ? 'PRD' : 'spec'} review findings on revision ${snap.k} ` +
