@@ -585,7 +585,7 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   applicable check `id, name, quiet, effort, budget_min, timeout_min`, `runtime_acceptance_ids[]`
   (non-live), `live_acceptances[] { id, check_id }`, `negative_controls[] { id,
   mutation_sha256 }`, `limits { proof_timeout_s, negative_controls_total_min }` and
-  `suite_setup` (boolean), never a command. The workflow BLOCKS unless the version is 2 and every id
+  `suite_setup` (boolean), `alternate_citation_ids[]` (exempt acceptances with `alternate_evidence_paths`, named in the compliance prompt as needing a static citation inside those paths), never a command. The workflow BLOCKS unless the version is 2 and every id
   matches its literal pattern (`^CHECK-[A-Z0-9][A-Z0-9-]*$`, `^[A-Z][A-Z0-9]*-[0-9]{3}-AC[0-9]+$`);
   the lists only label agents, set the quiet wait and name budgets. Completion compares the full
   sets with the manifest, so a relay that drops an id is caught.

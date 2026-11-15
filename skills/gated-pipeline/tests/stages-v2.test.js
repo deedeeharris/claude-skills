@@ -1371,6 +1371,56 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.deepEqual(labels(l.calls), ['completion proof']);
   });
 
+  test('an exempt runtime acceptance with alternate_evidence_paths: the compliance prompt names it and the citation rule; a trace that cites the alternate path passes completion, one without it is E_PROOF', async (t) => {
+    const f = withAcceptance({ ...extraProof(4), negative_control: { ...extraProof(4).negative_control, alternate_evidence: { paths: ['README.md'], description: 'The readme.' } } });
+    const c = frozenRepo(t, { feature: f });
+    const b = await buildV2(c);
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    const cite = { kind: 'static', command: null, exit_code: null, log_path: null, log_sha256: null, file: 'README.md', line: 1 };
+    const compliance = withCite => runDir => ({ 'codex spec compliance': () => {
+      const out = path.join(runDir, 'compliance');
+      fs.mkdirSync(out, { recursive: true });
+      const sha = head(c);
+      const doc = { verdict: 'PASS', summary: 'synthetic', findings: [],
+        requirements: [...complianceReqs(sha), { id: 'HELLO-001-AC4', status: 'PASS', evidence: withCite ? [{ ...cite, head_sha: sha }] : [] }] };
+      fs.writeFileSync(path.join(out, 'compliance.json'), JSON.stringify(doc, null, 2) + '\n');
+      return { verdict: 'PASS', blocking: [], requirements: doc.requirements, codex_available: true, raw_sha256: sha256(fs.readFileSync(path.join(out, 'compliance.json'))), ...pinnedAt(sha) };
+    } });
+    const promptOf = v => v.calls.find(x => x.options.label === 'codex spec compliance').prompt;
+    const good = await verifyV2(c, b, { table: compliance(true) });
+    assert.equal(good.result.status, 'PASS', JSON.stringify(good.result).slice(0, 3000));
+    assert.equal(good.result.completion.passed, true);
+    const prompt = promptOf(good);
+    assert.match(prompt, /exempt negative control and frozen alternate_evidence_paths: HELLO-001-AC4\./, 'the prompt lists the exempt acceptance with alternate_evidence_paths');
+    assert.ok(!/alternate_evidence_paths: [^.]*HELLO-001-AC1/.test(prompt), 'an isolated_mutation acceptance is not listed');
+    assert.match(prompt, /must ALSO include at least one evidence record of kind static/);
+    assert.match(prompt, /inside one of that acceptance's frozen alternate_evidence_paths/);
+    const proof = JSON.parse(fs.readFileSync(good.result.completion.proof_path, 'utf8'));
+    const ac4 = proof.requirements.find(r => r.id === 'HELLO-001-AC4');
+    assert.deepEqual(ac4.evidence.map(x => [x.kind, x.file || null]), [['runtime', null], ['static', 'README.md']], 'the static citation survives into the proof');
+    const bad = await verifyV2(c, b, { table: compliance(false) });
+    assert.equal(bad.result.status, 'INCOMPLETE', JSON.stringify(bad.result).slice(0, 2000));
+    assert.equal(bad.result.stage, 'completion');
+    assert.equal(bad.result.completion.code, 'E_PROOF');
+    assert.match(bad.result.completion.reason, /HELLO-001-AC4: an exempt P0 acceptance must cite an alternate_evidence_paths entry/);
+    // the Opus fallback trace gets the same list and rule
+    const fb = await verifyV2(c, b, { fallback: true, args: { review_fallback: 'opus-high' }, table: { 'opus spec compliance (codex unavailable)': opus(() => ({ verdict: 'PASS', blocking: [],
+      requirements: [...complianceReqs(head(c)), { id: 'HELLO-001-AC4', status: 'PASS', evidence: [{ ...cite, head_sha: head(c) }] }], ...pinnedAt(head(c)) })) } });
+    assert.equal(fb.result.status, 'PASS', JSON.stringify(fb.result).slice(0, 3000));
+    const fbPrompt = fb.calls.find(x => x.options.label === 'opus spec compliance (codex unavailable)').prompt;
+    assert.match(fbPrompt, /exempt negative control and frozen alternate_evidence_paths: HELLO-001-AC4\./);
+    assert.match(fbPrompt, /must ALSO include at least one evidence record of kind static/);
+  });
+
+  test('the compliance prompt says no acceptance needs an alternate citation when none is exempt with alternate_evidence_paths', async (t) => {
+    const c = frozenRepo(t);
+    const b = await buildV2(c);
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    const v = await verifyV2(c, b);
+    assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
+    assert.match(v.calls.find(x => x.options.label === 'codex spec compliance').prompt, /exempt negative control and frozen alternate_evidence_paths: none\./);
+  });
+
   test('L3.13: a control that would start after negative_controls_total_min of phase time is NOT RUN -> verify INCOMPLETE at negative controls; completion exit 1 names it', async (t) => {
     const f = withAcceptance({ id: 'HELLO-001-AC4', status: 'active', given: 'the library', when: 'the second test runs', then: 'it passes',
       verification: { kind: 'runtime', live: false, command: 'node test/hello2.test.js', expected: { exit_code: 0 } },

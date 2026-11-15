@@ -684,6 +684,18 @@ test('plan v2 returns ids, labels and budgets, never a command', t => {
   assert.deepEqual(p.live_acceptances, [{ id: 'HELLO-001-AC2', check_id: 'CHECK-LIVE' }]);
   assert.deepEqual(p.negative_controls, [{ id: 'HELLO-001-AC1', mutation_sha256: sha256('Make hello() return goodbye.') }]);
   assert.ok(!/node test|node --check/.test(JSON.stringify(p)), 'no command in the plan output');
+  assert.deepEqual(p.alternate_citation_ids, [], 'no exempt acceptance has alternate_evidence_paths');
+});
+
+test('plan v2 lists the exempt acceptances whose manifest entry has alternate_evidence_paths', t => {
+  const feature = baseFeature();
+  feature.requirements[0].acceptance.push({ id: 'HELLO-001-AC4', status: 'active', given: 'the library', when: 'probe 4 runs', then: 'it returns hello',
+    verification: { kind: 'runtime', live: false, command: 'node test/hello.test.js', expected: { exit_code: 0 } },
+    negative_control: { method: 'exempt', description: 'A repeat probe.', exemption_reason: 'Covered by the AC1 mutation.', alternate_evidence: { paths: ['README.md'], description: 'The readme.' } } });
+  const c = makeRepo(t, { feature }).freeze();
+  c.implement();
+  const p = passed(c.plan());
+  assert.deepEqual(p.alternate_citation_ids, ['HELLO-001-AC4']);
 });
 
 test('plan v2: a frozen command holding the repo absolute path is exit 1', t => {
