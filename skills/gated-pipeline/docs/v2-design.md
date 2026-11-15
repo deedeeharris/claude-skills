@@ -297,7 +297,8 @@ Diagnostics are sorted (path, code, rule) so output is deterministic.
   to 10 s, remove the worktree), run once, after a `poll` exit 0 or after the K-th exit 1, which
   makes the reply ERROR with the run-folder listing. The agent never ends its turn between
   `start` and `cleanup`. The Opus fallback has only `setup` (its own `<out>-opus/`) and
-  `cleanup`. Records and ledgers the workflow composes are written by
+  `cleanup`, plus (contract 2) `record`, the reviewer's own `write-json.js --out` of its reply
+  (section 5). Records and ledgers the workflow composes are written by
   `scripts/write-json.js --out <file>` from a quoted heredoc (`<<'GP_JSON'`; strict parse,
   atomic write, refuses an existing file, prints `{ path, sha256 }`), never by an agent's
   editor. Workflow-composed JSON is single-line, so the delimiter cannot occur in it.
@@ -321,10 +322,17 @@ Diagnostics are sorted (path, code, rule) so output is deterministic.
   writes `inputs: [ { role: files|against, path, sha256 } ]` into `result.json` (computed from
   the bytes it passes to codex; a change before the run ends is a setup error, exit 2). The Opus
   fallback runs `hash-inputs.js --out <review_dir>/inputs.json <files...>` (roles as above)
-  before reviewing and `hash-inputs.js --verify <review_dir>/inputs.json` after, and the
-  workflow has `{ gate_kind, reviewer, reply }` (its own gate kind, the label and the structured
-  reply verbatim) written by `write-json.js` to `<review_dir>/fallback-review.json`. These files
-  are script-written but agent-invoked, and the report says so.
+  before reviewing and `hash-inputs.js --verify <review_dir>/inputs.json` after. The reviewer
+  itself writes `{ gate_kind, reviewer, reply }` (its gate kind, the label and its structured
+  reply) once with `write-json.js` to `<review_dir>/fallback-review.json` (its prompt's
+  `gp-exec record` block) and answers only that path and the sha256 `write-json.js` printed; no
+  agent is ever handed another model's reply to copy (a verbatim relay of a review is refused by
+  the API safety filter as `[reasoning_extraction]`). A deterministic record step then runs
+  `hash-inputs.js --verify` again and `write-json.js --check <file> --sha256 <reported>` with
+  the record schema on stdin (strict JSON, exact keys, the gate kind, the label, `reply` in the
+  review schema) and prints the parsed record; the workflow gates the reply parsed from that
+  file, and a missing, malformed or changed record is BLOCKED. These files are script-written
+  but agent-invoked, and the report says so.
 - Inputs per gate, exactly: PRD review = files `[rev-k/out/prd.view.md]`, against
   `<run_dir>/source-request.txt` (codex-review accepts `--against` for `prd`). Spec review =
   files `[rev-k/out/spec.view.md, rev-k/out/execution-plan.json]`, against
@@ -548,8 +556,8 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   relay's block, or `write-json.js`): `{ step: implementation|security, round, review_dir }`
   plus `result_path, result_sha256` (codex review), `inputs_path, inputs_sha256,
   fallback_review_path, fallback_review_sha256` (fallback review, `gate_kind` = the step), or
-  `raw_path, raw_sha256` (security: codex `security.json`, or the fallback reply wrapped by
-  `write-json.js`).
+  `raw_path, raw_sha256` (security: codex `security.json`, or the fallback reply the reviewer
+  wrote with `write-json.js` and the record step re-read with `write-json.js --check`).
 - Result carries `build_mode: "v2"`, `plan_identity { design_commit, source_sha256,
   manifest_sha256, approvals_sha256, preflight_path, preflight_sha256 }` and
   `suite_identity { command, known_failure_ids, isolated, setup_command, timeout_min,

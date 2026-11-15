@@ -218,8 +218,9 @@ function relaySteps({ setup, start, poll, cleanup, minutes }) {
     'without a poll exit 0, report verdict ERROR with the run-folder listing cleanup printed in note.\n' +
     gpBlock('setup', setup) + gpBlock('start', start) + gpBlock('poll', poll) + gpBlock('cleanup', cleanup)
 }
-const fallbackSteps = (setup, cleanup) => 'Run the gp-exec setup block below verbatim with the Bash tool before you review (if it fails, return blocked=true ' +
-  'with its output in note), and the cleanup block once when your review is done.\n' + gpBlock('setup', setup) + gpBlock('cleanup', cleanup)
+const fallbackSteps = (setup, cleanup, record) => 'Run the gp-exec setup block below verbatim with the Bash tool before you review (if it fails, return blocked=true ' +
+  'with its output in note), and the cleanup block once when your review is done.' + (record ? ' ' + FB_RECORD_NOTE : '') + '\n' + gpBlock('setup', setup) + gpBlock('cleanup', cleanup) +
+  (record ? gpBlock('record', record.body) + 'Your reply (the object that replaces GP_REPLY) conforms to this JSON Schema:\n```json\n' + JSON.stringify(record.schema) + '\n```\n' : '')
 // The relay copies result.json field by field (design section 9); the workflow, not the relay, applies the gate rule.
 const relayRead = (out, kind) => `After cleanup, read the result.json of the one run folder ${out}/${kind}-*/ and copy it with no judgement: verdict, ` +
   'verdict_reasons, model_verdict, outcome, unable_to_review, validation_outcome (its validation.outcome; null when validation is null), run_dir (that run folder) ' +
@@ -241,6 +242,31 @@ const RELAY_REVIEW = (extra = {}) => ({
   },
   required: ['verdict', 'verdict_reasons', 'model_verdict', 'outcome', 'unable_to_review', 'validation_outcome', 'run_dir', 'result_sha256', 'findings', 'codex_available', ...Object.keys(extra)],
 })
+// contract 2: the Opus fallback records its OWN review. No agent is ever handed another model's reply to copy (a relay
+// asked to reproduce a review verbatim is refused as reasoning extraction). The reviewer writes its reply once with
+// write-json.js (the record block, GP_REPLY replaced by its reply) and answers only the path and sha256 it printed; a
+// deterministic step then re-reads the file with write-json.js --check against fbRecordSchema, and the workflow gates
+// the reply parsed FROM THE FILE, so the record and the verdict cannot diverge.
+const FB_RECORD_NOTE = 'Then record your review yourself, once, after cleanup: in the record block replace GP_REPLY with your whole reply (everything ' +
+  'this prompt asks you to report or return) as ONE strict JSON object conforming to the schema below, change nothing else, and run it as one ' +
+  'foreground Bash call. It is the only file you write. write-json.js writes the record once and atomically and prints { path, sha256 }: never run it ' +
+  'again and never edit the file. Your answer is then ONLY record_path and record_sha256, exactly the path and sha256 it printed; the workflow reads ' +
+  'your review from the file. If setup or cleanup failed, or write-json.js refused the record, return blocked=true with the output in note and ' +
+  'record_path and record_sha256 null.'
+const FB_ACK = { type: 'object', properties: { record_path: NULLABLE, record_sha256: NULLABLE, blocked: { type: 'boolean' }, note: { type: 'string' } },
+  required: ['record_path', 'record_sha256'] }
+const fbRecordSchema = (gate, schema) => ({ type: 'object', additionalProperties: false, required: ['gate_kind', 'reviewer', 'reply'],
+  properties: { gate_kind: { const: gate }, reviewer: { const: OPUS_LABEL }, reply: schema } })
+const fbRecord = (writeJson, file, gate, schema) => ({ schema, body: `node ${q(writeJson)} --out ${q(file)} <<'GP_JSON'\n` +
+  `${JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1)},"reply":GP_REPLY}\nGP_JSON` })
+const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --check ${q(file)} --sha256 ${sha} 2>&1 <<'GP_JSON'\n` +
+  `${JSON.stringify(fbRecordSchema(gate, schema))}\nGP_JSON`
+const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
+  `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
+  `${ack.note ? `; ${ack.note}` : ''}`)
+// The --check line for this record: the reported file at the reported hash, parsed from disk, of this gate and label.
+const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.value && typeof o.value === 'object' &&
+  o.value.gate_kind === gate && o.value.reviewer === OPUS_LABEL && o.value.reply && typeof o.value.reply === 'object' && !Array.isArray(o.value.reply))
 // --- end of the review relay block
 // The codex relay copies result.json field by field and also reports whether codex exists here at all.
 const RELAY = RELAY_REVIEW()
@@ -427,7 +453,6 @@ async function designV2() {
   // The request mode is part of the ledger, so --mode approvals applies R03/R04 with it rather than inferring it.
   const header = () => ({ run_dir: RUN, start_head: startHead, previous_design: PD, source_request_path: REQ, source_request_sha256: reqSha,
     source_request_mode: MODE, source_request_ref: MODE === 'ref' ? REF : null })
-  const FB_HASH = 'GP_FALLBACK_REVIEW_SHA256'
   // gp-exec freeze block: blob save, compile into frozen/, --mode design; on exit 0 it removes the lock.
   function freezeBody(commit, recover, revF) {
     const frozenSrc = `${RUN}/frozen-source.feature.json`
@@ -640,7 +665,7 @@ async function designV2() {
         'exit code 0) or static evidence, every negative-control mutation would make its proof fail, every negative-control exemption and every known suite ' +
         'failure is justified, scope and file ownership are explicit, and every inapplicable check has a reason'
     const ph = gate === 'prd' ? 'PRD review' : 'Spec review'
-    let raw = null
+    let fbSha = null
     const r = await reviewed(`${gate} review ${round}`, x => gateCodex(gate, x), () => agent(
       `Run an independent codex ${gate} review of revision ${snap.k} and report its verdict. Do not review the document yourself.\n${DATA_RULE}\n` +
       relaySteps({ setup: ['set -e', gpProbe(true), gpFresh(out)].join('\n'), start: gpStart(`{ ${chain.join(' && ')} && exec ${runner}; }`, out),
@@ -651,41 +676,58 @@ async function designV2() {
       `${opusRole(`are the independent ${gate} reviewer`)} ` +
       `Review ${what}. Read only these revision ${snap.k} files (and the repo's code for context), never the working copy of the canonical file.\n${DATA_RULE}\n` +
       fallbackSteps(['set -e', gpFresh(fb), [...chain, node('hash-inputs.js', `--out ${q(fb + '/inputs.json')} --files ${files.map(q).join(' ')} --against ${q(against)}`)].join(' && ')].join('\n'),
-        node('hash-inputs.js', `--verify ${q(fb + '/inputs.json')}`)) +
+        node('hash-inputs.js', `--verify ${q(fb + '/inputs.json')}`), fbRecord(SD + '/write-json.js', `${fb}/fallback-review.json`, gate, PARITY_SCHEMA())) +
       'If the cleanup block exits nonzero (a review input changed while you reviewed), return blocked=true with its output in note.\n' +
-      `${parityNote(gate)} Do not edit any file.\n- ${RULES}`,
-      { label: `opus ${gate} review ${round} (${OPUS_TAG})`, phase: ph, schema: PARITY_SCHEMA(), model: 'opus', effort: 'high' }).then(f => { raw = f; return gateFallback(gate, f) }))
-    return { r, raw, round, out, fb, gate }
+      `${parityNote(gate)} Do not edit any file other than your record.\n- ${RULES}`,
+      { label: `opus ${gate} review ${round} (${OPUS_TAG})`, phase: ph, schema: FB_ACK, model: 'opus', effort: 'high' }).then(async ack => {
+      const rd = await fallbackRecord(gate, round, fb, ack, ph)
+      fbSha = rd.sha256 || null
+      return gateFallback(gate, rd.reply)
+    }))
+    return { r, round, out, fb, gate, fbSha }
+  }
+  // The Opus fallback wrote its own record (fbRecord, in its prompt): one deterministic step re-hashes the review inputs
+  // and re-reads the record with write-json.js --check; the reply returned is the one parsed from that file, anything
+  // else is a blocked reply that stops the stage before any ledger record.
+  async function fallbackRecord(gate, round, fb, ack, ph) {
+    const file = `${fb}/fallback-review.json`
+    if (!ack || ack.blocked) return { reply: ack }
+    const bad = fbAckError(ack, file)
+    if (bad) return { reply: { blocked: true, reason: `the fallback ${gate} review record was not written: ${bad}` } }
+    const s = await step(`record opus ${gate} review ${round}`, ph, ['set -e', node('hash-inputs.js', `--verify ${q(fb + '/inputs.json')}`),
+      fbCheck(SD + '/write-json.js', file, ack.record_sha256, gate, PARITY_SCHEMA())].join('\n'))
+    const w = s.ok ? fbChecked(s.docs, file, ack, gate) : null
+    if (!w) return { reply: { blocked: true, reason: `the fallback ${gate} review record ${file} did not check: ${shown(s)}` } }
+    return { reply: w.value.reply, sha256: w.sha256 }
   }
   // The gate verdict of design section 9 (scripts/lib/gate-rule.js): computeVerdict, then PASS with a confirmed finding -> FAIL.
   const gateVerdict = r => (r.verdict === 'PASS' && r.confirmed_findings.length ? 'FAIL' : r.verdict)
 
-  // After every review: the next immutable approvals-<n>.json (and, for the fallback, its fallback-review.json).
+  // After every review: the next immutable approvals-<n>.json. A fallback record pins the fallback-review.json the
+  // reviewer wrote by the hash its record step checked; the block re-checks it before writing.
   async function record(rv, snap) {
     const { r, gate, round, out, fb } = rv
     const codexRun = r.reviewer === 'codex'
     if (codexRun && !(typeof r.run_dir === 'string' && r.run_dir.startsWith(`${out}/${gate}-`) && /^[A-Za-z0-9._-]+$/.test(r.run_dir.slice(out.length + 1)) && !/\.\./.test(r.run_dir.slice(out.length + 1)) && HEX.test(r.result_sha256 || ''))) {
       return { end: await end({ status: 'BLOCKED', stage: `${gate} review`, round, review: r, reason: 'relay inconsistency: run_dir or result_sha256 is not this review\'s' }) }
     }
+    if (!codexRun && !HEX.test(rv.fbSha || '')) return { end: await end({ status: 'BLOCKED', stage: `${gate} review`, round, review: r, reason: 'the fallback review has no checked record' }) }
     const rec = { gate, round, rev: snap.k, rev_dir: snap.revDir, verdict: gateVerdict(r), reviewer: r.reviewer, review_dir: codexRun ? out : fb,
-      ...(codexRun ? { result_path: `${r.run_dir}/result.json`, result_sha256: r.result_sha256 } : { inputs_path: `${fb}/inputs.json`, fallback_review_path: `${fb}/fallback-review.json`, fallback_review_sha256: FB_HASH }),
+      ...(codexRun ? { result_path: `${r.run_dir}/result.json`, result_sha256: r.result_sha256 } : { inputs_path: `${fb}/inputs.json`, fallback_review_path: `${fb}/fallback-review.json`, fallback_review_sha256: rv.fbSha }),
       source_sha256: snap.source_sha256, prd_projection_sha256: snap.prd_projection_sha256, spec_view_sha256: snap.spec_view_sha256,
       manifest_sha256: snap.manifest_sha256, source_request_sha256: reqSha, schema_version: 2, compiler_version: snap.compiler_version }
     const n = records.length + 1
     const file = `${RUN}/approvals-${n}.json`
     const ledger = JSON.stringify({ ...header(), records: [...records, rec] })
     // A codex record pins its result.json by the hash cleanup's sha256sum printed; the block re-checks it before writing.
-    const body = ['set -e', ...(codexRun ? [`printf '%s  %s\\n' ${q(rec.result_sha256)} ${q(rec.result_path)} | sha256sum -c --quiet - >/dev/null || { echo GP_RESULT_HASH; exit 3; }`] : [
-      `FB=$(${node('write-json.js', `--out ${q(rec.fallback_review_path)}`)} <<'GP_JSON'`, JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL, reply: rv.raw }), 'GP_JSON', ')',
-      'printf \'%s\\n\' "$FB"', `H=$(printf '%s' "$FB" | sed -n 's/.*"sha256":"\\([0-9a-f]\\{64\\}\\)".*/\\1/p')`, 'test -n "$H"']),
-      `${codexRun ? 'cat' : `sed "s/${FB_HASH}/$H/"`} <<'GP_JSON' | ${node('write-json.js', `--out ${q(file)}`)}`, ledger, 'GP_JSON'].join('\n')
+    const [pinSha, pinPath, pinCode] = codexRun ? [rec.result_sha256, rec.result_path, 'GP_RESULT_HASH'] : [rec.fallback_review_sha256, rec.fallback_review_path, 'GP_FALLBACK_REVIEW_HASH']
+    const body = ['set -e', `printf '%s  %s\\n' ${q(pinSha)} ${q(pinPath)} | sha256sum -c --quiet - >/dev/null || { echo ${pinCode}; exit 3; }`,
+      `cat <<'GP_JSON' | ${node('write-json.js', `--out ${q(file)}`)}`, ledger, 'GP_JSON'].join('\n')
     const w = await step(`record ${n}`, rv.gate === 'prd' ? 'PRD review' : 'Spec review', body)
     const lw = w.docs.find(x => x && x.path === file)
-    const fw = !codexRun && w.docs.find(x => x && x.path === rec.fallback_review_path)
-    if (!w.ok || !lw || !HEX.test(lw.sha256 || '') || (!codexRun && !(fw && HEX.test(fw.sha256 || '')))) {
+    if (!w.ok || !lw || !HEX.test(lw.sha256 || '')) {
       return { end: await end({ status: 'BLOCKED', stage: 'record', round, reason: 'the approvals ledger was not written: ' + shown(w) }) }
     }
-    if (!codexRun) rec.fallback_review_sha256 = fw.sha256
     records.push(rec)
     approvals = { path: file, sha256: lw.sha256 }
     return rec

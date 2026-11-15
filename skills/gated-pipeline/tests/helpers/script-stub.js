@@ -13,6 +13,11 @@
 //   scriptStep(toReply, { cwd, env })         -> a run-workflow.js reply function: (prompt, options, calls) =>
 //                                                toReply({ prompt, options, ...runBlocks(prompt) }); the default
 //                                                toReply returns { stdout, exit_code }.
+//   fallbackRecord(prompt, reply, { cwd, env }) -> what the Opus fallback reviewer does at the end of a contract 2
+//                                                review: it writes its OWN reply with the prompt's ```gp-exec record
+//                                                block (GP_REPLY replaced by the reply as JSON, once) and returns
+//                                                only { record_path, record_sha256 } as write-json.js printed them;
+//                                                null when the prompt has no record block. Throws when the write fails.
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { cleanEnv } = require('./v2-repo.js');
@@ -41,4 +46,15 @@ function scriptStep(toReply, opts = {}) {
   return (prompt, options, calls) => reply({ prompt, options, calls, ...runBlocks(prompt, opts) });
 }
 
-module.exports = { gpExecBlocks, runBlocks, scriptStep, MOCKED };
+function fallbackRecord(prompt, reply, { cwd, env } = {}) {
+  const m = /```gp-exec record\n([\s\S]*?)\n```/.exec(String(prompt));
+  if (!m) return null;
+  assert.equal(m[1].split('GP_REPLY').length, 2, 'the record block holds the GP_REPLY placeholder exactly once');
+  const body = m[1].replace('GP_REPLY', () => JSON.stringify(reply));
+  const r = spawnSync('bash', ['-c', body], { cwd, env: env || cleanEnv(), encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`the fallback record block exited ${r.status}: ${r.stdout}${r.stderr}`);
+  const w = JSON.parse(r.stdout.trim().split('\n').pop());
+  return { record_path: w.path, record_sha256: w.sha256 };
+}
+
+module.exports = { gpExecBlocks, runBlocks, scriptStep, fallbackRecord, MOCKED };

@@ -21,7 +21,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 const { run, gpBlocks, STOP } = require('./helpers/run-workflow');
-const { runBlocks, scriptStep, MOCKED } = require('./helpers/script-stub');
+const { runBlocks, scriptStep, fallbackRecord, MOCKED } = require('./helpers/script-stub');
 const { makeRepo, baseFeature, featureBytes, cleanEnv, sha256, IMPL_FILES, SCRIPTS, REPO_PATH } = require('./helpers/v2-repo');
 
 const SKILLS = path.resolve(__dirname, '..', '..');
@@ -157,17 +157,20 @@ const stub = () => scriptStep();
 const head = c => c.git('rev-parse', 'HEAD');
 const changedOf = c => c.git('diff', '--name-status', '--no-renames', c.designCommit, 'HEAD').split('\n').filter(Boolean).map(l => ({ status: l.split('\t')[0], path: l.split('\t')[1] }));
 
-// The Opus fallback of build and verify: its setup and cleanup blocks run verbatim, the reply is scripted.
+// The Opus fallback of build and verify: its setup and cleanup blocks run verbatim, the reply is scripted and the
+// reviewer writes it itself with the record block (contract 2), returning only the record path and hash.
+const hasRecord = prompt => /```gp-exec record\n/.test(prompt);
 function opus(reply) {
   return prompt => {
-    const b = gpBlocks(prompt, ['setup', 'cleanup']);
+    const b = gpBlocks(prompt, hasRecord(prompt) ? ['setup', 'cleanup', 'record'] : ['setup', 'cleanup']);
     const setup = bash(b.setup);
     assert.equal(setup.status, 0, 'fallback setup: ' + setup.stdout + setup.stderr);
     const cleanup = bash(b.cleanup);
     assert.equal(cleanup.status, 0, 'fallback cleanup: ' + cleanup.stdout + cleanup.stderr);
     const headSha = (setup.stdout.match(/^head_sha: ([0-9a-f]{40})$/m) || [])[1];
     const changed = setup.stdout.includes('\nchanged:\n') ? setup.stdout.split('\nchanged:\n')[1].trim().split('\n').map(l => ({ status: l.split('\t')[0], path: l.split('\t')[1] })) : undefined;
-    return typeof reply === 'function' ? reply({ headSha, changed }) : reply;
+    const value = typeof reply === 'function' ? reply({ headSha, changed }) : reply;
+    return hasRecord(prompt) ? fallbackRecord(prompt, value) : value;
   };
 }
 function sh(body, cwd, env) {
@@ -192,7 +195,7 @@ const labelsOf = calls => calls.map(x => x.options.label);
 
 // design contract 2 with the Opus fallback: the codex relay's setup block runs verbatim with a codex that cannot
 // start (exit 3: unavailable), the fallback's setup and cleanup blocks run verbatim, every deterministic block runs.
-const DESIGN_DETERMINISTIC = /^(start|snapshot \d+|record \d+|approvals|commit|freeze|release lock|recover check)$/;
+const DESIGN_DETERMINISTIC = /^(start|snapshot \d+|record \d+|record opus (?:prd|spec) review \d+|approvals|commit|freeze|release lock|recover check)$/;
 function designDriver(c) {
   return async (prompt, options) => {
     const label = options.label;
@@ -208,12 +211,12 @@ function designDriver(c) {
       return UNAVAILABLE(setup.stdout + setup.stderr);
     }
     if (/^opus (prd|spec) review \d+ \(codex unavailable\)$/.test(label)) {
-      const b = gpBlocks(prompt, ['setup', 'cleanup']);
+      const b = gpBlocks(prompt, hasRecord(prompt) ? ['setup', 'cleanup', 'record'] : ['setup', 'cleanup']);
       const setup = await sh(b.setup, c.repo, c.stubEnv);
       assert.equal(setup.code, 0, `${label} setup: ${setup.stdout}${setup.stderr}`);
       const cleanup = await sh(b.cleanup, c.repo, c.stubEnv);
       assert.equal(cleanup.code, 0, `${label} cleanup: ${cleanup.stdout}${cleanup.stderr}`);
-      return { findings: [] };
+      return hasRecord(prompt) ? fallbackRecord(prompt, { findings: [] }, { cwd: c.repo, env: c.stubEnv }) : { findings: [] };
     }
     assert.fail('unexpected agent call: ' + label);
   };
