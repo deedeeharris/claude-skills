@@ -327,9 +327,15 @@ Diagnostics are sorted (path, code, rule) so output is deterministic.
   the API safety filter as `[reasoning_extraction]`). A deterministic record step then runs
   `hash-inputs.js --verify` again and `write-json.js --check <file> --sha256 <reported>` with
   the record schema on stdin (strict JSON, exact keys, the gate kind, the label, `reply` in the
-  review schema) and prints the parsed record; the workflow gates the reply parsed from that
-  file, and a missing, malformed or changed record is BLOCKED. These files are script-written
-  but agent-invoked, and the report says so.
+  review schema) and prints `{ path, sha256, verdict_inputs }`: only what the verdict rule reads,
+  derived from the file (per finding `id` F<n>/B<n>, `severity`, `confidence`, `iso_property`;
+  `verdict`, `blocked`, `head_sha`, `changed` and the pinned git state), never a title, detail,
+  location, note or other review text, because the agent that runs the step returns its stdout
+  and an agent carrying another model's review text is refused the same way. The workflow gates
+  those verdict inputs, results carry the record's `record_path` and `record_sha256` in place of
+  finding text, and a fixer or author is sent the record path and the finding ids and reads the
+  text from the file itself. A missing, malformed, changed or misreported record is BLOCKED.
+  These files are script-written but agent-invoked, and the report says so.
 - Inputs per gate, exactly: PRD review = files `[rev-k/out/prd.view.md]`, against
   `<run_dir>/source-request.txt` (codex-review accepts `--against` for `prd`). Spec review =
   files `[rev-k/out/spec.view.md, rev-k/out/execution-plan.json]`, against
