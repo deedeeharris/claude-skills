@@ -292,11 +292,28 @@ test('L2.7 marker: a file whose every command and prose field would write a mark
   const res = compileCli({ ...co, out });
   assert.equal(res.status, 0, res.stdout + res.stderr);
   assert.equal(compileCli({ ...co, check: out }).status, 0);
-  assert.ok(fs.readFileSync(path.join(out, 'execution-plan.json'), 'utf8').includes(touch));
+  assert.ok(fs.readFileSync(path.join(out, 'execution-plan.json'), 'utf8').includes(JSON.stringify(touch).slice(1, -1)), 'the command is in the manifest, JSON-escaped (a Windows path has backslashes)');
   assert.equal(fs.existsSync(marker), false);
 });
 
 // ---- --out rules -------------------------------------------------------------------------------------------
+
+test('when --out names a fresh directory, compile writes the four files and exits 0 on this OS (win32 skips only the directory fsync)', t => {
+  const root = tmpdir(t, 'gp-compile-fsync-');
+  const co = checkout(root, readFixture('S01-minimal'));
+  const out = path.join(root, 'frozen');
+  const res = compileCli({ ...co, out });
+  assert.equal(res.status, 0, `${res.stdout}${res.stderr}`);
+  assert.deepEqual(fs.readdirSync(out).sort(), FILES);
+});
+
+test('when fsyncDir is given a directory, it returns on every OS; on POSIX it really opens it (a missing one throws ENOENT)', t => {
+  const { fsyncDir } = require(path.join(SKILL, 'scripts/write-json.js'));
+  const dir = tmpdir(t, 'gp-fsyncdir-');
+  assert.doesNotThrow(() => fsyncDir(dir));
+  if (process.platform === 'win32') assert.doesNotThrow(() => fsyncDir(path.join(dir, 'missing')), 'skipped on win32');
+  else assert.throws(() => fsyncDir(path.join(dir, 'missing')), { code: 'ENOENT' });
+});
 
 test('--out inside --repo (directly, through a symlink, or the repo given through a symlink) or existing -> exit 2, nothing written', t => {
   const root = tmpdir(t, 'gp-compile-out-');
@@ -379,7 +396,9 @@ test('an interrupted compile (GP_COMPILE_ABORT_AFTER=0..4) leaves no <out>; a re
   const out = path.join(parent, 'frozen');
   for (let n = 0; n <= 4; n++) {
     const res = compileCli({ ...co, out, env: { ...process.env, GP_COMPILE_ABORT_AFTER: String(n) } });
-    assert.equal(res.signal, 'SIGKILL', `n=${n}: ${res.status} ${res.stdout}${res.stderr}`);
+    // Windows reports a process killed by process.kill(pid, 'SIGKILL') (TerminateProcess) as exit 1, not as a signal.
+    if (process.platform === 'win32') assert.deepEqual([res.status, res.signal], [1, null], `n=${n}: ${res.stdout}${res.stderr}`);
+    else assert.equal(res.signal, 'SIGKILL', `n=${n}: ${res.status} ${res.stdout}${res.stderr}`);
     assert.equal(res.stdout, '');
     assert.equal(fs.existsSync(out), false, `n=${n}: <out> exists`);
     const tmps = fs.readdirSync(parent).filter(x => x !== 'frozen');

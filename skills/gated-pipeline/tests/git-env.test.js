@@ -153,7 +153,8 @@ test('with GIT_DIR and the GIT_CONFIG* family pointing at a decoy repo, the git-
 
   assert.deepEqual(snapshot(decoy), pristine, 'the decoy repository (config, HEAD, refs, index, objects, global config) is unchanged');
   assert.equal(out.v2_author, 'alice', 'v2-repo commits carry the temp repo identity, not the injected one');
-  assert.equal(out.v2_toplevel, out.v2_repo, 'v2-repo git runs in its own temp repo');
+  // path.resolve: on Windows git prints C:/x/repo for the C:\x\repo the helper made.
+  assert.equal(path.resolve(out.v2_toplevel), path.resolve(out.v2_repo), 'v2-repo git runs in its own temp repo');
   assert.equal(out.v1_author, 'Gate Test', 'v1 completion fixture commits carry its own identity');
   assert.deepEqual(out.stub, { exit_code: 0, stdout: 'stub' }, 'the script-executing stub runs git in its cwd');
   assert.equal(out.run_workflow_root, SKILLS_REPO, 'run-workflow resolves this repository, not the decoy');

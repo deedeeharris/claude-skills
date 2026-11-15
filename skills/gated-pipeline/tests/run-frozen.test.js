@@ -11,6 +11,8 @@ const path = require('node:path');
 const { test } = require('node:test');
 const { makeRepo, baseFeature, clone, sha256 } = require('./helpers/v2-repo.js');
 const { gpExecBlocks, runBlocks, scriptStep } = require('./helpers/script-stub.js');
+const { frozenShell } = require('../scripts/run-frozen.js');
+const { recordName, targetStem } = require('../scripts/lib/frozen-files.js');
 
 const FAST = { GP_RUN_FROZEN_SECONDS_PER_MINUTE: '1', GP_RUN_FROZEN_KILL_GRACE_S: '1' };
 
@@ -67,6 +69,36 @@ test('run-frozen executes exactly the manifest command of the target and no othe
   assert.match(again.stderr, /already exists/);
 });
 
+test('when the target is check:<ID>, the record and log are named by recordName: the target on POSIX, NTFS-safe on win32', t => {
+  assert.equal(recordName('check:CHECK-LINT', 'linux'), 'check:CHECK-LINT.record.json', 'POSIX names are unchanged');
+  assert.equal(recordName('proof:HELLO-001-AC1', 'darwin'), 'proof:HELLO-001-AC1.record.json');
+  assert.equal(recordName('check:CHECK-LINT', 'win32'), 'check_CHECK-LINT.record.json');
+  assert.equal(recordName('negative:HELLO-001-AC1', 'win32'), 'negative_HELLO-001-AC1.record.json');
+  assert.equal(recordName('suite', 'win32'), 'suite.record.json');
+  assert.equal(targetStem('proof:HELLO-001-AC1', 'win32'), 'proof_HELLO-001-AC1');
+  const c = frozenRepo(t);
+  const r = c.runFrozen('check:CHECK-LINT');
+  assert.equal(r.status, 0, r.stderr);
+  const rec = record(r);
+  assert.equal(out(r).record_path, path.join(c.frozenRuns, recordName('check:CHECK-LINT')));
+  assert.equal(rec.log_path, path.join(c.frozenRuns, targetStem('check:CHECK-LINT') + '.log'));
+  assert.equal(rec.target, 'check:CHECK-LINT', 'the record content keeps the target');
+  if (process.platform === 'win32') for (const name of fs.readdirSync(c.frozenRuns)) assert.ok(!name.includes(':'), name);
+  else assert.equal(path.basename(out(r).record_path), 'check:CHECK-LINT.record.json');
+});
+
+test('when choosing the shell, POSIX gets /bin/sh and win32 gets GP_SHELL, else Git for Windows bash.exe, else a setup error', () => {
+  const has = (...files) => f => files.includes(f);
+  assert.equal(frozenShell({ platform: 'linux', env: { GP_SHELL: 'C:\\x\\bash.exe' } }), '/bin/sh', 'GP_SHELL is ignored on POSIX');
+  assert.equal(frozenShell({ platform: 'win32', env: { GP_SHELL: 'D:\\sh.exe' }, exists: has('D:\\sh.exe') }), 'D:\\sh.exe');
+  assert.throws(() => frozenShell({ platform: 'win32', env: { GP_SHELL: 'D:\\none.exe' }, exists: has() }), /GP_SHELL .* does not exist/);
+  const git = 'C:\\Program Files\\Git\\mingw64\\libexec\\git-core';
+  assert.equal(frozenShell({ platform: 'win32', env: {}, execPath: git, exists: has('C:\\Program Files\\Git\\bin\\bash.exe') }), 'C:\\Program Files\\Git\\bin\\bash.exe');
+  assert.equal(frozenShell({ platform: 'win32', env: { ProgramFiles: 'E:\\PF' }, execPath: '', exists: has('E:\\PF\\Git\\bin\\bash.exe') }), 'E:\\PF\\Git\\bin\\bash.exe');
+  assert.throws(() => frozenShell({ platform: 'win32', env: {}, execPath: git, exists: has() }), /no POSIX shell .* GP_SHELL/);
+  if (process.platform === 'win32') assert.ok(fs.existsSync(frozenShell()), 'this PC resolves a real bash.exe');
+});
+
 test('run-frozen refuses a manifest that does not hash to --manifest-sha256', t => {
   const c = frozenRepo(t);
   const r = c.runFrozen('check:CHECK-LINT', { manifestSha: '0'.repeat(64) });
@@ -75,7 +107,7 @@ test('run-frozen refuses a manifest that does not hash to --manifest-sha256', t 
   fs.appendFileSync(c.manifestPath, ' ');
   const edited = c.runFrozen('check:CHECK-LINT');
   assert.equal(edited.status, 1);
-  assert.equal(fs.existsSync(path.join(c.frozenRuns, 'check:CHECK-LINT.record.json')), false);
+  assert.equal(fs.existsSync(path.join(c.frozenRuns, recordName('check:CHECK-LINT'))), false);
 });
 
 test('run-frozen refuses a frozen command holding the repo absolute path', t => {
@@ -87,7 +119,7 @@ test('run-frozen refuses a frozen command holding the repo absolute path', t => 
   const r = c.runFrozen('check:CHECK-LINT');
   assert.equal(r.status, 1);
   assert.match(r.stderr, /absolute path/);
-  assert.equal(fs.existsSync(path.join(c.frozenRuns, 'check:CHECK-LINT.record.json')), false);
+  assert.equal(fs.existsSync(path.join(c.frozenRuns, recordName('check:CHECK-LINT'))), false);
 });
 
 test('run-frozen refuses an id that fails its literal pattern, and a relative --repo', t => {
@@ -105,7 +137,11 @@ test('run-frozen refuses an id that fails its literal pattern, and a relative --
 test('a hanging check is killed with its whole process group at timeout_min and recorded timed_out', t => {
   const c = makeRepo(t);
   const pids = path.join(c.root, 'pids');
-  c.feature.checks[0].command = `sh -c 'echo $$ > ${pids}; sleep 60 & echo $! >> ${pids}; wait'`;
+  // Git Bash's $$ and $! are MSYS pids; process.kill(pid, 0) needs the Windows pid, which /proc/<pid>/winpid gives.
+  // Unquoted in the inner sh, a Windows path loses its backslashes, so it is spelled with forward slashes there.
+  c.feature.checks[0].command = process.platform === 'win32'
+    ? `sh -c 'cat /proc/$$/winpid > ${pids.split(path.sep).join('/')}; sleep 60 & cat /proc/$!/winpid >> ${pids.split(path.sep).join('/')}; wait'`
+    : `sh -c 'echo $$ > ${pids}; sleep 60 & echo $! >> ${pids}; wait'`;
   c.feature.checks[0].timeout_min = 1;
   c.writeFeature();
   c.freeze();
@@ -223,7 +259,8 @@ test('the checkout must be at reviewed_sha and clean before anything runs', t =>
 
 // The old -> new form of a status line is a rename or copy only (review B2): git quotes a name holding a space, so a
 // file named "tmp -> tmp" is one untracked path, never a rename of tmp into tmp.
-test('a dirty file named "tmp -> tmp" is not clean under clean_ignore tmp/', t => {
+// NTFS forbids '>' in a file name, so this file cannot exist on win32.
+test('a dirty file named "tmp -> tmp" is not clean under clean_ignore tmp/', { skip: process.platform === 'win32' && 'NTFS forbids ">" in a file name' }, t => {
   const f = baseFeature();
   f.scope.clean_ignore = ['tmp/'];
   const c = makeRepo(t, { feature: f, pipelineYaml: 'tests:\n  known_failures: []\n  clean_ignore: ["tmp/"]\nstate:\n  paths: []\n' });
@@ -242,7 +279,7 @@ test('a dirty file named "tmp -> tmp" is not clean under clean_ignore tmp/', t =
 // After a timeout the cleanup deadline counts from the SIGTERM, not from the direct child's exit (review B1): a
 // direct child that ignores SIGTERM exits only at the SIGKILL, and an unreaped zombie left in its process group
 // (its parent left the group with setsid and never waits) keeps the group alive until that deadline.
-test('a timed-out run with a zombie in its group ends at limit + grace + 2 s, not grace later', t => {
+test('a timed-out run with a zombie in its group ends at limit + grace + 2 s, not grace later', { skip: process.platform === 'win32' && 'POSIX-only: Windows has no SIGTERM to trap, no setsid and no zombies; the kill is taskkill /T /F' }, t => {
   const f = baseFeature();
   const c = makeRepo(t, { feature: f });
   const pidFile = path.join(c.root, 'outsider.pid');
@@ -276,7 +313,7 @@ for (const [kind, text] of Object.entries(NEGATIVE_PATCHES)) {
     const r = c.runFrozen('negative:HELLO-001-AC1', { outDir: path.join(c.run, 'negative', 'HELLO-001-AC1'), patch: c.patchFile('HELLO-001-AC1', text) });
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stderr, kind === 'empty' ? /empty/ : new RegExp(kind === 'mode' ? 'mode' : kind === 'binary' ? 'binary' : kind === 'rename' ? 'rename' : 'deletes'));
-    assert.equal(fs.existsSync(path.join(c.run, 'negative', 'HELLO-001-AC1', 'negative:HELLO-001-AC1.record.json')), false);
+    assert.equal(fs.existsSync(path.join(c.run, 'negative', 'HELLO-001-AC1', recordName('negative:HELLO-001-AC1'))), false);
   });
 }
 
@@ -300,7 +337,7 @@ for (const [kind, [text, pattern]] of Object.entries(SMUGGLING_PATCHES)) {
     const r = c.runFrozen('negative:HELLO-001-AC1', { outDir: dir, patch: c.patchFile('HELLO-001-AC1', text) });
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stderr, pattern);
-    assert.equal(fs.existsSync(path.join(dir, 'negative:HELLO-001-AC1.record.json')), false);
+    assert.equal(fs.existsSync(path.join(dir, recordName('negative:HELLO-001-AC1'))), false);
     assert.equal(fs.existsSync(path.join(dir, 'wt')), false);
   });
 }
@@ -328,7 +365,7 @@ test('negative-control patch derivation accepts an unchanged 100755 index line a
   assert.throws(() => patchPaths(edit(' 100700')), /unsupported line/);
 });
 
-test('a git-generated patch editing an executable owned file runs as a negative control', t => {
+test('a git-generated patch editing an executable owned file runs as a negative control', { skip: process.platform === 'win32' && 'POSIX-only: NTFS has no executable bit (core.filemode is false), so git never writes mode 100755' }, t => {
   const f = baseFeature();
   const c = makeRepo(t, { feature: f });
   c.freeze();
@@ -395,7 +432,7 @@ test('a negative-control patch that does not apply is exit 1 and writes no recor
   const r = c.runFrozen('negative:HELLO-001-AC1', { outDir: dir, patch: c.patchFile('HELLO-001-AC1', bad) });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /does not apply/);
-  assert.equal(fs.existsSync(path.join(dir, 'negative:HELLO-001-AC1.record.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, recordName('negative:HELLO-001-AC1'))), false);
   assert.equal(fs.existsSync(path.join(dir, 'wt')), false);
 });
 
@@ -451,21 +488,24 @@ async function interrupted(t, signal, { target = 'check:CHECK-LINT', edit, extra
   await new Promise(r => setTimeout(r, 5000));
   return { c: c0, code, sig, stdout, stderr, marker };
 }
+// POSIX-only by nature: on Windows child.kill(<signal>) is TerminateProcess, which no handler can see, so there is no
+// signal for run-frozen.js to handle and nothing of this contract to observe.
+const POSIX_SIGNALS = process.platform === 'win32' ? 'Windows has no catchable SIGTERM/SIGINT/SIGHUP from another process' : false;
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
-  test(`run-frozen ended by ${signal} kills the frozen command's group, writes no record, frames the log as interrupted and exits 1`, async t => {
+  test(`run-frozen ended by ${signal} kills the frozen command's group, writes no record, frames the log as interrupted and exits 1`, { skip: POSIX_SIGNALS }, async t => {
     const r = await interrupted(t, signal, { edit: (f, cmd) => { f.checks[0].command = cmd; } });
     assert.equal(r.sig, null, `run-frozen handled ${signal} itself`);
     assert.equal(r.code, 1, r.stderr);
     assert.match(r.stderr, new RegExp(`interrupted by ${signal}`));
     assert.equal(fs.existsSync(r.marker), false, 'the frozen command did not outlive run-frozen.js');
-    assert.equal(fs.existsSync(path.join(r.c.frozenRuns, 'check:CHECK-LINT.record.json')), false, 'no record for an interrupted run');
+    assert.equal(fs.existsSync(path.join(r.c.frozenRuns, recordName('check:CHECK-LINT'))), false, 'no record for an interrupted run');
     assert.equal(r.stdout, '', 'nothing printed: no record line');
-    const log = framed(fs.readFileSync(path.join(r.c.frozenRuns, 'check:CHECK-LINT.log'), 'utf8'));
+    const log = framed(fs.readFileSync(path.join(r.c.frozenRuns, targetStem('check:CHECK-LINT') + '.log'), 'utf8'));
     assert.equal(log.footer.interrupted, signal);
     assert.equal(log.footer.exit_code, null);
   });
 }
-test('an interrupted isolated suite also removes its worktree', async t => {
+test('an interrupted isolated suite also removes its worktree', { skip: POSIX_SIGNALS }, async t => {
   const r = await interrupted(t, 'SIGTERM', { target: 'suite', edit: (f, cmd) => { f.suite.command = cmd; f.suite.isolated = true; } });
   assert.equal(r.code, 1, r.stderr);
   assert.equal(fs.existsSync(r.marker), false);
@@ -549,16 +589,18 @@ test('red: refused without --base or with --base elsewhere; refused when the ran
 test('script-stub runs the gp-exec blocks of a prompt verbatim and replies with their real stdout and exit code (mocked boundary)', t => {
   const c = frozenRepo(t);
   const file = path.join(c.run, 'stub-record.json');
+  // The blocks run with bash, where an unquoted Windows path loses its backslashes: spell them with forward slashes there.
+  const sh = p => (process.platform === 'win32' ? p.split(path.sep).join('/') : p);
   const prompt = 'Run this block verbatim.\n```gp-exec\n' +
-    `node ${path.join(require('./helpers/v2-repo.js').SCRIPTS, 'write-json.js')} --out ${file} <<'GP_JSON'\n{"a":1}\nGP_JSON\n` +
+    `node ${sh(path.join(require('./helpers/v2-repo.js').SCRIPTS, 'write-json.js'))} --out ${sh(file)} <<'GP_JSON'\n{"a":1}\nGP_JSON\n` +
     '```\nThen this one.\n```gp-exec\n' +
-    `node ${path.join(require('./helpers/v2-repo.js').SCRIPTS, 'run-frozen.js')} --repo ${c.repo} --frozen-dir ${c.frozenDir} --manifest-sha256 ${c.manifestSha} --reviewed-sha ${c.reviewedSha} --target check:CHECK-LINT --out-dir ${c.frozenRuns}\n` +
+    `node ${sh(path.join(require('./helpers/v2-repo.js').SCRIPTS, 'run-frozen.js'))} --repo ${sh(c.repo)} --frozen-dir ${sh(c.frozenDir)} --manifest-sha256 ${c.manifestSha} --reviewed-sha ${c.reviewedSha} --target check:CHECK-LINT --out-dir ${sh(c.frozenRuns)}\n` +
     '```\n```gp-exec setup\necho relay blocks are not deterministic steps\n```\n';
   assert.equal(gpExecBlocks(prompt).length, 2);
   const reply = scriptStep(null, { cwd: c.repo, env: c.env })(prompt, { label: 'x' }, []);
   assert.equal(reply.exit_code, 0);
   assert.match(reply.stdout, /"sha256"/);
-  assert.match(reply.stdout, /check:CHECK-LINT\.record\.json/);
+  assert.ok(reply.stdout.includes(recordName('check:CHECK-LINT')), reply.stdout);
   assert.ok(fs.existsSync(file));
   const failing = runBlocks('```gp-exec\nexit 7\n```\n```gp-exec\necho never\n```', { cwd: c.repo, env: c.env });
   assert.equal(failing.exit_code, 7);

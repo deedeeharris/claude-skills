@@ -228,6 +228,9 @@ Diagnostics are sorted (path, code, rule) so output is deterministic.
 
 - `--repo` is used only for containment (realpath), never for git writes; `--file` may be a
   snapshot outside it. Runs the full validator first; invalid -> exit 1, writes nothing.
+- Hashes are over the `--file` bytes: with `core.autocrlf=true` (common on Windows) a checked-out
+  feature file without `-text` has CRLF bytes and compiles to other hashes than its blob, so
+  compile from the blob (`git show HEAD:<path> > <snapshot>`) there, not from the working tree.
 - `--out` must not exist and must lie outside `realpath(--repo)` (else exit 2). Output is
   written into `<out>.tmp-<pid>-<rand>` and renamed to `<out>` only after every file is written
   and fsynced, so an interrupted compile never leaves a valid-looking directory at `<out>`.
@@ -582,7 +585,10 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   limit, SIGKILL 10 s later; and refuses a command containing the repo's absolute path. For an
   isolated suite it runs `suite.setup_command` in the fresh worktree first. The log is framed by
   a header (`target, command, cwd, head`) and a footer (`exit_code, signal, elapsed_s`), so it
-  is never empty and completion checks both against the record. It writes
+  is never empty and completion checks both against the record. On native Windows the shell is
+  Git for Windows' bash.exe (GP_SHELL overrides), the group kill is `taskkill /T /F` plus a kill
+  of every MSYS process carrying the run's `GP_RUN_FROZEN_GROUP` token, and a target's `:` is
+  `_` in record and log names (NTFS streams). It writes
   `<out-dir>/<target>.record.json` `{ target, command, cwd, head_before, head_after,
   status_before, status_after, timeout_s, budget_min, elapsed_s, exit_code, signal, timed_out,
   log_path, log_sha256, setup: { exit_code, log_path, log_sha256, timed_out } | null }`, prints

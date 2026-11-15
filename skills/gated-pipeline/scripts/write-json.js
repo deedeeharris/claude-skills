@@ -42,9 +42,15 @@ function writeOnce(target, bytes) {
     if (e.code === 'EEXIST') throw new Refusal(`${target} already exists; records are written once`);
     throw e;
   } finally { fs.rmSync(tmp, { force: true }); }
+  fsyncDir(dir);
+  return { path: target, sha256: sha256(bytes) };
+}
+// fsync of a directory, so a new entry in it survives a crash. Windows cannot open a directory for fsync (EPERM or
+// EISDIR) and NTFS journals the entry itself, so there it is skipped; a file's own fsync stays on every OS.
+function fsyncDir(dir) {
+  if (process.platform === 'win32') return;
   const dfd = fs.openSync(dir, 'r');
   try { fs.fsyncSync(dfd); } finally { fs.closeSync(dfd); }
-  return { path: target, sha256: sha256(bytes) };
 }
 function exists(p) {
   try { fs.lstatSync(p); return true; } catch { return false; }
@@ -71,4 +77,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { writeOnce, Refusal, SetupError, sha256 };
+module.exports = { writeOnce, fsyncDir, Refusal, SetupError, sha256 };
