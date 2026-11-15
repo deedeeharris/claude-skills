@@ -596,7 +596,8 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   is never empty and completion checks both against the record. On native Windows the shell is
   Git for Windows' bash.exe (GP_SHELL overrides), the group kill is `taskkill /T /F` plus a kill
   of every MSYS process carrying the run's `GP_RUN_FROZEN_GROUP` token, and a target's `:` is
-  `_` in record and log names (NTFS streams). It writes
+  `_` in record and log names (NTFS streams); known limit: a run-frozen.js nested inside a
+  frozen command overwrites the token, so only `taskkill /T` reaches its processes. It writes
   `<out-dir>/<target>.record.json` `{ target, command, cwd, head_before, head_after,
   status_before, status_after, timeout_s, budget_min, elapsed_s, exit_code, signal, timed_out,
   log_path, log_sha256, setup: { exit_code, log_path, log_sha256, timed_out } | null }`, prints

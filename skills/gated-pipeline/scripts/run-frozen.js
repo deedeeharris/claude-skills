@@ -481,8 +481,14 @@ async function main(argv) {
       const s = manifest.suite;
       spec = { command: singleLine(s.unit_command, 'suite.unit_command'), limitS: s.timeout_min * spm, timeoutMin: s.timeout_min, budgetMin: null, setup: s.setup_command };
     }
+    // On Windows a path has more spellings: backslashes, forward slashes (C:/x/repo) and Git Bash's /c/x/repo, in any case.
+    const repoSpellings = [realRepo, args.repo, path.resolve(args.repo)];
+    const winSpellings = WIN ? [...new Set(repoSpellings.flatMap(r => {
+      const fwd = r.split(path.win32.sep).join('/');
+      return [r, fwd, /^[A-Za-z]:\//.test(fwd) ? '/' + fwd[0] + fwd.slice(2) : fwd];
+    }).map(x => x.toLowerCase()))] : [];
     for (const cmd of spec ? [spec.command, spec.setup].filter(x => typeof x === 'string') : []) {
-      if (cmd.includes(realRepo) || cmd.includes(args.repo) || cmd.includes(path.resolve(args.repo))) throw new Refusal(`the frozen command holds the repo's absolute path: ${cmd}`);
+      if (repoSpellings.some(r => cmd.includes(r)) || winSpellings.some(r => cmd.toLowerCase().includes(r))) throw new Refusal(`the frozen command holds the repo's absolute path: ${cmd}`);
     }
     if (target.kind !== 'live') SHELL = frozenShell();
     fs.mkdirSync(outDir, { recursive: true });

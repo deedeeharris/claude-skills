@@ -444,7 +444,8 @@ const reviewFiles = []
 // it holds integer baseline_exit_code and exit_code and a mutation_patch_sha256 equal to the printed patch hash. A
 // blocked reply, or one that shows run-frozen's own refusal (a nonzero exit with a run-frozen: line), gets no
 // readback. The workflow cannot hash, so a wrong printed record hash is caught by completion, which re-derives every
-// record from disk (hash, target, command, logs, patch, exit codes).
+// record from disk (hash, target, command, logs, patch, exit codes). A read may name alt, a second spelling of the
+// record (verify: the Windows name); the one whose sha256sum line printed is the record read.
 const rbRefused = r => !r || r.blocked === true || (r.exit_code !== 0 && /^run-frozen: /m.test(String(r.stdout || '')))
 const rbCovered = (file, entries) => entries.some(e => file === e.replace(/\/$/, '') || file.startsWith(e.endsWith('/') ? e : e + '/'))
 // A porcelain v1 line's paths, read as run-frozen.js and check-completion.js read them: git C-quotes a name holding a
@@ -468,17 +469,18 @@ function rbJsonAfter(stdout, file) {
   while (end < lines.length && !shaLine(lines[end])) end++
   try { const v = JSON.parse(lines.slice(at + 1, end).join('\n')); return v && typeof v === 'object' && !Array.isArray(v) ? v : null } catch { return null }
 }
-// reads: [{ record, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
+// reads: [{ record, alt?, target, patch? }]; files: other JSON files to hash and print (the acceptance ledger).
 // Returns { records: [{ record_path, record_sha256, record, printed }], files: { <path>: { sha256, value } } } or { error }.
 async function readback({ step, ph, sha, clean, reads, files = [] }) {
-  const body = [...reads.map(x => `test -f ${q(x.record)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(x.record)} && cat ${q(x.record)}`),
+  const body = [...reads.flatMap(x => [x.record, ...(x.alt ? [x.alt] : [])].map(f => `test -f ${q(f)} && sha256sum ${x.patch ? q(x.patch) + ' ' : ''}${q(f)} && cat ${q(f)}`)),
     ...files.map(f => `test -f ${q(f)} && sha256sum ${q(f)} && cat ${q(f)}`)].join('\n')
   const r = await agent(`Step ${step} ran run-frozen.js, but its reply did not carry the record line run-frozen.js prints. Read the files back: the block below only reads; ` +
     `it never runs or writes anything. Return its stdout exactly as printed, byte for byte, with nothing added, dropped or reformatted. ${EXEC_NOTE}` + execBlock(body) + `\n- ${RULES}`,
     { label: `readback ${step}`, phase: ph, schema: EXEC, effort: 'low' })
   if (!r || r.blocked) return { error: 'the readback was blocked' }
   const records = []
-  for (const x of reads) {
+  for (const read of reads) {
+    const x = read.alt && !HEX64.test(shaOf(r.stdout, read.record) || '') && HEX64.test(shaOf(r.stdout, read.alt) || '') ? { ...read, record: read.alt } : read
     const recSha = shaOf(r.stdout, x.record)
     const rec = rbJsonAfter(r.stdout, x.record)
     const patchSha = x.patch ? shaOf(r.stdout, x.patch) : null

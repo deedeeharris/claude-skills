@@ -122,6 +122,20 @@ test('run-frozen refuses a frozen command holding the repo absolute path', t => 
   assert.equal(fs.existsSync(path.join(c.frozenRuns, recordName('check:CHECK-LINT'))), false);
 });
 
+test('when a frozen command holds the repo path in a forward-slash (C:/x/repo) or Git Bash (/c/x/repo) spelling, run-frozen refuses it on win32', { skip: process.platform !== 'win32' && 'win32 only: a POSIX path has one spelling' }, t => {
+  for (const spell of [p => p.split(path.sep).join('/'), p => '/' + p[0].toLowerCase() + p.slice(2).split(path.sep).join('/')]) {
+    const c = makeRepo(t);
+    c.feature.checks[0].command = `ls ${spell(c.repo)}/src`;
+    c.writeFeature();
+    c.freeze();
+    c.implement();
+    const r = c.runFrozen('check:CHECK-LINT');
+    assert.equal(r.status, 1, `${c.feature.checks[0].command}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /absolute path/);
+    assert.equal(fs.existsSync(path.join(c.frozenRuns, recordName('check:CHECK-LINT'))), false);
+  }
+});
+
 test('run-frozen refuses an id that fails its literal pattern, and a relative --repo', t => {
   const c = frozenRepo(t);
   for (const target of ['check:check-lint', 'check:CHECK-../x', 'proof:../HELLO-001-AC1', 'proof:HELLO-1-AC1', 'negative:hello-001-AC1', 'live:HELLO-001-AC', 'other:X', 'suite:x']) {
