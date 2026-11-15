@@ -246,18 +246,24 @@ function gateCodex(kind, reply) {
   return g.verdict === reply.verdict ? g : gateBlocked(reply, `relay inconsistency: relayed verdict ${reply.verdict}, its findings give ${g.verdict}`)
 }
 // Opus fallback: the reviewer self-validated, so every BLOCKING/MAJOR counts as confirmed; ids F1, F2, ... in reply order.
+// A checked record's reply (contract 2, record_path set) is its verdict inputs only: its findings carry no text, and
+// every reader of the text (fixer, author) reads it from the record file itself.
 // The model verdict passed is the rule's own: when computeVerdict reaches its model comparison, no trigger and no
 // 0.5-0.8 finding is left, so the rule's pre-verdict there is always PASS and the fallback never disagrees with itself.
 function gateFallback(kind, reply) {
   if (!reply || reply.blocked) return reply
   if (!Array.isArray(reply.findings)) return gateBlocked(reply, 'relay inconsistency: the fallback reply lacks findings')
+  const text = typeof reply.record_path !== 'string'
   const findings = reply.findings.map((x, i) => ({ id: `F${i + 1}`, severity: x.severity, confidence: Number(x.confidence) || 0,
     iso_property: kind === 'implementation' ? null : x.iso_property ?? null, validation_status: gateBig(x) ? 'confirmed' : 'not_required',
-    title: gateStr(x.title), detail: gateStr(x.detail), location: gateLoc(x.location) }))
+    ...(text ? { title: gateStr(x.title), detail: gateStr(x.detail), location: gateLoc(x.location) } : {}) }))
   return gateOf(kind, reply, findings, 'PASS')
 }
-// One item format for authors and fixers.
-const gateItem = (reviewer, x) => `[${reviewer} ${x.severity}] ${x.id} ${x.location} ${x.title}: ${x.detail}`
+// One item format for authors and fixers. record: the checked fallback record the finding is in; the item then names
+// the finding by id and the reader takes its text from the file (F<n> is reply.findings[n-1]), never from this prompt.
+const gateItem = (reviewer, x, record) => (record
+  ? `[${reviewer} ${x.severity}] ${x.id}: read its location, title and detail in the review record ${record} (reply.findings[${Number(String(x.id).slice(1)) - 1}])`
+  : `[${reviewer} ${x.severity}] ${x.id} ${x.location} ${x.title}: ${x.detail}`)
 // --- end of the gate rule block
 // --- review relays (plan 1b, design section 5): this block is the same in design.js, build.js and verify.js. A relay
 // runs fixed role-tagged blocks verbatim, in order: setup (availability probes, a fresh out dir made with plain mkdir,
@@ -315,7 +321,8 @@ const RELAY_REVIEW = (extra = {}) => ({
 // asked to reproduce a review verbatim is refused as reasoning extraction). The reviewer writes its reply once with
 // write-json.js (the record block, GP_REPLY replaced by its reply) and answers only the path and sha256 it printed; a
 // deterministic step then re-reads the file with write-json.js --check against fbRecordSchema, and the workflow gates
-// the reply parsed FROM THE FILE, so the record and the verdict cannot diverge.
+// the verdict inputs --check derived FROM THE FILE, so the record and the verdict cannot diverge. --check prints no
+// review text (no title, detail, location or note), so no agent ever carries the reviewer's prose either.
 const FB_RECORD_NOTE = 'Then record your review yourself, once, after cleanup: in the record block replace GP_REPLY with your whole reply (everything ' +
   'this prompt asks you to report or return) as ONE strict JSON object conforming to the schema below, change nothing else, and run it as one ' +
   'foreground Bash call. It is the only file you write. write-json.js writes the record once and atomically and prints { path, sha256 }: never run it ' +
@@ -333,9 +340,15 @@ const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --
 const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
-// The --check line for this record: the reported file at the reported hash, parsed from disk, of this gate and label.
-const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.value && typeof o.value === 'object' &&
-  o.value.gate_kind === gate && o.value.reviewer === OPUS_LABEL && o.value.reply && typeof o.value.reply === 'object' && !Array.isArray(o.value.reply))
+// The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
+const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
+  o.verdict_inputs.gate_kind === gate && o.verdict_inputs.reviewer === OPUS_LABEL && o.verdict_inputs.reply && typeof o.verdict_inputs.reply === 'object' && !Array.isArray(o.verdict_inputs.reply))
+// The reply the workflow gates: the checked record's verdict inputs, plus the record's path and sha256, which results
+// carry in place of finding text.
+const fbReply = (w, file) => {
+  const r = { ...w.verdict_inputs.reply, record_path: file, record_sha256: w.sha256 }
+  return r.blocked === true ? { ...r, reason: `the fallback reviewer reported blocked; its note is in ${file}` } : r
+}
 // --- end of the review relay block
 // The final-review relay uses the same schema as design's and build's review relays, plus the head it read first.
 const RELAY = RELAY_REVIEW({ head_sha: { type: 'string' } })
@@ -507,7 +520,8 @@ const RAW_RELAY = s => { const r = relay(s); return { ...r, properties: { ...r.p
 // The Opus fallback wrote its own record (fbRecord, in its prompt). This deterministic step re-hashes the review inputs
 // (hash-inputs.js --verify fails if any changed during the review) and re-reads the record (write-json.js --check:
 // present, the reported sha256, strict JSON, { gate_kind, reviewer, reply } with reply in the review schema). The reply
-// it returns is the one parsed from that file; anything else is a blocked reply that stops the stage.
+// it returns is the record's verdict inputs, as --check derived them from that file (no review text), with the record's
+// path and sha256; anything else is a blocked reply that stops the stage.
 const WRITE_JSON = `${V2_SCRIPTS}/write-json.js`
 async function recordFallback({ step, round, dir, ack, inputs, schema, ph, label }) {
   const file = `${dir}/fallback-review.json`
@@ -516,14 +530,14 @@ async function recordFallback({ step, round, dir, ack, inputs, schema, ph, label
   if (bad) return { reply: { blocked: true, reason: `the fallback ${step} review record was not written: ${bad}` } }
   const r = await agent(
     `Check the record the Opus fallback ${step} reviewer wrote: ${inputs ? 're-hash its inputs (hash-inputs.js --verify fails if any changed during the review), then ' : ''}` +
-    `re-read it with the skill's write-json.js --check (it refuses a record that is missing, changed since it was written, not strict JSON or not the expected shape, and prints { path, sha256, value }). ${EXEC_NOTE}` +
+    `re-read it with the skill's write-json.js --check (it refuses a record that is missing, changed since it was written, not strict JSON or not the expected shape, and prints { path, sha256, verdict_inputs }: no review text). ${EXEC_NOTE}` +
     execBlock(['set -e', ...(inputs ? [`node ${SCRIPT('hash-inputs.js')} --verify ${q(dir + '/inputs.json')}`] : []),
       fbCheck(WRITE_JSON, file, ack.record_sha256, step, schema), ...(inputs ? [`sha256sum ${q(dir + '/inputs.json')}`] : [])].join('\n')) + `\n- ${RULES}`,
     { label: `record opus ${label}`, phase: ph, schema: EXEC, effort: 'low' })
   const w = r && !r.blocked && r.exit_code === 0 ? fbChecked(jsonLines(r.stdout), file, ack, step) : null
   const inSha = r && inputs ? shaOf(r.stdout, dir + '/inputs.json') : null
   if (!w || (inputs && !HEX64.test(inSha || ''))) return { reply: { blocked: true, reason: `the fallback ${step} review record ${file} did not check: ${r ? r.stdout : 'no reply'}` } }
-  return { reply: w.value.reply, entry: { step, round, reviewer: OPUS_LABEL, review_dir: dir,
+  return { reply: fbReply(w, file), entry: { step, round, reviewer: OPUS_LABEL, review_dir: dir,
     ...(inputs ? { inputs_path: dir + '/inputs.json', inputs_sha256: inSha, fallback_review_path: file, fallback_review_sha256: w.sha256 } : { raw_path: file, raw_sha256: w.sha256 }) } }
 }
 // rec: the checked fallback record entry (recordFallback) when the review is the Opus fallback's.

@@ -297,8 +297,13 @@ test(`${MOCKED}: fallback record: the verdict is the one parsed from the reviewe
     afterFallback: { 'opus prd review 1 (codex unavailable)': ack => ({ ...ack, findings: [], verdict: 'PASS' }) } });
   assert.equal(result.status, 'FAIL', JSON.stringify(result).slice(0, 2000));
   assert.equal(result.stage, 'prd review');
-  assert.deepEqual(result.review.confirmed_findings.map(x => x.title), [TOK]);
-  assert.equal(c.ledger(path.join(c.designRun, 'approvals-1.json')).records[0].verdict, 'FAIL');
+  // the gate result names the finding by id and points at the record that holds its text; the text itself stays in the file
+  assert.deepEqual(result.review.confirmed_findings.map(x => x.id), ['F1']);
+  const rec = c.ledger(path.join(c.designRun, 'approvals-1.json')).records[0];
+  assert.equal(rec.verdict, 'FAIL');
+  assert.equal(result.review.record_path, rec.fallback_review_path);
+  assert.equal(result.review.record_sha256, rec.fallback_review_sha256);
+  assert.ok(!JSON.stringify(result).includes(TOK), 'the design result carries no review text');
 });
 
 test(`${MOCKED}: fallback record: a tampered, missing or misreported reviewer record BLOCKS design before any ledger is written`, async t => {
@@ -403,7 +408,12 @@ test(`${MOCKED}: every v2 author and reviewer prompt forbids executing a command
     assert.match(start, /^\{ node '[^']+\/validate-feature\.js' [^&]*>\/dev\/null && node '[^']+\/compile-feature\.js' [^&]*--check [^&]*>\/dev\/null && exec node '[^']+\/run-review\.js' /);
   }
   assert.ok(prompt(calls, 'opus prd review 1 (codex unavailable)').includes(path.join(c.designRun, 'rev-2', 'out', 'prd.view.md')), 'the fallback reads the files of rev-2, the first revision that validated');
-  assert.ok(prompt(calls, 'prd revise 1').includes('tok-prd-gap') && prompt(calls, 'spec revise 1').includes('tok-spec-gap'), 'the findings reach the author');
+  // the author is sent to the record file and the finding id, never handed the review text
+  for (const [label, gate, tk] of [['prd revise 1', 'prd', 'tok-prd-gap'], ['spec revise 1', 'spec', 'tok-spec-gap']]) {
+    const p = prompt(calls, label);
+    assert.ok(p.includes(`] F1: read its location, title and detail in the review record ${path.join(c.designRun, `${gate}-review-1-opus`, 'fallback-review.json')} (reply.findings[0])`), `${label}: ${p.slice(0, 600)}`);
+    assert.ok(!p.includes(tk), `${label}: no review text`);
+  }
 });
 const prompt = (calls, label) => calls.find(x => x.options.label === label).prompt;
 
@@ -815,10 +825,20 @@ describe(`${MOCKED}: #37 parity table against contract-2 design`, { concurrency:
         assert.equal(out.transition, row[side], `${side} transition ${JSON.stringify(out.result || {})}`);
         if (side === 'codex') assert.equal(out.opus, 0, 'the codex path makes no Opus call');
         if (!out.prompt) continue;
+        // codex: the relayed claim is forwarded as text. Fallback: the checked record is never relayed; the prompt names the
+        // finding id (F<n> over the reported, non-refuted findings) in the review record, and carries no review text.
+        const kept = row.findings.filter(x => x.v !== 'refuted');
         for (const x of row.findings) {
           const tk = T.tok(row, x.letter);
-          if (row.forward.includes(x.letter)) assert.ok(out.prompt.includes(tk), `${side}: the revise prompt carries ${tk}`);
-          else assert.ok(!out.prompt.includes(tk), `${side}: the revise prompt does not carry ${tk}`);
+          if (side === 'codex') {
+            if (row.forward.includes(x.letter)) assert.ok(out.prompt.includes(tk), `${side}: the revise prompt carries ${tk}`);
+            else assert.ok(!out.prompt.includes(tk), `${side}: the revise prompt does not carry ${tk}`);
+            continue;
+          }
+          assert.ok(!out.prompt.includes(tk), `${side}: the revise prompt carries no review text (${tk})`);
+          if (!kept.includes(x)) continue;
+          const ref = new RegExp(`\\] F${kept.indexOf(x) + 1}: read its location, title and detail in the review record [^\\n]*fallback-review\\.json \\(reply\\.findings\\[${kept.indexOf(x)}\\]\\)`);
+          assert.equal(ref.test(out.prompt), row.forward.includes(x.letter), `${side}: the revise prompt ${row.forward.includes(x.letter) ? 'names' : 'does not name'} finding ${x.letter} in the record`);
         }
         assert.ok(!out.prompt.includes('undefined') && !out.prompt.includes('[object Object]'), `${side}: a clean revise prompt`);
       }

@@ -15,7 +15,13 @@
 // --check re-reads a record another step wrote (the reviewer's own fallback-review.json): the file must exist as a
 // regular file, hash to --sha256 (the hash its write printed), be one strict JSON object and conform to the stdin
 // schema (scripts/lib/schema-lite.js; the workflow sends its review schema wrapped as { gate_kind, reviewer, reply }).
-// It prints { path, sha256, value } on one line, value being the record parsed from the file, and writes nothing.
+// It prints { path, sha256, verdict_inputs } on one line and writes nothing. verdict_inputs (verdictInputs below) is
+// only what the workflows' verdict rule reads from the record: the gate_kind and reviewer label, and from the reply
+// the per-finding id (F<n> = reply.findings[n-1], B<n> = reply.blocking[n-1]), severity, confidence and iso_property,
+// the verdict and blocked fields, head_sha and changed, and the pinned git state (head_before, status_before,
+// head_after, status_after). No title, detail, location, note, summary, requirement evidence or other review text is
+// ever printed: the agent that runs --check hands its stdout back to the workflow, and an agent carrying another
+// model's review text is refused as reasoning extraction. Every reader that needs the text reads the file itself.
 // Exit 0 written/checked, 1 refused (invalid JSON, --out exists; for --check a missing, changed, non-strict or
 // off-schema record), 2 usage/setup error (a schema outside schema-lite). The reason goes to stderr.
 
@@ -92,7 +98,46 @@ function check(file, expected, schemaBytes) {
   const value = strictObject(bytes, `record ${file}`, Refusal);
   const errors = validate(value);
   if (errors.length) throw new Refusal(`record ${file} does not match its schema: ` + errors.slice(0, 5).map(e => `${e.code} at "${e.path}": ${e.message}`).join('; '));
-  return { path: file, sha256: actual, value };
+  return { path: file, sha256: actual, verdict_inputs: verdictInputs(value) };
+}
+
+// The verdict inputs of a review record { gate_kind, reviewer, reply }. Every printed string is bounded to a shape that
+// cannot hold prose: a word token (anything else prints as "other", which no verdict rule counts), a 40-hex SHA (else
+// null), a one-line porcelain status or path. An unreadable status line or path prints as a fixed value that is never clean or safe.
+const WORD = /^[A-Za-z_]{1,32}$/;
+const LABEL = /^[A-Za-z0-9 ()._:-]{1,64}$/;
+const SHA40 = /^[0-9a-f]{40}$/;
+const STATUS_LINE = /^[ MTADRCU?!]{2} [^\r\n]{1,4096}$/;
+const UNREADABLE_STATUS = 'GP_UNREADABLE_STATUS_LINE';
+const UNREADABLE_PATH = '../GP_UNREADABLE_PATH'; // never a safe repo-relative path, so build refuses it
+const word = v => (typeof v === 'string' && WORD.test(v) ? v : 'other');
+const label = v => (typeof v === 'string' && LABEL.test(v) ? v : 'other');
+const sha40 = v => (typeof v === 'string' && SHA40.test(v) ? v : null);
+const statusLines = v => (Array.isArray(v) ? v.map(l => (l === '' ? '' : typeof l === 'string' && STATUS_LINE.test(l) ? l : UNREADABLE_STATUS)) : null);
+const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+function verdictInputs(record) {
+  const reply = isObj(record.reply) ? record.reply : {};
+  const out = {};
+  if (Array.isArray(reply.findings)) {
+    out.findings = reply.findings.map((x, i) => {
+      const f = isObj(x) ? x : {};
+      return { id: `F${i + 1}`, severity: word(f.severity), confidence: typeof f.confidence === 'number' && Number.isFinite(f.confidence) ? f.confidence : null,
+        iso_property: f.iso_property == null ? null : word(f.iso_property) };
+    });
+  }
+  if (Array.isArray(reply.blocking)) out.blocking = reply.blocking.map((x, i) => ({ id: `B${i + 1}`, severity: word(isObj(x) ? x.severity : null) }));
+  if ('verdict' in reply) out.verdict = word(reply.verdict);
+  if (typeof reply.blocked === 'boolean') out.blocked = reply.blocked;
+  for (const k of ['head_sha', 'head_before', 'head_after']) if (k in reply) out[k] = sha40(reply[k]);
+  for (const k of ['status_before', 'status_after']) if (k in reply) out[k] = statusLines(reply[k]);
+  if (Array.isArray(reply.changed)) {
+    out.changed = reply.changed.map(x => {
+      const c = isObj(x) ? x : {};
+      return { status: typeof c.status === 'string' && /^[A-Z][0-9]{0,3}$/.test(c.status) ? c.status : 'X',
+        path: typeof c.path === 'string' && /^[^\r\n]{1,4096}$/.test(c.path) ? c.path : UNREADABLE_PATH };
+    });
+  }
+  return { gate_kind: label(record.gate_kind), reviewer: label(record.reviewer), reply: out };
 }
 
 function main(argv) {
@@ -116,4 +161,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { writeOnce, fsyncDir, check, Refusal, SetupError, sha256 };
+module.exports = { writeOnce, fsyncDir, check, verdictInputs, Refusal, SetupError, sha256 };
