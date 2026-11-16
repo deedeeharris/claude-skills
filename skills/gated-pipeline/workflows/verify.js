@@ -743,6 +743,7 @@ if (C2) {
     `or not covered by a proof that would fail if it broke, report a finding of severity high that quotes the canonical text and the code. ` +
     `Read the acceptance ledger ${ledger} (the run-frozen records of every runtime proof and live link), the build result ${A.build_result_path} and the check records under ${frozenRuns}. ` +
     `Return requirements with EVERY acceptance id of the manifest requirements list exactly once and PASS/FAIL/NOT_RUN. Runtime evidence is the ledger's run-frozen records: give a runtime acceptance an empty evidence list. ` +
+    `An acceptance whose negative control is exempt and lists alternate_evidence_paths also cites at least one static evidence record (file:line) inside those paths, even when it is runtime. ` +
     `A static acceptance cites evidence records of kind static with head_sha=${sha}, command, exit_code, log_path and log_sha256 null, a repo-relative file inside one of its frozen evidence_paths (or alternate_evidence_paths), and a line. ` +
     // completion holds each of these to an alternate_evidence_paths citation (E_PROOF without one), so the trace is told by id.
     `Acceptances with an exempt negative control and frozen alternate_evidence_paths: ${p.alternate_citation_ids.length ? p.alternate_citation_ids.join(', ') : 'none'}. ` +
