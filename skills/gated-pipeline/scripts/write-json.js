@@ -22,6 +22,11 @@
 // head_after, status_after). No title, detail, location, note, summary, requirement evidence or other review text is
 // ever printed: the agent that runs --check hands its stdout back to the workflow, and an agent carrying another
 // model's review text is refused as reasoning extraction. Every reader that needs the text reads the file itself.
+// A heredoc run with its indentation kept (a block copied as `  node write-json.js ... <<'GP_JSON'` with `  GP_JSON`
+// closing it) does not end at the indented terminator: bash hands that line, and any whitespace before the body, to stdin.
+// So a final GP_JSON line with optional leading and trailing blanks (spaces or tabs) is dropped from stdin (heredocBody)
+// before anything is parsed, written or hashed; the rest must still be one strict JSON object (leading whitespace is
+// JSON whitespace), so nothing after that line, and no other text, is ever accepted.
 // Exit 0 written/checked, 1 refused (invalid JSON, --out exists; for --check a missing, changed, non-strict or
 // off-schema record), 2 usage/setup error (a schema outside schema-lite). The reason goes to stderr.
 
@@ -68,6 +73,12 @@ function fsyncDir(dir) {
 }
 function exists(p) {
   try { fs.lstatSync(p); return true; } catch { return false; }
+}
+
+// stdin without a trailing indented heredoc terminator line (see above); other bytes are returned unchanged.
+function heredocBody(bytes) {
+  const m = /(^|\n)[ \t]*GP_JSON[ \t]*\r?\n?$/.exec(bytes.toString('latin1'));
+  return m ? bytes.subarray(0, m.index + m[1].length) : bytes;
 }
 
 function strictObject(bytes, what, Err) {
@@ -144,11 +155,11 @@ function main(argv) {
   try {
     if (argv[0] === '--check') {
       if (argv.length !== 4 || !argv[1] || argv[1].startsWith('--') || argv[2] !== '--sha256') throw new SetupError('usage: write-json.js --check <file> --sha256 <hex>  (schema on stdin)');
-      process.stdout.write(JSON.stringify(check(argv[1], argv[3], fs.readFileSync(0))) + '\n');
+      process.stdout.write(JSON.stringify(check(argv[1], argv[3], heredocBody(fs.readFileSync(0)))) + '\n');
       return 0;
     }
     if (argv.length !== 2 || argv[0] !== '--out' || !argv[1] || argv[1].startsWith('--')) throw new SetupError('usage: write-json.js --out <file>  (JSON on stdin) | --check <file> --sha256 <hex>  (schema on stdin)');
-    const bytes = fs.readFileSync(0);
+    const bytes = heredocBody(fs.readFileSync(0));
     strictObject(bytes, 'stdin', Refusal);
     process.stdout.write(JSON.stringify(writeOnce(argv[1], bytes)) + '\n');
     return 0;
@@ -161,4 +172,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { writeOnce, fsyncDir, check, verdictInputs, Refusal, SetupError, sha256 };
+module.exports = { writeOnce, fsyncDir, check, verdictInputs, heredocBody, Refusal, SetupError, sha256 };

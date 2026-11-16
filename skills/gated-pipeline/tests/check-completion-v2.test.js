@@ -464,7 +464,11 @@ test('design: the frozen design passes, echoes the ledger, the bound and the pat
   assert.equal(d.manifest_sha256, c.manifestSha);
   assert.deepEqual(d.config_bound, { config_path: '.claude/pipeline.yaml', config_sha256: sha256(require('./helpers/v2-repo.js').PIPELINE_YAML), state_paths: [], clean_ignore: [], known_failures: [] });
   assert.equal(d.unit_command, 'node test/hello.test.js');
-  assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), d);
+  // stdout adds build's frozen scope, exactly the manifest's lists; the record is the design identity alone
+  const { scope, ...identity } = d;
+  const m = JSON.parse(fs.readFileSync(c.manifestPath, 'utf8'));
+  assert.deepEqual(scope, { allowed_paths: m.allowed_paths, protected_paths: m.protected_paths });
+  assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), identity);
   blocked(c.design({ out }), 'E_OUT_EXISTS');
   blocked(c.design({ expectParent: c.designCommit }), 'E_IDENTITY', /--expect-parent/);
   assert.ok(!c.git('diff', '--cached', '--name-only').includes(REPO_PATH), 'the real index caught up with the commit');

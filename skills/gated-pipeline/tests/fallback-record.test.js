@@ -162,3 +162,72 @@ test('script-stub fallbackRecord writes the scripted reply through the prompt re
   assert.equal(fallbackRecord('no record block here', {}), null);
   assert.throws(() => fallbackRecord(prompt, { findings: [] }), /already exists/, 'a record is written once');
 });
+
+// Live: a reviewer ran its record block with the two-space indentation of the prompt kept. The indented `  GP_JSON` did
+// not end the heredoc, so bash handed the terminator to stdin (E_PARSE: unexpected "G"). write-json.js drops one final
+// GP_JSON line with optional blanks before parsing; the rest must still be one strict JSON object.
+test('write-json: a record block run indented (body and terminator) writes the record, and --check reads it with an indented schema heredoc', t => {
+  const dir = tmp(t);
+  const file = path.join(dir, 'fallback-review.json');
+  const q = s => `'${s.replace(/'/g, `'\\''`)}'`;
+  const block = `  node ${q(WRITE_JSON)} --out ${q(file)} <<'GP_JSON'\n  ${JSON.stringify(RECORD)}\n  GP_JSON\n`;
+  const w = spawnSync('bash', ['-c', block], { encoding: 'utf8' });
+  assert.equal(w.status, 0, w.stdout + w.stderr);
+  const printed = JSON.parse(w.stdout.trim());
+  const bytes = fs.readFileSync(file);
+  assert.equal(printed.sha256, sha(bytes), 'the printed hash is the hash of the written bytes');
+  assert.equal(bytes.toString('utf8'), `  ${JSON.stringify(RECORD)}\n`, 'the terminator line is not in the record');
+  const check = `\tnode ${q(WRITE_JSON)} --check ${q(file)} --sha256 ${printed.sha256} 2>&1 <<'GP_JSON'\n\t${JSON.stringify(SCHEMA)}\n\t GP_JSON \n`;
+  const c = spawnSync('bash', ['-c', check], { encoding: 'utf8' });
+  assert.equal(c.status, 0, c.stdout);
+  assert.equal(JSON.parse(c.stdout.trim()).verdict_inputs.reply.findings[0].severity, 'MAJOR');
+});
+
+test('write-json: only one final GP_JSON line is dropped; anything after it, or other trailing text, is still refused, and the record stays strict JSON', t => {
+  const dir = tmp(t);
+  const body = JSON.stringify(RECORD);
+  for (const [name, input] of [['after', `${body}\n  GP_JSON\necho more\n`], ['twice', `${body}\n  GP_JSON\n  GP_JSON\n`], ['inline', `${body} GP_JSON\n`],
+    ['other word', `${body}\n  GP_JSONX\n`], ['not json', `{"a":1,}\n  GP_JSON\n`]]) {
+    const file = path.join(dir, `${name.replace(/ /g, '-')}.json`);
+    const w = wj(['--out', file], input);
+    assert.equal(w.status, 1, `${name}: ${w.stdout}${w.stderr}`);
+    assert.match(w.stderr, /not strict JSON/);
+    assert.ok(!fs.existsSync(file), `${name}: nothing written`);
+  }
+  // an unindented terminator never reaches stdin; a bare trailing one (no newline) is dropped too
+  const ok = path.join(dir, 'ok.json');
+  const w = wj(['--out', ok], `${body}\nGP_JSON`);
+  assert.equal(w.status, 0, w.stderr);
+  assert.equal(fs.readFileSync(ok, 'utf8'), `${body}\n`);
+});
+
+// Live: a security reviewer wrote `blocked` beside reply. The record's top level stays closed on purpose (dropping the key
+// would turn a review meant as blocked into a gated verdict); a key inside reply that the schema does not name is
+// accepted but never read: the verdict inputs are an allowlist.
+test('write-json --check: a key beside reply is refused (E_UNKNOWN_FIELD); an unknown key inside reply is never in the verdict inputs', t => {
+  const beside = written(t, { ...RECORD, blocked: false });
+  const r = wj(['--check', beside.file, '--sha256', beside.sha256], JSON.stringify(SCHEMA));
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /E_UNKNOWN_FIELD at "\/blocked"/);
+  const inside = written(t, { ...RECORD, reply: { ...RECORD.reply, verdict_override: 'PASS', extra_blocked: true } });
+  const ok = wj(['--check', inside.file, '--sha256', inside.sha256], JSON.stringify(SCHEMA));
+  assert.equal(ok.status, 0, ok.stderr);
+  const vi = JSON.parse(ok.stdout).verdict_inputs;
+  assert.deepEqual(Object.keys(vi.reply), ['findings']);
+  assert.ok(!ok.stdout.includes('verdict_override') && !ok.stdout.includes('extra_blocked'));
+});
+
+// The reviewer is told the exact keys: the record's three top-level keys and the reply schema's own property names.
+test('every fallback record prompt names the exact allowed keys and the unindented block, in design.js, build.js and verify.js alike', () => {
+  const src = name => fs.readFileSync(path.join(__dirname, '..', 'workflows', name + '.js'), 'utf8');
+  // the definition, from `const fbKeysNote` to the end of its last line (the one that names the closing GP_JSON)
+  const note = name => { const s = src(name); const i = s.indexOf('const fbKeysNote'); assert.ok(i >= 0, `${name}.js defines fbKeysNote`); return s.slice(i, s.indexOf('\n', s.indexOf('alone on the last line', i))); };
+  assert.equal(note('build'), note('verify'));
+  assert.equal(note('design'), note('verify'));
+  for (const name of ['design', 'build', 'verify']) assert.match(src(name), /gpBlock\('record', record\.body\) \+ fbKeysNote\(record\.schema\)/);
+  const fn = new Function(`${note('verify')}\nreturn fbKeysNote`)();
+  const text = fn({ type: 'object', properties: { verdict: {}, blocking: {}, note: {}, blocked: {} }, required: ['verdict', 'blocking'] });
+  assert.match(text, /exactly the three top-level keys the record block writes: gate_kind, reviewer and reply\. Never add a key beside reply \(blocked included\)/);
+  assert.match(text, /allowed keys are exactly verdict, blocking, note, blocked \(required: verdict, blocking\); no other key is read/);
+  assert.match(text, /one unindented Bash command, the closing GP_JSON alone on the last line/);
+});

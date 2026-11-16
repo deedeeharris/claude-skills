@@ -307,7 +307,15 @@ function relaySteps({ setup, start, poll, cleanup, minutes }) {
 }
 const fallbackSteps = (setup, cleanup, record) => 'Run the gp-exec setup block below verbatim with the Bash tool before you review (if it fails, return blocked=true ' +
   'with its output in note), and the cleanup block once when your review is done.' + (record ? ' ' + FB_RECORD_NOTE : '') + '\n' + gpBlock('setup', setup) + gpBlock('cleanup', cleanup) +
-  (record ? gpBlock('record', record.body) + 'Your reply (the object that replaces GP_REPLY) conforms to this JSON Schema:\n```json\n' + JSON.stringify(record.schema) + '\n```\n' : '')
+  (record ? gpBlock('record', record.body) + fbKeysNote(record.schema) + 'Your reply (the object that replaces GP_REPLY) conforms to this JSON Schema:\n```json\n' + JSON.stringify(record.schema) + '\n```\n' : '')
+// The exact keys a self-written record may hold. Its top level is closed (fbRecordSchema): a key beside reply, such as a
+// misplaced blocked, is refused (E_UNKNOWN_FIELD) and stops the stage, by design: dropping it would silently turn a
+// review the reviewer meant as blocked into a gated verdict. Inside reply a key the schema does not name is accepted but
+// never read: write-json.js --check derives the verdict inputs from an allowlist of named keys only.
+const fbKeysNote = schema => 'The record holds exactly the three top-level keys the record block writes: gate_kind, reviewer and reply. Never add a key ' +
+  `beside reply (blocked included): it is refused and the stage stops. Every field of your reply goes INSIDE reply, whose allowed keys are exactly ` +
+  `${Object.keys(schema.properties).join(', ')} (required: ${schema.required.join(', ')}); no other key is read. Run the record block as one unindented ` +
+  'Bash command, the closing GP_JSON alone on the last line.\n'
 // The relay copies result.json field by field (design section 9); the workflow, not the relay, applies the gate rule.
 const relayRead = (out, kind) => `After cleanup, read the result.json of the one run folder ${out}/${kind}-*/ and copy it with no judgement: verdict, ` +
   'verdict_reasons, model_verdict, outcome, unable_to_review, validation_outcome (its validation.outcome; null when validation is null), run_dir (that run folder) ' +
@@ -447,6 +455,8 @@ let PRE = null // the --mode design output (the preflight record), contract 2
 // (an entry ending in '/' is a directory prefix, any other entry one exact path).
 let SCOPE = null
 const inEntry = (file, entry) => entry.endsWith('/') ? file.startsWith(entry) : file === entry
+// The scope a contract-2 result discloses: the lists the E_SCOPE check used, as the --mode design line printed them.
+const scopeOut = () => SCOPE && { allowed_paths: SCOPE.allowed.slice(), protected_paths: SCOPE.protected.slice() }
 const outOfScope = paths => paths.filter(p => !SCOPE.allowed.some(e => inEntry(p, e)) || SCOPE.protected.some(e => inEntry(p, e)))
 let SUITE_M = null // the manifest suite, contract 2
 let CI_LOG = null // { path, sha256 } of ci_failure_log_path, contract 2
@@ -577,8 +587,7 @@ if (C2) {
   const prePath = `${A.run_dir}/design-preflight.json`
   const ciLog = A.ci_failure_log_path
   const printSuite = `node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const s=m.suite;` +
-    `console.log(JSON.stringify({gp_suite:{command:s.command,known_failure_ids:s.known_failures.map(k=>k.test_id),isolated:s.isolated,setup_command:s.setup_command,timeout_min:s.timeout_min}}));` +
-    `console.log(JSON.stringify({gp_scope:{allowed_paths:m.allowed_paths,protected_paths:m.protected_paths}}))' ${q(A.manifest_path)}`
+    `console.log(JSON.stringify({gp_suite:{command:s.command,known_failure_ids:s.known_failures.map(k=>k.test_id),isolated:s.isolated,setup_command:s.setup_command,timeout_min:s.timeout_min}}))' ${q(A.manifest_path)}`
   const pre = await agent(
     `Preflight of the design-gated build of feature ${A.feature_id}, BEFORE anything changes: the frozen plan's design identity (check-completion.js --mode design writes it to ${prePath}), ` +
     `the design commit as an ancestor of HEAD${ciLog ? ', and the hash of the CI failure log' : ''}. ${EXEC_NOTE}` +
@@ -605,7 +614,10 @@ if (C2) {
   const preSha = shaOf(pre.stdout, prePath)
   const s = (lines.find(o => o.gp_suite) || {}).gp_suite
   const hi = lines.find(o => Array.isArray(o.inputs))
-  const sc = (lines.find(o => o.gp_scope) || {}).gp_scope
+  // The frozen scope comes from the --mode design line itself (its scope): check-completion.js printed the manifest's
+  // own allowed_paths and protected_paths after checking the manifest's hash. Live, a separately printed copy of the
+  // lists reported a path listed verbatim in allowed_paths as out of scope.
+  const sc = d && d.scope
   const strList = v => Array.isArray(v) && v.every(x => typeof x === 'string' && x.length > 0)
   const bad = !d ? 'no --mode design output' : d.status !== 'PASS' ? 'the design preflight did not PASS'
     : d.design_commit !== A.design_commit || d.manifest_sha256 !== A.manifest_sha256 || d.approvals_sha256 !== A.approvals_sha256 ? 'the preflight names another design commit, manifest or approvals ledger'
@@ -896,7 +908,7 @@ for (let round = 1; round <= MAX + 1; round++) {
     if (oos.length) return disclose({ status: 'BLOCKED', stage: 'review', code: 'E_SCOPE', round,
       reason: `the change ${base}..${r.head_sha} touches paths outside the frozen scope (allowed_paths, minus protected_paths): ${oos.join(', ')}. ` +
         'Completion would refuse it; nothing was sent to a fixer. A scope change needs a new design; a commit this build did not make is for a human to remove.',
-      review: r, history, plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST })
+      review: r, history, plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST, scope: scopeOut() })
     // A test under scope.test_paths that an earlier round's change carried must not vanish later: deleting a
     // focused test is never a fix.
     const gone = [...SEEN_TESTS].filter(p => !files.has(p))
@@ -929,7 +941,7 @@ for (let round = 1; round <= MAX + 1; round++) {
         base_commit: base, files: [...files], deleted: [...deleted], history, plan_identity: PLAN_IDENTITY,
         suite_identity: { command: SUITE_M.command, known_failure_ids: SUITE_M.known_failure_ids, isolated: SUITE_M.isolated, setup_command: SUITE_M.setup_command, timeout_min: SUITE_M.timeout_min,
           record_path: suite.record_path, record_sha256: suite.record_sha256 },
-        test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG, repo_config: { lock_note: A.lock_note || null } })
+        test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG, scope: scopeOut(), repo_config: { lock_note: A.lock_note || null } })
     }
     log(`suite failed in round ${round}: ${suite.counts}${suite.completed ? '' : ' (run did not complete)'}`)
   } else if (r.verdict === 'PASS' && (!sec || sec.verdict === 'PASS')) {
@@ -979,4 +991,4 @@ for (let round = 1; round <= MAX + 1; round++) {
   history.push({ round, findings: items, fix })
 }
 return disclose({ status: 'FAIL', feature_id: A.feature_id, reason: `not clean after ${MAX} fix rounds`, reviewed_sha: reviewedSha, review: verdict, security: lastSec, suite: lastSuite, base_commit: base, files: [...files], deleted: [...deleted], history,
-  ...(C2 ? { plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG } : {}) })
+  ...(C2 ? { plan_identity: PLAN_IDENTITY, test_first: TEST_FIRST, review_files: reviewFiles.slice(), ci_failure_log: CI_LOG, scope: scopeOut() } : {}) })

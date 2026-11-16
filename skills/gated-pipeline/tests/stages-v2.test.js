@@ -1271,6 +1271,48 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     assert.deepEqual(labels(b.calls), ['design preflight', 'implement', 'test-first red', 'codex review 1']);
   });
 
+  // Live: build reported E_SCOPE for a path listed verbatim in the frozen manifest's allowed_paths. The scope build checks
+  // is the --mode design line check-completion.js prints after checking the manifest's hash (and writes to the hashed
+  // preflight record completion re-derives): exactly the manifest's lists, never a second print a relay can carry.
+  test('scope: build\'s SCOPE equals the frozen manifest\'s allowed_paths and protected_paths exactly, taken from the --mode design line; another printed list never feeds it', async (t) => {
+    const f = baseFeature();
+    f.scope.allowed_paths = ['src/hello.js', 'test/'];
+    f.scope.protected_paths = ['docs/'];
+    f.architecture.components[0].owned_paths = ['src/hello.js'];
+    f.requirements[0].acceptance[2].verification.evidence.paths = ['src/hello.js'];
+    const c = frozenRepo(t, { feature: f });
+    const m = JSON.parse(fs.readFileSync(c.manifestPath, 'utf8'));
+    const manifestScope = { allowed_paths: m.allowed_paths, protected_paths: m.protected_paths };
+    assert.deepEqual(manifestScope.allowed_paths, ['src/hello.js', 'test/']);
+    // a preflight reply that also carries a narrowed list (what a relay paraphrase could leave): it must not be the scope
+    const stale = JSON.stringify({ gp_scope: { allowed_paths: ['test/'], protected_paths: [] } });
+    const b = await buildV2(c, { table: { 'design preflight': scriptStep(r => ({ stdout: stale + '\n' + r.stdout + stale + '\n', exit_code: r.exit_code })) } });
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    assert.deepEqual(b.result.scope, manifestScope);
+    const dr = c.design();
+    assert.equal(dr.status, 0, dr.stderr);
+    const design = dr.json();
+    assert.deepEqual(design.scope, manifestScope, 'the --mode design line carries the lists');
+    const { scope, ...identity } = design;
+    assert.deepEqual(JSON.parse(fs.readFileSync(b.result.plan_identity.preflight_path, 'utf8')), identity, 'the preflight record is the design identity alone');
+    const block = gpExecBlocks(b.calls.find(x => x.options.label === 'design preflight').prompt)[0];
+    assert.ok(!block.includes('gp_scope'), 'no second print of the scope');
+    // and the E_SCOPE refusal names a path outside exactly those lists, disclosing them
+    const c2 = frozenRepo(t, { feature: f });
+    const withForeign = () => {
+      const w = implement(c2)();
+      c2.write('src/other.js', 'module.exports = 1;\n');
+      c2.git('add', '--', 'src/other.js');
+      c2.git('commit', '-qm', 'Add a file outside the scope');
+      c2.reviewedSha = head(c2);
+      return { ...w, commit: c2.reviewedSha };
+    };
+    const out = await buildV2(c2, { implement: withForeign });
+    assert.equal(out.result.code, 'E_SCOPE', JSON.stringify(out.result).slice(0, 2000));
+    assert.match(out.result.reason, /: src\/other\.js\./);
+    assert.deepEqual(out.result.scope, manifestScope);
+  });
+
   test('contract 2 fix prompt forbids deleting, skipping or weakening a test; contract 1 keeps "adjust tests"', async (t) => {
     const c = frozenRepo(t);
     const b = await buildV2(c, { findings1: [MAJOR], table: { 'fix 1': () => ({ blocked: false, summary: 'fixed', files_changed: [], commit: head(c), base_commit: c.designCommit }) } });
@@ -1419,6 +1461,33 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     const v = await verifyV2(c, b);
     assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
     assert.match(v.calls.find(x => x.options.label === 'codex spec compliance').prompt, /exempt negative control and frozen alternate_evidence_paths: none\./);
+  });
+
+  // Live: the Opus fallback compliance reviewer, asked to trace ~45 acceptances with evidence and explanations, was refused
+  // as reasoning extraction. Both compliance prompts ask for a terse structured trace with a hard bound on free text.
+  test('the compliance prompts (codex task and Opus fallback) ask for a terse structured trace: id, status, evidence; bounded notes only for a FAIL or blocking item', async (t) => {
+    const c = frozenRepo(t);
+    const b = await buildV2(c);
+    assert.equal(b.result.status, 'PASS', JSON.stringify(b.result).slice(0, 2000));
+    const v = await verifyV2(c, b);
+    assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
+    const fb = await verifyV2(c, b, { fallback: true, args: { review_fallback: 'opus-high' } });
+    assert.equal(fb.result.status, 'PASS', JSON.stringify(fb.result).slice(0, 3000));
+    const codexPrompt = v.calls.find(x => x.options.label === 'codex spec compliance').prompt;
+    const task = /containing: "([^"]*)"/.exec(codexPrompt)[1];
+    const fbPrompt = fb.calls.find(x => x.options.label === 'opus spec compliance (codex unavailable)').prompt;
+    for (const prompt of [task, fbPrompt]) {
+      assert.match(prompt, /TERSE STRUCTURED trace, not an explanation: no narrative reasoning, no restating or quoting the canonical file/);
+      assert.match(prompt, /each only \{ id, status PASS\/FAIL\/NOT_RUN, evidence records \}/);
+      assert.match(prompt, /a title of at most 80 characters and a detail of at most 240 characters/);
+      assert.match(prompt, /That bounded title and detail is the ONLY free text per finding; a PASS or NOT_RUN acceptance has none\. Any summary or note is at most 240 characters\./);
+      assert.ok(!/quotes the canonical text/.test(prompt), 'no finding quotes the canonical text or the code');
+      // the alternate-citation rule (PR #63) and the verdict rule are kept
+      assert.match(prompt, /also cites at least one static evidence record \(file:line\) inside those paths, even when it is runtime/);
+      assert.match(prompt, /exempt negative control and frozen alternate_evidence_paths: none\./);
+      assert.match(prompt, /verdict FAIL for any missing\/wrong\/unproven item, else PASS\./);
+    }
+    assert.match(fbPrompt, /each blocking item only \{ severity, location file:line, title at most 80 characters, detail at most 240 characters \}; a note, if any, is at most 240 characters\. No narrative, no restated spec\./);
   });
 
   test('L3.13: a control that would start after negative_controls_total_min of phase time is NOT RUN -> verify INCOMPLETE at negative controls; completion exit 1 names it', async (t) => {
@@ -1903,6 +1972,90 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       const v2 = await verifyV2(c2, b2);
       assert.equal(v2.result.status, 'PASS', JSON.stringify(v2.result).slice(0, 2000));
       assert.equal(v2.result.completion.passed, true);
+    });
+
+    // ---- a negative control is decided from its record, never from the block's exit code (design 6.4) ----------------------
+    // Live: three features whose control record showed a correct red (baseline 0, mutated 1, no timeout, clean pinned
+    // checkout) came back INCOMPLETE "did not run" because the relay reported the block's exit code 1.
+    const realNegative = (runDir, id, { patch = c.MUTATION, edit } = {}) => (prompt, options, calls) => {
+      fs.mkdirSync(negDir(runDir, id), { recursive: true });
+      fs.writeFileSync(path.join(negDir(runDir, id), 'mutation.patch'), patch);
+      const real = stub()(prompt, options, calls);
+      return edit ? edit(real) : real;
+    };
+    test('negative control: the relay reports exit_code 1 while the record shows a correct red -> PASS from the record, no readback', async () => {
+      const id = 'HELLO-001-AC1';
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: r => ({ ...r, exit_code: 1 }) }) }) });
+      const r = v.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
+      assert.ok(!labels(v.calls).some(l => l.startsWith('readback')), labels(v.calls).join(', '));
+      const rec = negRecord(v.runDir, id);
+      const value = JSON.parse(fs.readFileSync(rec, 'utf8'));
+      assert.equal(value.baseline_exit_code, 0);
+      assert.notEqual(value.exit_code, 0);
+      assert.deepEqual(r.negative_controls, [{ id, record_path: rec, record_sha256: sha256(fs.readFileSync(rec)) }]);
+      assert.equal(r.completion.passed, true);
+      // the block prints the record it left whatever run-frozen exits, and exits with run-frozen's code
+      const block = gpExecBlocks(callOf(v, `negative control ${id}`).prompt)[0];
+      assert.match(block, /\|\| gp_rc=\$\?/);
+      assert.match(block, /gp-negative record:/);
+      assert.match(block, /exit "\$gp_rc"$/);
+    });
+    test('negative control: exit_code 1 and a paraphrased reply, the record on disk -> the readback recovers it: PASS', async () => {
+      const id = 'HELLO-001-AC1';
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: (prompt, options, calls) => ({ ...paraphrasedNegative(runDir, id)(prompt, options, calls), exit_code: 1 }),
+        [`readback negative control ${id}`]: stub() }) });
+      assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
+      assert.deepEqual(v.result.readback, [{ step: `negative control ${id}`, record_path: negRecord(v.runDir, id) }]);
+    });
+    test('negative control: a printed record line whose sha256 is not the record\'s -> INCOMPLETE at negative controls, whatever the exit code', async () => {
+      const id = 'HELLO-001-AC1';
+      const forge = r => ({ ...r, stdout: r.stdout.replace(/"record_sha256":"[0-9a-f]{64}"/, `"record_sha256":"${'2'.repeat(64)}"`) });
+      for (const exit of [0, 1]) {
+        const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: r => ({ ...forge(r), exit_code: exit }) }) }) });
+        assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
+        assert.equal(v.result.stage, 'negative controls');
+        assert.match(v.result.reason, new RegExp(`run-frozen printed ${'2'.repeat(64)}`));
+        assert.ok(!labels(v.calls).includes('completion proof'));
+      }
+    });
+    test('negative control: a record of another target or manifest, or a dump without the record -> INCOMPLETE; a record showing a moved head -> HEAD_MOVED', async () => {
+      const id = 'HELLO-001-AC1';
+      const dumpEdit = fn => r => {
+        const lines = r.stdout.split('\n');
+        const at = lines.indexOf('gp-negative record:') + 3; // the marker, then the patch's and the record's sha256sum lines
+        const end = lines.indexOf('gp-negative record end');
+        assert.ok(at >= 3 && end > at, 'the block printed the record');
+        lines.splice(at, end - at, JSON.stringify(fn(JSON.parse(lines.slice(at, end).join('\n')))));
+        return { ...r, stdout: lines.join('\n'), exit_code: 1 };
+      };
+      const cases = [
+        [x => ({ ...x, target: 'negative:HELLO-001-AC4', id: 'HELLO-001-AC4' }), 'INCOMPLETE', /names target negative:HELLO-001-AC4/],
+        [x => ({ ...x, manifest_sha256: '3'.repeat(64) }), 'INCOMPLETE', /was made from manifest 3{64}/],
+        [x => ({ ...x, head_after: '4'.repeat(40) }), 'HEAD_MOVED', /head is [0-9a-f]{40} before and 4{40} after/],
+        [x => ({ ...x, status_after: ['?? src/stray.js'] }), 'HEAD_MOVED', /dirty/],
+        [x => ({ ...x, exit_code: null, timed_out: true }), 'INCOMPLETE', /timed out/],
+      ];
+      for (const [fn, status, reason] of cases) {
+        const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: dumpEdit(fn) }) }) });
+        assert.equal(v.result.status, status, JSON.stringify(v.result).slice(0, 2000));
+        assert.equal(v.result.stage, 'negative controls');
+        assert.match(v.result.reason, reason);
+      }
+      // the reply holds the markers but no record (run-frozen wrote none): no readback is needed to say it did not run
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: () => ({ stdout: 'run-frozen: the mutation patch does not apply\ngp-negative run-frozen exit: 1\n', exit_code: 1 }) }) });
+      assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
+      assert.match(v.result.reason, new RegExp(`negative control ${id} did not run`));
+      assert.ok(!labels(v.calls).some(l => l.startsWith('readback')));
+    });
+    test('negative control: a mutation that leaves the proof green (a weak control) -> INCOMPLETE at negative controls, before completion', async () => {
+      const id = 'HELLO-001-AC1';
+      const weak = c.MUTATION.replace("+module.exports = () => 'goodbye';", "+module.exports = () => 'hello'; // unchanged");
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { patch: weak }) }) });
+      assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
+      assert.equal(v.result.stage, 'negative controls');
+      assert.match(v.result.reason, /mutated proof exit 0: the mutation did not make it fail/);
+      assert.ok(!labels(v.calls).includes('completion proof'));
     });
 
     test('the record readback block is the same in build.js and verify.js', () => {

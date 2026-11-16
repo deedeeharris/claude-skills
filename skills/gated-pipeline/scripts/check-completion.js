@@ -820,7 +820,9 @@ function modeDesign(args) {
   const d = designIdentity(ctx, args, args.commit, args['expect-parent']);
   recheckV2(ctx, out);
   if (out) writeOnceJson(out, d.output);
-  return d.output;
+  // stdout also carries build's frozen scope (its E_SCOPE check): exactly the manifest's lists, from the manifest whose
+  // hash was just checked, so build never takes them from another print. The record stays the design identity alone.
+  return { ...d.output, scope: { allowed_paths: d.manifest.allowed_paths, protected_paths: d.manifest.protected_paths } };
 }
 
 // ---- shared contract-2 rules -------------------------------------------------------------------------------------
