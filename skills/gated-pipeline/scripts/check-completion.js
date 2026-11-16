@@ -841,7 +841,7 @@ function manifestPaths(manifest) {
     testPaths: manifest.test_paths.map(p => repoPath(p, true, 'test path')),
   };
 }
-const insideEntry = (file, entry) => file === entry.replace(/\/$/, '') || file.startsWith(entry.endsWith('/') ? entry : entry + '/');
+const { insideEntry } = require('./lib/path-entry.js'); // the matcher validator rule G43 applies at design
 
 function modePlanV2(args) {
   const ctx = { repo: fs.realpathSync(git(args.repo, ['rev-parse', '--show-toplevel']).trim()), reads: [] };

@@ -1,0 +1,27 @@
+{
+  "case": "S20",
+  "variant": "an isolated_mutation naming a file outside its requirement's owned paths (G43)",
+  "base": "valid/medium.feature.json",
+  "mutation": {
+    "find": "\"mutation\": \"Make the lock check in src/auth/login.js always return false.\"",
+    "replace": "\"mutation\": \"Make the lock check in src/store/locks.js always return false.\""
+  },
+  "exit": 1,
+  "codes": [
+    "E_NEGATIVE_CONTROL"
+  ],
+  "rules": [
+    "G43"
+  ],
+  "paths": [
+    "/requirements/0/acceptance/0/negative_control/mutation"
+  ],
+  "diagnostics": [
+    [
+      "E_NEGATIVE_CONTROL",
+      "G43",
+      "/requirements/0/acceptance/0/negative_control/mutation"
+    ]
+  ],
+  "args": {}
+}

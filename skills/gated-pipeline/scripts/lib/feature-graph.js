@@ -1,7 +1,7 @@
 'use strict';
 
 // Graph and cross-field rules of the v2 canonical feature file: docs/v2-design.md section 3, tables
-// 4 (G01-G42), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
+// 4 (G01-G43), 5 (R01-R04, --source-request) and 6 (P01-P02, --previous). Every diagnostic is
 // { code, rule, path, id, message }; path is a JSON Pointer into the checked file (for P01 the collection in
 // the checked file where the missing id belongs). The functions assume a schema-valid file (validate-feature.js
 // runs them only after schema-lite passed) and never execute or evaluate any string of the file.
@@ -43,6 +43,7 @@
 
 const crypto = require('node:crypto');
 const { ONE_CALL_S, RUN_GRACE_S, suiteWorstS, checkWorstS, proofWorstS, negativeWorstS } = require('./call-limits.js');
+const { insideEntry, namedMutationPaths } = require('./path-entry.js');
 
 const SHADOW = /-(fix|v2|final|new|addendum|patch|rev[0-9]+)(?![A-Za-z0-9])/i;
 const CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029]/u;
@@ -108,7 +109,7 @@ const folded = p => segs(p.toLowerCase());
 const overlap = (a, b) => { const x = folded(a), y = folded(b); return isPrefix(x, y) || isPrefix(y, x); }; // case folded
 const inside = (a, b) => isPrefix(segs(b), segs(a)); // a equal to or inside b, exact case
 
-// ---- G01-G42 -------------------------------------------------------------------------------------------
+// ---- G01-G43 -------------------------------------------------------------------------------------------
 
 function checkRepoPath(f, repoPath) {
   const out = [];
@@ -392,6 +393,23 @@ function graphRules(f, { repoPath }) {
   for (const e of of('test_paths')) {
     const hit = owned.find(q => overlap(e.value, q.value));
     if (hit) out.push(diag('E_OWNERSHIP', 'G37', e.path, null, `test path ${JSON.stringify(e.value)} overlaps the owned path ${JSON.stringify(hit.value)} of ${comps[hit.comp].id}`));
+  }
+  // G43 an active isolated_mutation that names a file outside the owned paths of its requirement's active components:
+  // completion (check-completion.js full mode) rejects that control's patch with the same rule and matcher, so it is
+  // never frozen. A named file under test_paths or in the proof command is a reference, not a target (completion
+  // rejects mutating those for reasons of its own).
+  for (const it of activeAcc) {
+    const nc = it.obj.negative_control;
+    if (nc.method !== 'isolated_mutation' || blank(nc.mutation)) continue;
+    const r = it.parent, cmd = typeof it.obj.verification.command === 'string' ? it.obj.verification.command : '';
+    const ownedBy = comps.filter(c => c.status === 'active' && r.component_ids.includes(c.id)).flatMap(c => c.owned_paths);
+    const names = r.component_ids.filter(c => activeComps.has(c)).join(', ');
+    if (!names) continue; // G14 reports a requirement without an active component
+    for (const file of namedMutationPaths(nc.mutation)) {
+      if (f.scope.test_paths.some(t => insideEntry(file, t)) || cmd.includes(file) || ownedBy.some(o => insideEntry(file, o))) continue;
+      out.push(diag('E_NEGATIVE_CONTROL', 'G43', `${it.path}/negative_control/mutation`, it.obj.id,
+        `the mutation of ${it.obj.id} names ${file}, which lies outside the owned paths of ${r.id}'s components (${names}): add the owning component to ${r.id}'s component_ids or mutate a file they own`));
+    }
   }
   return out;
 }
