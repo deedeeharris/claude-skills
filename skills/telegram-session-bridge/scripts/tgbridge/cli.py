@@ -23,6 +23,7 @@ from .config import Config, ConfigError, validate_token
 from .harness import HarnessError, harness_report, validate_run_mode
 from .host import CollectorLock, Host, HostError
 from .messages import authorized_message
+from .privatefs import private_directory, safe_path
 from .service import Service, ServiceError, prepare_request, publish, validate_binding
 from .store import Store, StoreError
 from .telegram import Telegram, TelegramError
@@ -339,7 +340,7 @@ def _setup(args, factory, stdin, stdout, stderr):
     api = factory(token)
     bot = _bot(api)
     with CollectorLock(bot["id"]):
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        private_directory(safe_path(path.parent))
         staged_path = path.parent / ".pending-pairing.json"
         with Store(path.parent / "state.sqlite3") as store:
             _cleanup_staged(staged_path, store, bot["id"], recover=args.recover_setup)

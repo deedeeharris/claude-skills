@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import stat
 import tempfile
 import threading
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from .formatting import render
 from .host import CollectorLock, Host, process_identity
+from .privatefs import private_directory, safe_path
 from .store import Store, StoreError
 from .telegram import (
     MAX_DOWNLOAD_BYTES,
@@ -68,10 +70,7 @@ def validate_identity(config, store, api):
 def _regular(path):
     try:
         path = Path(path)
-        if ".." in path.parts or any(
-            p.is_symlink() for p in (path.absolute(), *path.absolute().parents)
-        ):
-            raise ServiceError("Unsafe canonical artifact path")
+        path = safe_path(path)
         if not stat.S_ISREG(path.stat().st_mode):
             raise ServiceError("Canonical artifact must be an existing regular file")
         return path.absolute()
@@ -176,13 +175,9 @@ def prepare_request(config, store, request, api):
     if request["attachments"]:
         validate_identity(config, store, api)
         _running(config, store, request["request_id"])
-        root.mkdir(mode=0o700, exist_ok=True)
-        info = root.lstat()
-        if (
-            not stat.S_ISDIR(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_mode & 0o077
-        ):
+        try:
+            private_directory(safe_path(root), parents=False)
+        except (OSError, ValueError):
             raise ServiceError("Unsafe attachment directory")
     for metadata in request["attachments"]:
         attachment = dict(metadata)
@@ -404,7 +399,14 @@ class Service:
                         )
                     alias = Path(directory) / name
                     try:
-                        os.link(payload["path"], alias, follow_symlinks=False)
+                        if os.name == "nt":
+                            # A Windows read-only DACL also prevents hard-link
+                            # creation. Copy original bytes into private staging.
+                            shutil.copyfile(
+                                payload["path"], alias, follow_symlinks=False
+                            )
+                        else:
+                            os.link(payload["path"], alias, follow_symlinks=False)
                     except OSError:
                         raise TelegramError("file") from None
                     files = {field: alias}

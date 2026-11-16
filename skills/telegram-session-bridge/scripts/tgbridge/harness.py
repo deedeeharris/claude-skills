@@ -24,6 +24,9 @@ class HarnessError(ValueError):
 
 def _control_socket(home):
     """Inspect the conventional socket with no symlink traversal, including parents."""
+    if os.name == "nt":
+        # The conventional POSIX control socket is not a Windows host adapter.
+        return "unavailable"
     directory = None
     try:
         path = Path(home).absolute()

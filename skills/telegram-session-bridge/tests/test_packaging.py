@@ -40,6 +40,9 @@ PORTABLE_FILES = {
             "harness",
             "service",
             "cli",
+            "privatefs",
+            "windows_security",
+            "windows_host",
         )
     },
 }
@@ -63,6 +66,7 @@ SOURCE_FILES = PORTABLE_FILES | {
             "messages",
             "packaging",
             "service",
+            "windows",
             "store",
             "telegram",
         )
