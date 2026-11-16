@@ -25,7 +25,7 @@ const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const uniqSorted = list => [...new Set(list)].sort();
 
 // Copied by hand from docs/v2-design.md section 3 (the parse, version and schema code lists, the rule tables
-// G01-G42, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
+// G01-G43, R01-R04, P01-P02 and their codes). The meta-test below parses the design and asserts equality, so a
 // change to the contract shows up here; the lists are never imported from the validator.
 const DESIGN_CODES = [
   'E_PARSE', 'E_DUP_KEY', 'E_FORBIDDEN_KEY', 'E_SCHEMA_VERSION',
@@ -37,7 +37,7 @@ const DESIGN_CODES = [
   'E_SOURCE_MISMATCH', 'E_SOURCE_LEAK', 'E_ID_REMOVED', 'E_ID_REACTIVATED',
 ];
 const DESIGN_RULES = [
-  ...Array.from({ length: 42 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
+  ...Array.from({ length: 43 }, (_, i) => 'G' + String(i + 1).padStart(2, '0')),
   'R01', 'R02', 'R03', 'R04', 'P01', 'P02',
 ];
 
@@ -408,6 +408,26 @@ test('rule branches: G41 an empty scope.test_paths is rejected at design; G26 re
   assert.deepEqual(check('s01', f => { exempt(f); f.scope.test_paths = []; }), ['G41 E_COVERAGE /scope/test_paths'], 'no isolated_mutation and no test path');
   assert.deepEqual(check('s01', f => { f.scope.test_paths = []; }), ['G26 E_NEGATIVE_CONTROL /scope/test_paths'], 'one diagnostic per cause');
   assert.deepEqual(check('s01', f => { exempt(f); f.scope.test_paths = ['test/']; }), []);
+});
+
+// G43: completion rejects a negative-control patch that touches a file outside the owned paths of its requirement's
+// components; design rejects a mutation that names such a file, so the plan is never frozen.
+test('rule branches: G43 a mutation naming a file outside its requirement\'s owned paths is rejected at design', () => {
+  const mutate = text => f => { f.requirements[0].acceptance[0].negative_control.mutation = text; };
+  const G43 = ['G43 E_NEGATIVE_CONTROL /requirements/0/acceptance/0/negative_control/mutation'];
+  assert.deepEqual(check('medium', mutate('Make the save in src/store/db.js drop the lock flag.')), G43, 'COMP-AUTH does not own src/store/');
+  assert.deepEqual(check('medium', f => { mutate('Make the save in src/store/db.js drop the lock flag.')(f); f.requirements[0].component_ids.push('COMP-STORE'); }), [],
+    'adding the owning component to component_ids fixes it');
+  assert.deepEqual(check('medium', mutate('In `src/auth/login.js:12`, return false; test/login.test.js then fails, as GET /hello does.')), [],
+    'an owned file (quoted, with a line), a test path and a route');
+  assert.deepEqual(check('medium', f => { mutate('Break src/legacy/old.js.')(f); f.requirements[0].component_ids.push('COMP-LEGACY'); }), G43, 'a retired component owns nothing');
+  const f = JSON.parse(JSON.stringify(BASES.medium));
+  mutate('Edit src/store/db.js.')(f);
+  const errors = validateFeature({ bytes: Buffer.from(JSON.stringify(f, null, 2) + '\n'), repoPath: repoPathFor(f.feature_id), validateSchema, request: null, previous: null }).errors;
+  assert.match(errors[0].message, /AUTH-001-AC1 names src\/store\/db\.js.*outside the owned paths of AUTH-001's components \(COMP-AUTH\)/);
+  const { insideEntry, namedMutationPaths } = require('../scripts/lib/path-entry.js');
+  assert.deepEqual(namedMutationPaths('Change "./src/a.ts", (lib/b/c.py:3-9); not /hello, a.ts, hello() or https://x.io/y.js.'), ['src/a.ts', 'lib/b/c.py']);
+  assert.ok(insideEntry('src/a.ts', 'src/') && insideEntry('src/a.ts', 'src') && insideEntry('src/a.ts', 'src/a.ts') && !insideEntry('srcx/a.ts', 'src'));
 });
 
 test('rule branches: G13, G14 count active goals and components; G25 needs every active acceptance exempt', () => {
