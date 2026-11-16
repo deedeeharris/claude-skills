@@ -5,6 +5,9 @@
 // Command/exit metadata are host attestations: hashes detect changes, not fabricated runs.
 const fs = require('node:fs');
 const path = require('node:path');
+// On Windows the workflows hand over Git Bash paths (/c/x/...) inside ledgers and results, and path.resolve would
+// read /c/x as C:\c\x. Map a leading /<drive>/ to <DRIVE>: first, so both spellings of one file resolve alike.
+if (process.platform === 'win32') { const resolve0 = path.resolve; path.resolve = (...a) => resolve0(...a.map(p => typeof p === 'string' ? p.replace(/^\/([A-Za-z])(?=\/|$)/, (m, d) => d.toUpperCase() + ':') : p)); }
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { isDeepStrictEqual } = require('node:util');
