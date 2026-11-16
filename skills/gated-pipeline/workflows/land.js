@@ -53,7 +53,7 @@ if (C2) {
 const normalizeState = paths => paths.map(p => p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '')).sort()
 const q = s => `'${s}'`
 // The validator reports Windows paths with backslashes; compare by form, not by spelling.
-const pathForm = p => p.replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase())
+const pathForm = p => p.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (m, d) => `/${d.toLowerCase()}/`)
 const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
 
 const RULES = [

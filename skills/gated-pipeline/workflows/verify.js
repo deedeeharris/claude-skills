@@ -933,7 +933,7 @@ if (C2) {
   const verdictLine = ccLines.find(o => o.status === 'PASS' && o.proof_path) || ccLines.find(o => o.status === 'BLOCKED' && o.code)
   if (!written || !verdictLine) return { ...report, status: 'BLOCKED', stage: 'completion', reason: 'the verify result or the validator output is missing', completion: cc }
   const completion = { passed: cc.exit_code === 0 && verdictLine.status === 'PASS', ...verdictLine, verify_result_sha256: written.sha256 }
-  if (!completion.passed || completion.proof_path !== proofPath || completion.reviewed_sha !== sha || completion.manifest_sha256 !== A.manifest_sha256 || completion.contract !== 2) {
+  if (!completion.passed || !samePath(completion.proof_path, proofPath) || completion.reviewed_sha !== sha || completion.manifest_sha256 !== A.manifest_sha256 || completion.contract !== 2) {
     return { ...report, status: 'INCOMPLETE', stage: 'completion', verify_result_path: reportPath, completion }
   }
   return { ...report, verify_result_path: reportPath, completion }
