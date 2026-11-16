@@ -49,7 +49,7 @@ In unattended mode the PM still orchestrates and never builds. The invariants an
 
 1. `mm.py loop tick --task-dir <dir> --begin [--crons-file <CronList json>]` prints the loop state. If it prints `MM-LOOP-OFF`, run `CronDelete` for this prompt's crons and stop: the tick does nothing else.
 2. Deduplicate crons (item 2).
-3. `mm.py launch-check` on every in-flight dispatch (item 3). If one is still ALIVE or PENDING, the tick is a no-op ('waiting on <id>'). A DEAD one is recorded and reported; relaunching it counts as a new dispatch on the approved list.
+3. `mm.py launch-check` on every in-flight dispatch (item 3). If one is still ALIVE or PENDING, the tick is a no-op ('waiting on <id>'). A DEAD one is recorded and reported; relaunching it counts as a new dispatch on the approved list. A dispatched cloud worker that has not ACKed a PM order posted before the previous tick is unresponsive: check whether its session is idle and send it a nudge that adds no permission. If it is still silent at the next tick, send the operator a notifier message with the session link and the exact text to paste there; a cloud session may hold cross-session messages until a human approves them.
 4. Run Update mode (the update reference) without the promotion offer.
 5. Pick the first open row that is not the wrap-up row:
    - on the operator queue (NEEDS_DECISION, or a user-facing row waiting for HUMAN_VERIFIED): notify; the tick is a no-op;
