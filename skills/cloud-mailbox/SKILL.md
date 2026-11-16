@@ -82,7 +82,7 @@ It exits when any worker comments on an open mailbox issue, and prints `MAILBOX 
 - **Delivery:** comments are tracked by id per issue, kept in `.git/cloud-mailbox.ids`. A relaunch never misses a comment and never reports one twice, and a reply posted before the waiter started is still delivered.
 - **Who counts:** workers post through your GitHub account, so the waiter counts only comments by the account `gh` is signed in as. `--author` overrides it.
 - **Timeout:** exit 3 means 12 hours passed with nothing new.
-- **Worker side:** the worker's waiter (`worker-wait.sh`) also stops after 12 hours (exit 3), and the worker prompt passes `--max-hours 12` and tells the worker to restart it in the same turn. A worker that ends its turn with no waiter running cannot be woken by the mailbox.
+- **Worker side:** the worker's waiter (`worker-wait.sh`) stops after 1 hour (exit 3), because cloud sessions stop background commands after 2 hours, and the worker prompt passes `--max-hours 1` and tells the worker to restart it in the same turn. A worker that ends its turn with no waiter running cannot be woken by the mailbox.
 
 ## 4. Reply
 

@@ -13,7 +13,7 @@
 # usage: worker-wait.sh --repo OWNER/REPO --issue N --pm LOGIN [--interval SEC] [--max-hours H] [--state FILE]
 # exit:  0 [pm] comment printed | 3 max-hours reached, nothing new | 2 usage error
 set -u
-repo="" issue="" pm="" interval=60 max_hours=12 state=""
+repo="" issue="" pm="" interval=60 max_hours=1 state=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="$2"; shift 2 ;;

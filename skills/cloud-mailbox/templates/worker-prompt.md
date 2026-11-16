@@ -17,8 +17,8 @@ The first line of every comment you post is `[cloud:__NAME__] <TYPE>`, with TYPE
 
 ## Waiting for the PM (costs no tokens)
 Start this as a BACKGROUND command, then end your turn. When it exits it prints the next unhandled PM comment and wakes you:
-`bash .claude/skills/cloud-mailbox/scripts/worker-wait.sh --repo __REPO__ --issue __ISSUE__ --pm __PM__ --max-hours 12`
-It hands out each PM comment once, oldest first, even several arriving together. Exit 3 means 12 hours passed with nothing new: start it again at once, in the same turn. Never end a turn without this waiter running in the background; a worker with no waiter can never be woken.
+`bash .claude/skills/cloud-mailbox/scripts/worker-wait.sh --repo __REPO__ --issue __ISSUE__ --pm __PM__ --max-hours 1`
+It hands out each PM comment once, oldest first, even several arriving together. Exit 3 means 1 hour passed with nothing new (cloud sessions stop background commands after 2 hours, so it must exit before that): start it again at once, in the same turn. Never end a turn without this waiter running in the background; a worker with no waiter can never be woken.
 
 ## Protocol
 1. First action: post HELLO with your session URL (`echo "https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID/#cse_/session_}"`), `git rev-parse --abbrev-ref HEAD` and `git log --oneline -1`.
