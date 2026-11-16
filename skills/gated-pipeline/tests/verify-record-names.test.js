@@ -21,7 +21,7 @@ const ARGS = {
 const PLAN = {
   mode: 'plan', status: 'PASS', manifest_version: 2, contract: 2, manifest_sha256: MANIFEST, reviewed_sha: SHA, design_commit: DESIGN, approvals_sha256: APPROVALS,
   checks: [{ id: 'CHECK-LINT', name: 'Lint', quiet: false, effort: 'low', budget_min: 0, timeout_min: 1 }],
-  runtime_acceptance_ids: ['HELLO-001-AC1'], live_acceptances: [], negative_controls: [], clean_ignore: [],
+  runtime_acceptance_ids: ['HELLO-001-AC1'], live_acceptances: [], negative_controls: [], alternate_citation_ids: [], clean_ignore: [],
   limits: { proof_timeout_s: 60, negative_controls_total_min: 5 }, suite_setup: false,
 };
 const recordAt = (file, target) => ({ target, head_before: SHA, head_after: SHA, status_before: [], status_after: [], exit_code: 0, timed_out: false, setup: null, record_path: file });

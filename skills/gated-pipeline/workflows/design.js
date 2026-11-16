@@ -226,7 +226,15 @@ function relaySteps({ setup, start, poll, cleanup, minutes }) {
 }
 const fallbackSteps = (setup, cleanup, record) => 'Run the gp-exec setup block below verbatim with the Bash tool before you review (if it fails, return blocked=true ' +
   'with its output in note), and the cleanup block once when your review is done.' + (record ? ' ' + FB_RECORD_NOTE : '') + '\n' + gpBlock('setup', setup) + gpBlock('cleanup', cleanup) +
-  (record ? gpBlock('record', record.body) + 'Your reply (the object that replaces GP_REPLY) conforms to this JSON Schema:\n```json\n' + JSON.stringify(record.schema) + '\n```\n' : '')
+  (record ? gpBlock('record', record.body) + fbKeysNote(record.schema) + 'Your reply (the object that replaces GP_REPLY) conforms to this JSON Schema:\n```json\n' + JSON.stringify(record.schema) + '\n```\n' : '')
+// The exact keys a self-written record may hold. Its top level is closed (fbRecordSchema): a key beside reply, such as a
+// misplaced blocked, is refused (E_UNKNOWN_FIELD) and stops the stage, by design: dropping it would silently turn a
+// review the reviewer meant as blocked into a gated verdict. Inside reply a key the schema does not name is accepted but
+// never read: write-json.js --check derives the verdict inputs from an allowlist of named keys only.
+const fbKeysNote = schema => 'The record holds exactly the three top-level keys the record block writes: gate_kind, reviewer and reply. Never add a key ' +
+  `beside reply (blocked included): it is refused and the stage stops. Every field of your reply goes INSIDE reply, whose allowed keys are exactly ` +
+  `${Object.keys(schema.properties).join(', ')} (required: ${schema.required.join(', ')}); no other key is read. Run the record block as one unindented ` +
+  'Bash command, the closing GP_JSON alone on the last line.\n'
 // The relay copies result.json field by field (design section 9); the workflow, not the relay, applies the gate rule.
 const relayRead = (out, kind) => `After cleanup, read the result.json of the one run folder ${out}/${kind}-*/ and copy it with no judgement: verdict, ` +
   'verdict_reasons, model_verdict, outcome, unable_to_review, validation_outcome (its validation.outcome; null when validation is null), run_dir (that run folder) ' +

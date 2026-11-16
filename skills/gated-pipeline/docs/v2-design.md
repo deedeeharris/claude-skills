@@ -338,6 +338,16 @@ Diagnostics are sorted (path, code, rule) so output is deterministic.
   those verdict inputs, results carry the record's `record_path` and `record_sha256` in place of
   finding text, and a fixer or author is sent the record path and the finding ids and reads the
   text from the file itself. A missing, malformed, changed or misreported record is BLOCKED.
+  The record prompt names the exact keys: the top level is only `gate_kind`, `reviewer` and
+  `reply`, and every reply field (`blocked` and `note` included) goes inside `reply`, whose
+  allowed keys are the review schema's property names. Design choice: the top level stays closed
+  and a key beside `reply` is refused (`E_UNKNOWN_FIELD`) rather than dropped, because a dropped
+  misplaced `blocked: true` would turn a review the reviewer meant as blocked into a gated
+  verdict; a key inside `reply` the schema does not name is accepted but never read, since
+  `verdict_inputs` is an allowlist. A block run with its indentation kept does not end its
+  heredoc at the indented `  GP_JSON`, so `write-json.js` (`--out` and `--check`) drops one final
+  `GP_JSON` line with optional blanks from stdin before parsing; the rest must still be one strict
+  JSON object, and the written bytes (and printed sha256) are those without that line.
   These files are script-written but agent-invoked, and the report says so.
 - Inputs per gate, exactly: PRD review = files `[rev-k/out/prd.view.md]`, against
   `<run_dir>/source-request.txt` (codex-review accepts `--against` for `prd`). Spec review =
@@ -511,8 +521,11 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   manifest known-failure ids (at least one). `completed` and `passed` are derived from these
   fields, never relayed. Anything else is a fix round (a nonzero exit naming no test gets the
   "failed without naming a test" item).
-- Scope at build: the preflight also prints the manifest's `allowed_paths` and `protected_paths`
-  (BLOCKED when missing). In every review round, every path git shows in `base_commit..head_sha`
+- Scope at build: the `--mode design` line carries `scope { allowed_paths, protected_paths }`,
+  the manifest's own lists, read after its hash is checked (stdout only: the preflight record
+  stays the design identity completion re-derives, so a record from an earlier build still
+  matches), and build takes its scope from that line alone (BLOCKED when missing; disclosed as
+  `scope` on the result). A separate print of the lists once reported a listed path out of scope. In every review round, every path git shows in `base_commit..head_sha`
   must lie inside an `allowed_paths` entry and outside every `protected_paths` entry (an entry
   ending in `/` is a directory prefix, any other entry one exact path), the rule completion
   applies (`E_SCOPE`, 6.5). A path outside it is BLOCKED at stage `review` with code `E_SCOPE`
@@ -676,7 +689,12 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   record from disk (hash, target, frozen command, pinned state, logs, patch and exit codes,
   6.5) and rejects it.
 - Final review and compliance trace: `review_files[]` as in build, steps `final` and
-  `compliance` (codex `compliance.json` or the wrapped fallback reply).
+  `compliance` (codex `compliance.json` or the wrapped fallback reply). The compliance task
+  (codex and the Opus reviewer) asks for a terse structured trace: per acceptance only `id`,
+  `status` and evidence records, free text only as a FAIL or blocking item's title (at most 80
+  characters) and detail (at most 240), no narrative and no restated spec (an Opus reviewer told
+  to explain ~45 acceptances was refused as `[reasoning_extraction]`); the verdict rule and the
+  completion schema are unchanged.
 - Negative-control phase: runs LAST, after checks, acceptance proofs, final review and the
   compliance trace are captured and hashed. One agent call per `negative_controls` id writes
   a patch from the frozen `mutation` prose to `<run_dir>/negative/<id>/mutation.patch` and runs
@@ -691,6 +709,20 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   baseline_log_sha256, baseline_timed_out, mutation_patch_path, mutation_patch_sha256,
   mutated_paths, phase_elapsed_s }`. Then the pinned-state check and `git status` on the work
   checkout run again.
+- A negative control is decided from its record, never from its block's exit code (a correct
+  control makes the proof fail, and live relays reported exit 1 for records that showed exactly
+  a correct red). The block runs `run-frozen.js ... || gp_rc=$?`, then prints the record it left
+  between `gp-negative record:` and `gp-negative record end` (the patch's and the record's
+  `sha256sum` lines, then the record) and exits with run-frozen's code. The control passes only
+  when the record is there and its hash equals the printed record line's (when one printed), its
+  `target` is `negative:<id>` and `id` the control's, its `manifest_sha256` the frozen manifest's,
+  its patch hash the printed one, `baseline_exit_code` 0 without a baseline timeout, an integer
+  nonzero mutated `exit_code` with `timed_out` false, and `head_before`/`head_after` the reviewed
+  SHA with a clean status before and after. A NOT_RUN record is INCOMPLETE NOT RUN; drift in the
+  printed state, or a record showing the checkout moved or dirty, is HEAD_MOVED; no record (a
+  refused patch) or any other mismatch is INCOMPLETE at `negative controls`, a weak control
+  included (it used to reach completion first). A reply without the dump gets the readback above
+  unless it shows a refusal or drift. Completion re-derives all of this and more from disk.
 
 ### 6.5 check-completion v2 (manifest `version: 2`)
 Inputs add `--frozen-dir`, `--approvals`, `--approvals-sha256` and, from land, `--trunk-ref`.
