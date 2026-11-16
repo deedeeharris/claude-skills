@@ -365,7 +365,7 @@ const fbAckError = (ack, file) => (samePath(ack.record_path, file) && /^[0-9a-f]
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
 // The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
-const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
+const fbChecked = (docs, file, ack, gate) => docs.find(o => o && samePath(o.path, file) && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
   o.verdict_inputs.gate_kind === gate && o.verdict_inputs.reviewer === OPUS_LABEL && o.verdict_inputs.reply && typeof o.verdict_inputs.reply === 'object' && !Array.isArray(o.verdict_inputs.reply))
 // The reply the workflow gates: the checked record's verdict inputs, plus the record's path and sha256, which results
 // carry in place of finding text.
@@ -625,7 +625,7 @@ if (C2) {
     : !s || typeof s.command !== 'string' || !s.command || JSON.stringify(s.known_failure_ids) !== JSON.stringify(d.known_failure_ids) ? 'the manifest suite is missing or differs from the preflight'
     : !Array.isArray(d.clean_ignore) || typeof d.unit_command !== 'string' || !Number.isInteger(d.live_budget_min) ? 'the preflight lacks the frozen suite configuration'
     : !sc || !strList(sc.allowed_paths) || !sc.allowed_paths.length || !strList(sc.protected_paths) ? 'the preflight lacks the frozen scope (allowed_paths, protected_paths)'
-    : ciLog && !(hi && hi.inputs.length === 1 && hi.inputs[0].path === ciLog && HEX64.test(hi.inputs[0].sha256)) ? 'the CI failure log was not hashed' : ''
+    : ciLog && !(hi && hi.inputs.length === 1 && samePath(hi.inputs[0].path, ciLog) && HEX64.test(hi.inputs[0].sha256)) ? 'the CI failure log was not hashed' : ''
   if (bad) return disclose({ status: 'BLOCKED', stage: 'preflight', reason: bad, preflight: pre })
   // Test-first (design 6.3): the red commit may change only files under scope.test_paths, so there must be one.
   if (!Array.isArray(d.test_paths) || !d.test_paths.length || !d.test_paths.every(p => typeof p === 'string' && SAFE.test(p))) {
