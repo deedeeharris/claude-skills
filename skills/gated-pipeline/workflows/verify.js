@@ -353,7 +353,7 @@ const fbAckError = (ack, file) => (samePath(ack.record_path, file) && /^[0-9a-f]
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
 // The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
-const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
+const fbChecked = (docs, file, ack, gate) => docs.find(o => o && samePath(o.path, file) && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
   o.verdict_inputs.gate_kind === gate && o.verdict_inputs.reviewer === OPUS_LABEL && o.verdict_inputs.reply && typeof o.verdict_inputs.reply === 'object' && !Array.isArray(o.verdict_inputs.reply))
 // The reply the workflow gates: the checked record's verdict inputs, plus the record's path and sha256, which results
 // carry in place of finding text.
@@ -966,11 +966,11 @@ if (C2) {
     { label: 'completion proof', phase: 'Completion', effort: 'low', schema: EXEC })
   if (!cc || cc.blocked) return { ...report, status: 'BLOCKED', stage: 'completion', completion: cc }
   const ccLines = jsonLines(cc.stdout)
-  const written = ccLines.find(o => o.path === reportPath && HEX64.test(o.sha256 || ''))
+  const written = ccLines.find(o => samePath(o.path, reportPath) && HEX64.test(o.sha256 || ''))
   const verdictLine = ccLines.find(o => o.status === 'PASS' && o.proof_path) || ccLines.find(o => o.status === 'BLOCKED' && o.code)
   if (!written || !verdictLine) return { ...report, status: 'BLOCKED', stage: 'completion', reason: 'the verify result or the validator output is missing', completion: cc }
   const completion = { passed: cc.exit_code === 0 && verdictLine.status === 'PASS', ...verdictLine, verify_result_sha256: written.sha256 }
-  if (!completion.passed || completion.proof_path !== proofPath || completion.reviewed_sha !== sha || completion.manifest_sha256 !== A.manifest_sha256 || completion.contract !== 2) {
+  if (!completion.passed || !samePath(completion.proof_path, proofPath) || completion.reviewed_sha !== sha || completion.manifest_sha256 !== A.manifest_sha256 || completion.contract !== 2) {
     return { ...report, status: 'INCOMPLETE', stage: 'completion', verify_result_path: reportPath, completion }
   }
   return { ...report, verify_result_path: reportPath, completion }

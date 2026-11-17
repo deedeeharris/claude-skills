@@ -276,11 +276,15 @@ const fbRecord = (writeJson, file, gate, schema) => ({ schema, body: `node ${q(w
   `${JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1)},"reply":GP_REPLY}\nGP_JSON` })
 const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --check ${q(file)} --sha256 ${sha} 2>&1 <<'GP_JSON'\n` +
   `${JSON.stringify(fbRecordSchema(gate, schema))}\nGP_JSON`
-const fbAckError = (ack, file) => (ack.record_path === file && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
+// On Windows the reviewer may report the record in the native form (C:/x/run/...) while the workflow holds the POSIX
+// form (/c/x/run/...). pathForm gives both one form, the drive as /x/; a POSIX path comes back unchanged (as in build.js).
+const pathForm = p => p.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (m, d) => `/${d.toLowerCase()}/`)
+const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' && pathForm(a) === pathForm(b)
+const fbAckError = (ack, file) => (samePath(ack.record_path, file) && /^[0-9a-f]{64}$/.test(ack.record_sha256 || '') ? '' :
   `the reviewer reported record_path ${JSON.stringify(ack.record_path)} and record_sha256 ${JSON.stringify(ack.record_sha256)}, not ${file} and its sha256` +
   `${ack.note ? `; ${ack.note}` : ''}`)
 // The --check line for this record: the reported file at the reported hash, digested from disk, of this gate and label.
-const fbChecked = (docs, file, ack, gate) => docs.find(o => o && o.path === file && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
+const fbChecked = (docs, file, ack, gate) => docs.find(o => o && samePath(o.path, file) && o.sha256 === ack.record_sha256 && o.verdict_inputs && typeof o.verdict_inputs === 'object' &&
   o.verdict_inputs.gate_kind === gate && o.verdict_inputs.reviewer === OPUS_LABEL && o.verdict_inputs.reply && typeof o.verdict_inputs.reply === 'object' && !Array.isArray(o.verdict_inputs.reply))
 // The reply the workflow gates: the checked record's verdict inputs, plus the record's path and sha256, which results
 // carry in place of finding text.
@@ -746,7 +750,7 @@ async function designV2() {
     const body = ['set -e', `printf '%s  %s\\n' ${q(pinSha)} ${q(pinPath)} | sha256sum -c --quiet - >/dev/null || { echo ${pinCode}; exit 3; }`,
       `cat <<'GP_JSON' | ${node('write-json.js', `--out ${q(file)}`)}`, ledger, 'GP_JSON'].join('\n')
     const w = await step(`record ${n}`, rv.gate === 'prd' ? 'PRD review' : 'Spec review', body)
-    const lw = w.docs.find(x => x && x.path === file)
+    const lw = w.docs.find(x => x && samePath(x.path, file))
     if (!w.ok || !lw || !HEX.test(lw.sha256 || '')) {
       return { end: await end({ status: 'BLOCKED', stage: 'record', round, reason: 'the approvals ledger was not written: ' + shown(w) }) }
     }
