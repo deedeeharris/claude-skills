@@ -149,11 +149,11 @@ test('write-json --check refuses (exit 1) a missing, tampered, non-strict or off
   assert.equal(wj(['--check', file], schema).status, 2, 'usage');
 });
 
-test('script-stub fallbackRecord writes the scripted reply through the prompt record block and returns only the path and sha256', t => {
-  const dir = tmp(t);
-  const file = path.join(dir, 'fallback-review.json');
-  const prompt = 'Review, then write.\n```gp-exec record\n' +
-    `node '${WRITE_JSON}' --out '${file}' <<'GP_JSON'\n{"gate_kind":"implementation","reviewer":"x","reply":GP_REPLY}\nGP_JSON\n` + '```\n';
+test('script-stub fallbackRecord writes the scripted reply to the reply file, runs the record block and returns only the path and sha256', t => {
+  const dir = tmp(t).replace(/\\/g, '/');
+  const file = `${dir}/fallback-review.json`;
+  const prompt = `Review, then write.\nReply file: ${dir}/fallback-reply.json\n` + '```gp-exec record\n' +
+    `{ printf '%s' '{"gate_kind":"implementation","reviewer":"x","reply":'; cat '${dir}/fallback-reply.json'; printf '}'; } | node '${WRITE_JSON}' --out '${file}'\n` + '```\n';
   const ack = fallbackRecord(prompt, { findings: [] });
   assert.deepEqual(Object.keys(ack), ['record_path', 'record_sha256']);
   assert.equal(ack.record_path, file);
@@ -218,10 +218,10 @@ test('write-json --check: a key beside reply is refused (E_UNKNOWN_FIELD); an un
 });
 
 // The reviewer is told the exact keys: the record's three top-level keys and the reply schema's own property names.
-test('every fallback record prompt names the exact allowed keys and the unindented block, in design.js, build.js and verify.js alike', () => {
+test('every fallback record prompt names the exact allowed keys and that the record block reads only the reply file, in design.js, build.js and verify.js alike', () => {
   const src = name => fs.readFileSync(path.join(__dirname, '..', 'workflows', name + '.js'), 'utf8');
   // the definition, from `const fbKeysNote` to the end of its last line (the one that names the closing GP_JSON)
-  const note = name => { const s = src(name); const i = s.indexOf('const fbKeysNote'); assert.ok(i >= 0, `${name}.js defines fbKeysNote`); return s.slice(i, s.indexOf('\n', s.indexOf('alone on the last line', i))); };
+  const note = name => { const s = src(name); const i = s.indexOf('const fbKeysNote'); assert.ok(i >= 0, `${name}.js defines fbKeysNote`); return s.slice(i, s.indexOf('\n', s.indexOf('reads your reply only from the reply file', i))); };
   assert.equal(note('build'), note('verify'));
   assert.equal(note('design'), note('verify'));
   for (const name of ['design', 'build', 'verify']) assert.match(src(name), /gpBlock\('record', record\.body\) \+ fbKeysNote\(record\.schema\)/);
@@ -229,5 +229,89 @@ test('every fallback record prompt names the exact allowed keys and the unindent
   const text = fn({ type: 'object', properties: { verdict: {}, blocking: {}, note: {}, blocked: {} }, required: ['verdict', 'blocking'] });
   assert.match(text, /exactly the three top-level keys the record block writes: gate_kind, reviewer and reply\. Never add a key beside reply \(blocked included\)/);
   assert.match(text, /allowed keys are exactly verdict, blocking, note, blocked \(required: verdict, blocking\); no other key is read/);
-  assert.match(text, /one unindented Bash command, the closing GP_JSON alone on the last line/);
+  assert.match(text, /Run the record block as it stands, as one Bash command: it reads your reply only from the reply file/);
+});
+
+// Live (2026-11-16, 2026-11-17): fallback replies held a regex quoted from the code under review (\.web\.app, single
+// backslashes), and inner double quotes with apostrophes (header values like 'none'). Spliced by hand into a bash
+// heredoc they died in bash (unexpected EOF) or reached write-json.js mangled (E_PARSE), so complete reviews ended
+// BLOCKED. The reviewer now writes only the reply file, with the Write tool; the record block wraps and pipes it.
+const WORKFLOW_NAMES = ['design', 'build', 'verify'];
+const workflowSrc = name => fs.readFileSync(path.join(__dirname, '..', 'workflows', name + '.js'), 'utf8');
+const LABEL = 'claude-opus-high (configured reviewer)';
+// each workflow's own fbRecord, evaluated with that workflow's q and a fixed reviewer label
+const fbRecordOf = name => {
+  const s = workflowSrc(name);
+  const i = s.indexOf('const fbRecord = ');
+  assert.ok(i >= 0, `${name}.js defines fbRecord`);
+  const def = s.slice(i, s.indexOf('\n}\n', i) + 2);
+  const qDef = /^const q = .*$/m.exec(s)[0];
+  return new Function(`${qDef}\nconst OPUS_LABEL = ${JSON.stringify(LABEL)}\n${def}\nreturn fbRecord`)();
+};
+const REPLY = { findings: [{ severity: 'MINOR', title: 'the regex \\.web\\.app and the path C:\\Users\\x',
+  detail: 'header value \'none\', a "quoted" word, עברית: בדיקה' }] };
+
+test('every fallback record note has the reviewer write the reply file with the Write tool, carries the JSON escaping rule, and allows one retry only after a pre-write strict-JSON refusal, in design.js, build.js and verify.js alike', () => {
+  const END = "record_sha256 null.'";
+  const note = name => { const s = workflowSrc(name); const i = s.indexOf('const FB_RECORD_NOTE'); assert.ok(i >= 0, `${name}.js defines FB_RECORD_NOTE`); return s.slice(i, s.indexOf(END, i) + END.length); };
+  assert.equal(note('build'), note('verify'));
+  assert.equal(note('design'), note('verify'));
+  const text = new Function(`${note('verify')}\nreturn FB_RECORD_NOTE`)();
+  assert.match(text, /with the Write tool \(never a shell command, so no shell quoting touches it\), write your whole reply/);
+  assert.match(text, /inside every JSON string write each backslash as \\\\ and each double quote as \\"/);
+  assert.match(text, /apostrophes and non-ASCII text such as Hebrew go in as they are/);
+  assert.match(text, /never edit the record/);
+  assert.match(text, /if write-json\.js refused with "stdin is not strict JSON" \(it then wrote nothing\), correct the reply file with the Write tool and run the record block one more time, unchanged/);
+  assert.match(text, /Never retry after it printed \{ path, sha256 \}, after any other refusal, or a second time/);
+  assert.match(text, /refused the record and no retry is left, return blocked=true/);
+  assert.doesNotMatch(text, /GP_REPLY/);
+  // the note's own example holds: its escaped form is the JSON for the raw regex, and the raw form is not JSON
+  const m = /the regex (\S+) is written ("[^"]*")/.exec(text);
+  assert.ok(m, 'the note gives the regex example');
+  assert.equal(m[1], '\\.web\\.app');
+  assert.equal(JSON.parse(m[2]), m[1]);
+  assert.throws(() => JSON.parse(`"${m[1]}"`), SyntaxError);
+});
+
+test('the real record block of design.js, build.js and verify.js records a reply with backslashes, double quotes, apostrophes and Hebrew unchanged, and --check reads it', t => {
+  for (const name of WORKFLOW_NAMES) {
+    const dir = tmp(t).replace(/\\/g, '/');
+    const file = `${dir}/fallback-review.json`;
+    const rec = fbRecordOf(name)(WRITE_JSON, file, 'implementation', SCHEMA.properties.reply);
+    assert.equal(rec.reply, `${dir}/fallback-reply.json`, `${name}: the reply file sits beside the record`);
+    assert.doesNotMatch(rec.body, /GP_REPLY|GP_JSON/, `${name}: no reply is spliced into the shell command`);
+    fs.writeFileSync(rec.reply, JSON.stringify(REPLY, null, 2) + '\n'); // what the Write tool leaves
+    const w = spawnSync('bash', ['-c', rec.body], { encoding: 'utf8' });
+    assert.equal(w.status, 0, `${name}: ${w.stdout}${w.stderr}`);
+    const printed = JSON.parse(w.stdout.trim());
+    const bytes = fs.readFileSync(file);
+    assert.equal(printed.sha256, sha(bytes), `${name}: the printed hash is the hash of the written bytes`);
+    assert.deepEqual(JSON.parse(bytes.toString('utf8')), { gate_kind: 'implementation', reviewer: LABEL, reply: REPLY }, `${name}: the reply is recorded unchanged`);
+    const c = wj(['--check', file, '--sha256', printed.sha256], JSON.stringify(SCHEMA));
+    assert.equal(c.status, 0, `${name}: ${c.stderr}`);
+    assert.deepEqual(JSON.parse(c.stdout).verdict_inputs.reply.findings.map(f => f.severity), ['MINOR']);
+  }
+});
+
+test('the record block refuses a hand-escaped reply before any write; one corrected run records it; a run after the write is refused and the record stays', t => {
+  for (const name of WORKFLOW_NAMES) {
+    const dir = tmp(t).replace(/\\/g, '/');
+    const file = `${dir}/fallback-review.json`;
+    const rec = fbRecordOf(name)(WRITE_JSON, file, 'implementation', SCHEMA.properties.reply);
+    fs.writeFileSync(rec.reply, '{"findings":[{"severity":"MINOR","title":"the regex \\.web\\.app"}]}\n'); // single backslashes, as observed
+    const first = spawnSync('bash', ['-c', rec.body], { encoding: 'utf8' });
+    assert.equal(first.status, 1, `${name}: ${first.stdout}${first.stderr}`);
+    assert.match(first.stderr, /write-json: stdin is not strict JSON: E_PARSE/, `${name}: the refusal carries the text the retry rule names`);
+    assert.ok(!fs.existsSync(file), `${name}: a strict-JSON refusal writes nothing`);
+    fs.writeFileSync(rec.reply, JSON.stringify({ findings: [{ severity: 'MINOR', title: 'the regex \\.web\\.app' }] }));
+    const retry = spawnSync('bash', ['-c', rec.body], { encoding: 'utf8' });
+    assert.equal(retry.status, 0, `${name}: ${retry.stdout}${retry.stderr}`);
+    const bytes = fs.readFileSync(file);
+    assert.equal(JSON.parse(bytes.toString('utf8')).reply.findings[0].title, 'the regex \\.web\\.app');
+    fs.writeFileSync(rec.reply, JSON.stringify({ findings: [] }));
+    const again = spawnSync('bash', ['-c', rec.body], { encoding: 'utf8' });
+    assert.equal(again.status, 1, `${name}: a run after a successful write is refused`);
+    assert.match(again.stderr, /already exists; records are written once/);
+    assert.deepEqual(fs.readFileSync(file), bytes, `${name}: the record is unchanged`);
+  }
 });

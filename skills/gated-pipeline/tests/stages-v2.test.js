@@ -935,7 +935,8 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     for (const label of ['opus review 1 (codex unavailable)', 'opus security 1 (codex unavailable)']) {
       const p = b.calls.find(x => x.options.label === label).prompt;
       gpBlocks(p, ['setup', 'cleanup', 'record']);
-      assert.match(p, /GP_REPLY/, `${label}: the reviewer writes its own reply into the record block`);
+      assert.match(p, /^Reply file: \S+\/fallback-reply\.json$/m, `${label}: the reviewer writes its own reply to the reply file`);
+      assert.doesNotMatch(p, /GP_REPLY|<<'GP_JSON'/, `${label}: no reply is spliced into a shell heredoc`);
       assert.deepEqual(b.calls.find(x => x.options.label === label).options.schema.required.slice().sort(), ['record_path', 'record_sha256'], `${label}: it returns only the record path and hash`);
     }
     for (const x of b.calls.filter(x => !/^opus /.test(x.options.label))) {

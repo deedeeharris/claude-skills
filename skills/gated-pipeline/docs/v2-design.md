@@ -324,9 +324,11 @@ Diagnostics are sorted (path, code, rule) so output is deterministic.
   the bytes it passes to codex; a change before the run ends is a setup error, exit 2). The Opus
   fallback runs `hash-inputs.js --out <review_dir>/inputs.json <files...>` (roles as above)
   before reviewing and `hash-inputs.js --verify <review_dir>/inputs.json` after. The reviewer
-  itself writes `{ gate_kind, reviewer, reply }` (its gate kind, the label and its structured
-  reply) once with `write-json.js` to `<review_dir>/fallback-review.json` (its prompt's
-  `gp-exec record` block) and answers only that path and the sha256 `write-json.js` printed; no
+  itself writes its structured reply with the Write tool to `<review_dir>/fallback-reply.json`
+  (no shell quoting), and its prompt's `gp-exec record` block wraps it as `{ gate_kind, reviewer,
+  reply }` (its gate kind, the label and the reply) and pipes it to `write-json.js`, which writes
+  `<review_dir>/fallback-review.json` once (one more run is allowed only after a pre-write
+  `stdin is not strict JSON` refusal); the reviewer answers only that path and the sha256 `write-json.js` printed; no
   agent is ever handed another model's reply to copy (a verbatim relay of a review is refused by
   the API safety filter as `[reasoning_extraction]`). A deterministic record step then runs
   `hash-inputs.js --verify` again and `write-json.js --check <file> --sha256 <reported>` with
