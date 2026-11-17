@@ -297,7 +297,7 @@ test(`5.2 workflows (${MOCKED}): design, build and verify contract 2 run to PASS
   const v = await run('verify', vArgs, many(responder({
     'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(),
     ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`acceptance proofs ${i + 1}`, stub()])),
-    'negative control HELLO-001-AC1': negative, 'pinned state': stub(), 'completion proof': stub(),
+    'negative control HELLO-001-AC1': negative, 'readback negative control HELLO-001-AC1': stub(), 'pinned state': stub(), 'completion proof': stub(),
     'codex final review': { ...NOCODEX, head_sha: sha },
     'opus final review (codex unavailable)': opus(({ headSha }) => ({ findings: [], head_sha: headSha })), 'record opus final review': stub(),
     'codex spec compliance': { verdict: 'ERROR', blocking: [], requirements: [], codex_available: false, raw_sha256: null, ...pinned },

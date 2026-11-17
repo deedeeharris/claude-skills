@@ -524,14 +524,20 @@ async function recordLine(r, { step, ph, records, target, patch }) {
   READBACK.push({ step, record_path: rb.records[0].record_path })
   return { printed: rb.records[0].printed, recovered: true }
 }
-// --- negative controls (design 6.4): decided from the record, never from the block's exit code.
-// A correct control makes the mutated proof FAIL, and how a relay reports the exit of a block around it varies, so the
-// block always prints the record it left (between gp-negative record markers, with the patch's and the record's
-// sha256sum lines) and the workflow decides from that record alone. A reply without that dump (a paraphrased relay)
-// gets the ONE read-only readback above, unless it shows run-frozen's own refusal or checkout drift. A refused patch
-// writes no record, a moved checkout shows in the state the block prints and in the record's head and status, and a
-// missing, hash-mismatched or foreign record never passes. Completion re-derives every one of these facts (and more:
-// the command, logs, patch and owned paths) from disk, so this decides the stage only and never loosens completion.
+// --- negative controls (design 6.4): decided from the record on disk, never from the block's exit code or the relay's
+// printed copy. A correct control makes the mutated proof FAIL, and how a relay reports the exit of a block around it
+// varies, so the block prints the record it left (between gp-negative record markers, with the patch's and the record's
+// sha256sum lines). Live relays also printed invented records in place of that dump (another file name, fields
+// run-frozen.js never writes, no id), so the printed copy decides nothing: after every control block that is not
+// blocked ONE low-effort read-only agent (negRead: test -f, sha256sum of the patch and the record, cat; nothing runs or
+// is written) reads the record from its known path, and negDecide judges that copy alone. The printed dump and record
+// line are only a cross-check: a copy that is missing or differs from the disk record can never pass a control (a
+// printed hash of the disk record's own file that differs from the disk read makes it INCOMPLETE; a copy naming another
+// file, or invented content, decides nothing); for a passing control the difference is disclosed in readback[]
+// (printed_mismatch), else in the reason. A refused patch writes no record (INCOMPLETE,
+// "did not run"), a moved checkout shows in the state the block prints and in the record's head and status, and a
+// missing or foreign record never passes. Completion re-derives every one of these facts (and more: the hash, command,
+// logs, patch and owned paths) from disk, so this decides the stage only and never loosens completion.
 const NEG_BEGIN = 'gp-negative record:'
 const NEG_END = 'gp-negative record end'
 const negBlock = (id, dir, patch) => {
@@ -540,7 +546,8 @@ const negBlock = (id, dir, patch) => {
     `for gp_f in ${q(rec)} ${q(alt)}; do if test -f "$gp_f"; then echo '${NEG_BEGIN}'; sha256sum ${q(patch)} "$gp_f"; cat "$gp_f"; echo; echo '${NEG_END}'; fi; done`,
     'exit "$gp_rc"'])
 }
-// The record a negative-control block printed: { record_path, record_sha256, patch_sha256, record }, else null.
+// The record a negative-control block printed (a cross-check of the disk record only): { record_path, record_sha256,
+// patch_sha256, record }, else null.
 function negDump(stdout, records, patch) {
   const lines = String(stdout || '').split('\n')
   for (let i = lines.indexOf(NEG_BEGIN); i >= 0; i = lines.indexOf(NEG_BEGIN, i + 1)) {
@@ -553,14 +560,51 @@ function negDump(stdout, records, patch) {
   }
   return null
 }
-// PASS only for a record that hashes as printed, is this control's negative:<id> record of this manifest, has a passing
-// baseline and a mutated run that exited nonzero without a timeout, and was made with the work checkout pinned at the
-// reviewed SHA and clean before and after; HEAD_MOVED when the record shows the checkout moved; else INCOMPLETE.
-function negDecide(id, got, line) {
+// The record on disk: ONE read-only agent prints the patch's and the record's sha256sum lines and the record (either
+// spelling; the one whose sha256sum line printed is the record read). { record_path, record_sha256, patch_sha256,
+// record }, else { error } (no record file: run-frozen wrote none).
+async function negRead(id, records, patch) {
+  const step = `negative control ${id}`
+  const body = records.map(f => `test -f ${q(f)} && sha256sum ${q(patch)} ${q(f)} && cat ${q(f)}`).join('\n')
+  const r = await agent(`Step ${step} ran run-frozen.js. Read the record it left back from disk: the block below only reads; it never runs or writes anything. ` +
+    `Return its stdout exactly as printed, byte for byte, with nothing added, dropped or reformatted. ${EXEC_NOTE}` + execBlock(body) + `\n- ${RULES}`,
+    { label: `readback ${step}`, phase: 'Negative controls', schema: EXEC, effort: 'low' })
+  if (!r || r.blocked) return { error: 'the readback was blocked' }
+  const file = records.find(f => HEX64.test(shaOf(r.stdout, f) || ''))
+  if (!file) return { error: `no record file or no sha256 printed for ${records[0]}` }
+  const record = rbJsonAfter(r.stdout, file)
+  if (!record) return { error: `${file} did not print as one JSON object` }
+  return { record_path: file, record_sha256: shaOf(r.stdout, file), patch_sha256: shaOf(r.stdout, patch) || null, record }
+}
+// How the relay's printed copy (the dump, and run-frozen's record line) differs from the disk record: '' when it matches.
+function negMismatch(disk, dump, line) {
+  const diff = []
+  if (dump) {
+    if (!samePath(dump.record_path, disk.record_path)) diff.push(`the printed dump names ${dump.record_path}`)
+    if (dump.record_sha256 !== disk.record_sha256) diff.push(`the printed dump hashes to ${dump.record_sha256}`)
+    if (dump.patch_sha256 !== disk.patch_sha256) diff.push(`the printed dump hashes the patch to ${dump.patch_sha256}`)
+    if (JSON.stringify(dump.record) !== JSON.stringify(disk.record)) diff.push('the printed record differs from the record on disk')
+  }
+  if (line && (!samePath(line.record_path, disk.record_path) || line.record_sha256 !== disk.record_sha256)) diff.push(`the printed record line names ${line.record_path} with sha256 ${line.record_sha256}`)
+  return diff.length ? `${diff.join('; ')}; the disk record ${disk.record_path} hashes to ${disk.record_sha256} and decided the control` : ''
+}
+// A printed copy that names the disk record's own path with another record or patch hash: the relay and the disk
+// disagree about that file, so the control never passes ('' when they agree, or the copy names another file).
+function negHashConflict(disk, dump, line) {
+  if (line && samePath(line.record_path, disk.record_path) && line.record_sha256 !== disk.record_sha256) return `hashes to ${disk.record_sha256}, but run-frozen printed ${line.record_sha256} for ${line.record_path}`
+  if (dump && samePath(dump.record_path, disk.record_path) && dump.record_sha256 !== disk.record_sha256) return `hashes to ${disk.record_sha256}, but the block printed ${dump.record_sha256} for ${dump.record_path}`
+  if (dump && samePath(dump.record_path, disk.record_path) && dump.patch_sha256 !== disk.patch_sha256) return `was read with the patch hashing to ${disk.patch_sha256}, but the block printed ${dump.patch_sha256}`
+  return ''
+}
+// PASS only for the disk record (negRead) that has a sha256, no printed hash of the same file disagreeing with it
+// (conflict, negHashConflict), is this control's negative:<id> record of this manifest, has a passing baseline and a mutated run that exited nonzero without a timeout, names the patch the read hashed, and
+// was made with the work checkout pinned at the reviewed SHA and clean before and after; HEAD_MOVED when the record
+// shows the checkout moved; else INCOMPLETE.
+function negDecide(id, got, conflict = '') {
   const rec = got.record
   const bad = reason => ({ status: 'INCOMPLETE', reason })
   if (!HEX64.test(got.record_sha256 || '')) return bad('has no sha256')
-  if (line && (!samePath(line.record_path, got.record_path) || line.record_sha256 !== got.record_sha256)) return bad(`hashes to ${got.record_sha256}, but run-frozen printed ${line.record_sha256} for ${line.record_path}`)
+  if (conflict) return bad(conflict)
   if (rec.target !== `negative:${id}` || rec.id !== id) return bad(`names target ${rec.target} and id ${rec.id}, not negative:${id}`)
   if (rec.manifest_sha256 !== A.manifest_sha256) return bad(`was made from manifest ${rec.manifest_sha256}, not ${A.manifest_sha256}`)
   const sha = A.reviewed_sha
@@ -875,34 +919,27 @@ if (C2) {
       `3. Then: ${EXEC_NOTE}` + negBlock(n.id, dir, patch) + `\n- ${RULES}`,
       { label: `negative control ${n.id}`, phase: 'Negative controls', schema: EXEC, effort: 'medium' })
     if (!r || r.blocked) return reportOf('BLOCKED', { stage: 'negative controls', reason: `negative control ${n.id} was blocked`, negative: r, negative_controls: negatives })
-    // Decided from the record, never from the block's exit code (see negDecide).
+    // Decided from the record on disk, never from the block's exit code or its printed copy (see negDecide).
     const records = recordNames(dir, `negative:${n.id}`)
     const line = jsonLines(r.stdout).find(o => records.some(f => samePath(f, o.record_path)) && HEX64.test(o.record_sha256 || '')) || null
-    let got = negDump(r.stdout, records, patch)
-    let why = ''
-    if (!got) {
-      why = `no printed record line with record_path ${records[0]}`
-      if (!rbRefused(r) && !(stateDrift(r.stdout) || []).length) {
-        const rb = await readback({ step: `negative control ${n.id}`, ph: 'Negative controls', sha, clean: IGNORE, reads: [{ record: records[0], alt: records[1], target: `negative:${n.id}`, patch }] })
-        if (rb.error) why += `; readback: ${rb.error}`
-        else {
-          const x = rb.records[0]
-          READBACK.push({ step: `negative control ${n.id}`, record_path: x.record_path })
-          got = { record_path: x.record_path, record_sha256: x.record_sha256, patch_sha256: x.record.mutation_patch_sha256, record: x.record }
-        }
-      }
-    }
-    const notRun = got ? got.record.status === 'NOT_RUN' : !!(line && line.not_run)
-    if (notRun) {
-      negatives.push({ id: n.id, record_path: got ? got.record_path : line.record_path, record_sha256: got ? got.record_sha256 : line.record_sha256 })
+    const dump = negDump(r.stdout, records, patch)
+    const disk = await negRead(n.id, records, patch)
+    const got = disk.error ? null : disk
+    const why = disk.error ? `${dump || line ? 'the block printed a record, but ' : `no printed record line with record_path ${records[0]}; `}readback: ${disk.error}` : ''
+    const mismatch = got ? negMismatch(got, dump, line) : ''
+    const noted = mismatch ? ` (the printed copy decided nothing: ${mismatch})` : ''
+    if (got && got.record.status === 'NOT_RUN') {
+      negatives.push({ id: n.id, record_path: got.record_path, record_sha256: got.record_sha256 })
       return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} is NOT RUN: negative_controls_total_min of phase time was used before it`, negative: r, negative_controls: negatives })
     }
     const negDrift = stateDrift(r.stdout)
     if (negDrift && negDrift.length) return reportOf('HEAD_MOVED', { stage: 'negative controls', reason: `during negative control ${n.id} the work checkout left the clean reviewed commit (${negDrift.join('; ')}): re-run build`, negative: r, negative_controls: negatives })
     if (!got) return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} did not run (refused patch, or the checkout moved): ${why}`, negative: r, negative_controls: negatives })
-    const d = negDecide(n.id, got, line)
+    const d = negDecide(n.id, got, negHashConflict(got, dump, line))
     if (d.status === 'HEAD_MOVED') return reportOf('HEAD_MOVED', { stage: 'negative controls', reason: `during negative control ${n.id} the work checkout left the clean reviewed commit (${d.reason}): re-run build`, negative: r, negative_controls: negatives })
-    if (d.status !== 'PASS') return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} did not prove a red: its record ${got.record_path} ${d.reason}`, negative: r, negative_controls: negatives })
+    if (d.status !== 'PASS') return reportOf('INCOMPLETE', { stage: 'negative controls', reason: `negative control ${n.id} did not prove a red: its record ${got.record_path} on disk ${d.reason}${noted}`, negative: r, negative_controls: negatives })
+    // A passing control whose printed copy was missing or differed is disclosed as read back from disk.
+    if (!dump || mismatch) READBACK.push({ step: `negative control ${n.id}`, record_path: got.record_path, ...(mismatch ? { printed_mismatch: mismatch } : {}) })
     negatives.push({ id: n.id, record_path: got.record_path, record_sha256: got.record_sha256 })
   }
   const after = await agent(`After the negative controls, check that the work checkout is still pinned at ${sha} and clean. ${EXEC_NOTE}` +
