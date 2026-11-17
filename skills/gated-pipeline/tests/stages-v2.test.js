@@ -198,6 +198,8 @@ async function verifyV2(c, build, opts = {}) {
   const table = {
     'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), ...proofStubs(),
     'negative control HELLO-001-AC1': negative('HELLO-001-AC1'), 'negative control HELLO-001-AC4': negative('HELLO-001-AC4'),
+    // every control's decision reads its record back from disk with one read-only agent (design 6.4)
+    'readback negative control HELLO-001-AC1': stub(), 'readback negative control HELLO-001-AC4': stub(),
     'pinned state': stub(), 'completion proof': stub(),
     ...(opts.fallback ? {
       'codex final review': { ...UNAVAILABLE, head_sha: head(c) },
@@ -480,7 +482,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
       assert.equal(r.contract, 2);
       assert.deepEqual(labels(v.calls), ['plan preflight', 'check CHECK-LINT', 'check CHECK-LIVE', 'acceptance proofs 1', 'codex final review', 'codex spec compliance',
-        'negative control HELLO-001-AC1', 'pinned state', 'completion proof']);
+        'negative control HELLO-001-AC1', 'readback negative control HELLO-001-AC1', 'pinned state', 'completion proof']);
       assert.equal(r.completion.passed, true);
       assert.equal(r.completion.certification, 'design-gated');
       assert.equal(r.completion.cross_family, true);
@@ -1544,7 +1546,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
     };
     const table = recordAll({ 'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), 'acceptance proofs 1': stub(),
       'codex final review': codexReview(c, path.join(runDir, 'final-review'), 1), 'codex spec compliance': codexCompliance(c, path.join(runDir, 'compliance')),
-      'negative control HELLO-001-AC1': neg, 'pinned state': stub() });
+      'negative control HELLO-001-AC1': neg, 'readback negative control HELLO-001-AC1': stub(), 'pinned state': stub() });
     const first = await run('verify', verifyArgs(c, runDir, b.path), many(responder({ ...table, 'completion proof': STOP })));
     assert.ok(first.result.stopped);
     // the evidence changes; the replay serves every cached reply and only the completion step runs again
@@ -1870,7 +1872,9 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(refused.result.status, 'INCOMPLETE', JSON.stringify(refused.result).slice(0, 2000));
       assert.match(refused.result.reason, new RegExp(`negative control ${id} did not run`));
       assert.match(refused.result.negative.stdout, /^run-frozen: /m);
-      assert.ok(!labels(refused.calls).some(l => l.startsWith('readback')));
+      // the decision reads the disk, which holds no record: the readback finds none and nothing is recovered
+      assert.ok(labels(refused.calls).includes(`readback negative control ${id}`), labels(refused.calls).join(', '));
+      assert.match(refused.result.reason, /readback: .*no record file/);
       assert.deepEqual(refused.result.readback, []);
     });
 
@@ -1881,8 +1885,7 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       const r = v.result;
       assert.equal(r.status, 'INCOMPLETE', JSON.stringify(r).slice(0, 2000));
       assert.equal(r.stage, 'negative controls');
-      assert.match(r.reason, /no printed record line/);
-      assert.match(r.reason, new RegExp(`readback: .*patch hashes to ${'0'.repeat(64)}`));
+      assert.match(r.reason, new RegExp(`on disk names patch sha256 [0-9a-f]{64}, the patch hashes to ${'0'.repeat(64)}`));
       assert.deepEqual(r.readback, []);
       assert.ok(!labels(v.calls).includes('completion proof'));
     });
@@ -1983,12 +1986,14 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       const real = stub()(prompt, options, calls);
       return edit ? edit(real) : real;
     };
-    test('negative control: the relay reports exit_code 1 while the record shows a correct red -> PASS from the record, no readback', async () => {
+    test('negative control: the relay reports exit_code 1 while the record shows a correct red -> PASS from the disk record; a faithful dump is no recovery', async () => {
       const id = 'HELLO-001-AC1';
       const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: r => ({ ...r, exit_code: 1 }) }) }) });
       const r = v.result;
       assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
-      assert.ok(!labels(v.calls).some(l => l.startsWith('readback')), labels(v.calls).join(', '));
+      assert.deepEqual(labels(v.calls).slice(-4), [`negative control ${id}`, `readback negative control ${id}`, 'pinned state', 'completion proof']);
+      readOnly(callOf(v, `readback negative control ${id}`));
+      assert.deepEqual(r.readback, [], 'the printed dump matched the disk record');
       const rec = negRecord(v.runDir, id);
       const value = JSON.parse(fs.readFileSync(rec, 'utf8'));
       assert.equal(value.baseline_exit_code, 0);
@@ -2008,7 +2013,77 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(v.result.status, 'PASS', JSON.stringify(v.result).slice(0, 3000));
       assert.deepEqual(v.result.readback, [{ step: `negative control ${id}`, record_path: negRecord(v.runDir, id) }]);
     });
-    test('negative control: a printed record line whose sha256 is not the record\'s -> INCOMPLETE at negative controls, whatever the exit code', async () => {
+    // Live: three relays printed an invented record in place of the dump (the name negative_<ID>.record.json, an
+    // outcome field run-frozen.js never writes, a wrong timestamp, no id) while the record on disk was a correct red.
+    const fabricatedDump = (runDir, id, fields = {}) => r => {
+      const name = path.join(negDir(runDir, id), `negative_${id}.record.json`);
+      const invented = { target: `negative:${id}`, outcome: 'NEGATIVE_CONTROL_FAILED_AS_EXPECTED', finished_at: '2001-01-01T00:00:00Z', baseline_exit_code: 0, exit_code: 1, ...fields };
+      return { stdout: `gp-negative run-frozen exit: 1\ngp-negative record:\n${'5'.repeat(64)}  ${path.join(negDir(runDir, id), 'mutation.patch')}\n${'6'.repeat(64)}  ${name}\n` +
+        `${JSON.stringify(invented)}\ngp-negative record end\n`, exit_code: 1 };
+    };
+    // A readback reply whose record JSON (what cat printed of the disk record) is replaced by fn(record).
+    const diskEdit = fn => scriptStep(r => {
+      const lines = r.stdout.split('\n');
+      const at = lines.findIndex(l => /^[0-9a-f]{64}  .*\.record\.json$/.test(l));
+      assert.ok(at >= 0, 'the readback printed the record');
+      const rest = lines.slice(at + 1).join('\n').trim();
+      return { stdout: [...lines.slice(0, at + 1), JSON.stringify(fn(JSON.parse(rest)))].join('\n') + '\n', exit_code: r.exit_code };
+    });
+    test('negative control: a fabricated printed record (another name, invented fields, no id) and a correct record on disk -> PASS judged from disk, the mismatch disclosed', async () => {
+      const id = 'HELLO-001-AC1';
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: fabricatedDump(runDir, id) }) }) });
+      const r = v.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
+      const rec = negRecord(v.runDir, id);
+      assert.deepEqual(r.negative_controls, [{ id, record_path: rec, record_sha256: sha256(fs.readFileSync(rec)) }]);
+      assert.equal(r.readback.length, 1);
+      assert.equal(r.readback[0].step, `negative control ${id}`);
+      assert.equal(r.readback[0].record_path, rec);
+      assert.match(r.readback[0].printed_mismatch, new RegExp(`the printed dump names .*negative_${id}\\.record\\.json`));
+      assert.match(r.readback[0].printed_mismatch, /the printed record differs from the record on disk/);
+      assert.equal(r.completion.passed, true);
+      readOnly(callOf(v, `readback negative control ${id}`));
+    });
+    test('negative control: a fabricated printed record and NO record on disk -> INCOMPLETE "did not run", whatever the dump claims', async () => {
+      const id = 'HELLO-001-AC1';
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: (prompt, options, calls) => {
+        fs.mkdirSync(negDir(runDir, id), { recursive: true });
+        fs.writeFileSync(path.join(negDir(runDir, id), 'mutation.patch'), c.MUTATION);
+        return fabricatedDump(runDir, id, { id })();
+      } }) });
+      const r = v.result;
+      assert.equal(r.status, 'INCOMPLETE', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.stage, 'negative controls');
+      assert.match(r.reason, new RegExp(`negative control ${id} did not run`));
+      assert.match(r.reason, /the block printed a record, but readback: .*no record file/);
+      assert.deepEqual(r.readback, []);
+      assert.ok(!fs.existsSync(negRecord(v.runDir, id)));
+      assert.ok(!labels(v.calls).includes('completion proof'));
+    });
+    test('negative control: a printed copy showing a correct red while the disk record shows the mutated proof green -> INCOMPLETE, never PASS', async () => {
+      const id = 'HELLO-001-AC1';
+      const weak = c.MUTATION.replace("+module.exports = () => 'goodbye';", "+module.exports = () => 'hello'; // unchanged");
+      // the relay prints the record line and a dump of a red (exit 1) with the real hashes; the disk record says exit 0
+      const forgeRed = r => {
+        const lines = r.stdout.split('\n');
+        const at = lines.indexOf('gp-negative record:') + 3;
+        const end = lines.indexOf('gp-negative record end');
+        assert.ok(at >= 3 && end > at, 'the block printed the record');
+        const rec = JSON.parse(lines.slice(at, end).join('\n'));
+        assert.equal(rec.exit_code, 0, 'the weak mutation leaves the proof green on disk');
+        lines.splice(at, end - at, JSON.stringify({ ...rec, exit_code: 1 }));
+        return { ...r, stdout: lines.join('\n').replace(/"exit_code":0,"timed_out":false/, '"exit_code":1,"timed_out":false'), exit_code: 1 };
+      };
+      const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { patch: weak, edit: forgeRed }) }) });
+      const r = v.result;
+      assert.equal(r.status, 'INCOMPLETE', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.stage, 'negative controls');
+      assert.match(r.reason, /on disk shows the mutated proof exit 0: the mutation did not make it fail/);
+      assert.match(r.reason, /the printed copy decided nothing: .*the printed record differs from the record on disk/);
+      assert.deepEqual(r.readback, []);
+      assert.ok(!labels(v.calls).includes('completion proof'));
+    });
+    test('negative control: a printed record line whose sha256 is not the disk record\'s -> INCOMPLETE at negative controls, whatever the exit code', async () => {
       const id = 'HELLO-001-AC1';
       const forge = r => ({ ...r, stdout: r.stdout.replace(/"record_sha256":"[0-9a-f]{64}"/, `"record_sha256":"${'2'.repeat(64)}"`) });
       for (const exit of [0, 1]) {
@@ -2016,10 +2091,29 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
         assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
         assert.equal(v.result.stage, 'negative controls');
         assert.match(v.result.reason, new RegExp(`run-frozen printed ${'2'.repeat(64)}`));
+        assert.match(v.result.reason, /on disk hashes to [0-9a-f]{64}/);
+        assert.ok(labels(v.calls).includes(`readback negative control ${id}`));
         assert.ok(!labels(v.calls).includes('completion proof'));
       }
     });
-    test('negative control: a record of another target or manifest, or a dump without the record -> INCOMPLETE; a record showing a moved head -> HEAD_MOVED', async () => {
+    test('negative control: a printed dump whose record or patch sha256 is not the disk read\'s -> INCOMPLETE at negative controls, never PASS', async () => {
+      const id = 'HELLO-001-AC1';
+      for (const [suffix, label] of [[`/negative:${id}.record.json`, 'the block printed 7{64} for'], ['/mutation.patch', 'the patch hashing to [0-9a-f]{64}, but the block printed 7{64}']]) {
+        const forge = r => {
+          const lines = r.stdout.split('\n');
+          const at = lines.findIndex(l => /^[0-9a-f]{64}  /.test(l) && l.endsWith(suffix));
+          assert.ok(at >= 0, 'the block printed a sha256sum line for ' + suffix);
+          lines[at] = '7'.repeat(64) + lines[at].slice(64);
+          return { ...r, stdout: lines.join('\n') };
+        };
+        const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: forge }) }) });
+        assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
+        assert.equal(v.result.stage, 'negative controls');
+        assert.match(v.result.reason, new RegExp(label));
+        assert.ok(!labels(v.calls).includes('completion proof'));
+      }
+    });
+    test('negative control: a disk record of another target or manifest -> INCOMPLETE; a disk record showing a moved head or dirty checkout -> HEAD_MOVED; a printed copy edited the same way decides nothing', async () => {
       const id = 'HELLO-001-AC1';
       const dumpEdit = fn => r => {
         const lines = r.stdout.split('\n');
@@ -2031,22 +2125,29 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       };
       const cases = [
         [x => ({ ...x, target: 'negative:HELLO-001-AC4', id: 'HELLO-001-AC4' }), 'INCOMPLETE', /names target negative:HELLO-001-AC4/],
+        [x => { const { id: _drop, ...rest } = x; return rest; }, 'INCOMPLETE', /names target negative:HELLO-001-AC1 and id undefined/],
         [x => ({ ...x, manifest_sha256: '3'.repeat(64) }), 'INCOMPLETE', /was made from manifest 3{64}/],
         [x => ({ ...x, head_after: '4'.repeat(40) }), 'HEAD_MOVED', /head is [0-9a-f]{40} before and 4{40} after/],
         [x => ({ ...x, status_after: ['?? src/stray.js'] }), 'HEAD_MOVED', /dirty/],
         [x => ({ ...x, exit_code: null, timed_out: true }), 'INCOMPLETE', /timed out/],
       ];
       for (const [fn, status, reason] of cases) {
-        const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: dumpEdit(fn) }) }) });
+        const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id), [`readback negative control ${id}`]: diskEdit(fn) }) });
         assert.equal(v.result.status, status, JSON.stringify(v.result).slice(0, 2000));
         assert.equal(v.result.stage, 'negative controls');
         assert.match(v.result.reason, reason);
+        // the same edit in the relay's printed dump only: the disk record decides, and it is a correct red
+        const p = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: realNegative(runDir, id, { edit: dumpEdit(fn) }) }) });
+        assert.equal(p.result.status, 'PASS', JSON.stringify(p.result).slice(0, 2000));
+        assert.match(p.result.readback[0].printed_mismatch, /the printed record differs from the record on disk/);
       }
-      // the reply holds the markers but no record (run-frozen wrote none): no readback is needed to say it did not run
+      // the reply holds the markers but no record (run-frozen wrote none): the disk read finds none -> did not run
       const v = await verifyV2(c, b, { table: runDir => ({ [`negative control ${id}`]: () => ({ stdout: 'run-frozen: the mutation patch does not apply\ngp-negative run-frozen exit: 1\n', exit_code: 1 }) }) });
       assert.equal(v.result.status, 'INCOMPLETE', JSON.stringify(v.result).slice(0, 2000));
       assert.match(v.result.reason, new RegExp(`negative control ${id} did not run`));
-      assert.ok(!labels(v.calls).some(l => l.startsWith('readback')));
+      assert.match(v.result.reason, /readback: .*no record file/);
+      assert.ok(labels(v.calls).includes(`readback negative control ${id}`));
+      assert.deepEqual(v.result.readback, []);
     });
     test('negative control: a mutation that leaves the proof green (a weak control) -> INCOMPLETE at negative controls, before completion', async () => {
       const id = 'HELLO-001-AC1';
@@ -2418,7 +2519,7 @@ const implementationRows = src => {
       const venv = R.envWith('v2-relay-verify', { FAKE_CODEX_DELAY_MS: '3000',
         FAKE_CODEX_RAW: JSON.stringify({ verdict: 'PASS', summary: 'every acceptance traced', findings: [], requirements: complianceReqs(head(c)) }) });
       const { result: vr, calls: vc } = await run('verify', verifyArgs(c, verifyDir, b.path), many(responder({
-        'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), ...proofStubs(), 'pinned state': stub(), 'completion proof': stub(),
+        'plan preflight': stub(), 'check CHECK-LINT': stub(), 'check CHECK-LIVE': stub(), ...proofStubs(), 'pinned state': stub(), 'completion proof': stub(), 'readback negative control HELLO-001-AC1': stub(),
         'negative control HELLO-001-AC1': async (prompt, options, calls) => {
           fs.mkdirSync(path.join(verifyDir, 'negative', 'HELLO-001-AC1'), { recursive: true });
           fs.writeFileSync(path.join(verifyDir, 'negative', 'HELLO-001-AC1', 'mutation.patch'), c.MUTATION);

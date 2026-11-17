@@ -710,20 +710,30 @@ with F = the blob. `--out` writes this output, including `design_paths: [source.
   baseline_log_sha256, baseline_timed_out, mutation_patch_path, mutation_patch_sha256,
   mutated_paths, phase_elapsed_s }`. Then the pinned-state check and `git status` on the work
   checkout run again.
-- A negative control is decided from its record, never from its block's exit code (a correct
-  control makes the proof fail, and live relays reported exit 1 for records that showed exactly
-  a correct red). The block runs `run-frozen.js ... || gp_rc=$?`, then prints the record it left
-  between `gp-negative record:` and `gp-negative record end` (the patch's and the record's
-  `sha256sum` lines, then the record) and exits with run-frozen's code. The control passes only
-  when the record is there and its hash equals the printed record line's (when one printed), its
-  `target` is `negative:<id>` and `id` the control's, its `manifest_sha256` the frozen manifest's,
-  its patch hash the printed one, `baseline_exit_code` 0 without a baseline timeout, an integer
-  nonzero mutated `exit_code` with `timed_out` false, and `head_before`/`head_after` the reviewed
-  SHA with a clean status before and after. A NOT_RUN record is INCOMPLETE NOT RUN; drift in the
-  printed state, or a record showing the checkout moved or dirty, is HEAD_MOVED; no record (a
-  refused patch) or any other mismatch is INCOMPLETE at `negative controls`, a weak control
-  included (it used to reach completion first). A reply without the dump gets the readback above
-  unless it shows a refusal or drift. Completion re-derives all of this and more from disk.
+- A negative control is decided from its record on disk, never from its block's exit code nor
+  from the relay's printed copy (a correct control makes the proof fail, and live relays reported
+  exit 1 for records that showed exactly a correct red; others printed an invented record in place
+  of the dump: another file name, fields run-frozen.js never writes, a wrong timestamp, no `id`).
+  The block runs `run-frozen.js ... || gp_rc=$?`, then prints the record it left between
+  `gp-negative record:` and `gp-negative record end` (the patch's and the record's `sha256sum`
+  lines, then the record) and exits with run-frozen's code. After every control block that is not
+  blocked, ONE low-effort read-only agent (`readback negative control <id>`: `test -f`, `sha256sum`
+  of the patch and the record, `cat`, for both record spellings) reads the record from its known
+  path, and only that copy is judged. The control passes only when the record is there with a
+  printed hash, its `target` is `negative:<id>` and `id` the control's, its `manifest_sha256` the
+  frozen manifest's, its patch hash the one the read printed, `baseline_exit_code` 0 without a
+  baseline timeout, an integer nonzero mutated `exit_code` with `timed_out` false, and
+  `head_before`/`head_after` the reviewed SHA with a clean status before and after. The printed
+  dump and record line are only a cross-check: when they are missing or differ from the disk record
+  (path, record hash, patch hash or content) the disk record decides and a printed copy never
+  passes a control. A printed record or patch hash for the disk record's own path that differs
+  from the disk read is INCOMPLETE (the relay and the disk disagree about that file); a copy that
+  names another file, or invented content, decides nothing: a passing control is listed in `readback[]` (with `printed_mismatch` naming
+  the difference), any other outcome names it in its reason. A
+  NOT_RUN record on disk is INCOMPLETE NOT RUN; drift in the printed state, or a record showing the
+  checkout moved or dirty, is HEAD_MOVED; no record on disk (a refused patch) or any other mismatch
+  is INCOMPLETE at `negative controls`, a weak control included (it used to reach completion
+  first). Completion re-derives all of this and more from disk.
 
 ### 6.5 check-completion v2 (manifest `version: 2`)
 Inputs add `--frozen-dir`, `--approvals`, `--approvals-sha256` and, from land, `--trunk-ref`.
