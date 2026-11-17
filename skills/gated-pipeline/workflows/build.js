@@ -307,15 +307,15 @@ function relaySteps({ setup, start, poll, cleanup, minutes }) {
 }
 const fallbackSteps = (setup, cleanup, record) => 'Run the gp-exec setup block below verbatim with the Bash tool before you review (if it fails, return blocked=true ' +
   'with its output in note), and the cleanup block once when your review is done.' + (record ? ' ' + FB_RECORD_NOTE : '') + '\n' + gpBlock('setup', setup) + gpBlock('cleanup', cleanup) +
-  (record ? gpBlock('record', record.body) + fbKeysNote(record.schema) + 'Your reply (the object that replaces GP_REPLY) conforms to this JSON Schema:\n```json\n' + JSON.stringify(record.schema) + '\n```\n' : '')
+  (record ? `Reply file: ${record.reply}\n` + gpBlock('record', record.body) + fbKeysNote(record.schema) + 'Your reply (the one JSON object in the reply file) conforms to this JSON Schema:\n```json\n' + JSON.stringify(record.schema) + '\n```\n' : '')
 // The exact keys a self-written record may hold. Its top level is closed (fbRecordSchema): a key beside reply, such as a
 // misplaced blocked, is refused (E_UNKNOWN_FIELD) and stops the stage, by design: dropping it would silently turn a
 // review the reviewer meant as blocked into a gated verdict. Inside reply a key the schema does not name is accepted but
 // never read: write-json.js --check derives the verdict inputs from an allowlist of named keys only.
 const fbKeysNote = schema => 'The record holds exactly the three top-level keys the record block writes: gate_kind, reviewer and reply. Never add a key ' +
   `beside reply (blocked included): it is refused and the stage stops. Every field of your reply goes INSIDE reply, whose allowed keys are exactly ` +
-  `${Object.keys(schema.properties).join(', ')} (required: ${schema.required.join(', ')}); no other key is read. Run the record block as one unindented ` +
-  'Bash command, the closing GP_JSON alone on the last line.\n'
+  `${Object.keys(schema.properties).join(', ')} (required: ${schema.required.join(', ')}); no other key is read. Run the record block as it stands, as one ` +
+  'Bash command: it reads your reply only from the reply file.\n'
 // The relay copies result.json field by field (design section 9); the workflow, not the relay, applies the gate rule.
 const relayRead = (out, kind) => `After cleanup, read the result.json of the one run folder ${out}/${kind}-*/ and copy it with no judgement: verdict, ` +
   'verdict_reasons, model_verdict, outcome, unable_to_review, validation_outcome (its validation.outcome; null when validation is null), run_dir (that run folder) ' +
@@ -339,22 +339,33 @@ const RELAY_REVIEW = (extra = {}) => ({
 })
 // contract 2: the Opus fallback records its OWN review. No agent is ever handed another model's reply to copy (a relay
 // asked to reproduce a review verbatim is refused as reasoning extraction). The reviewer writes its reply once with
-// write-json.js (the record block, GP_REPLY replaced by its reply) and answers only the path and sha256 it printed; a
+// write-json.js (its reply in the reply file, written with the Write tool, which the record block wraps and pipes in)
+// and answers only the path and sha256 it printed; a
 // deterministic step then re-reads the file with write-json.js --check against fbRecordSchema, and the workflow gates
 // the verdict inputs --check derived FROM THE FILE, so the record and the verdict cannot diverge. --check prints no
 // review text (no title, detail, location or note), so no agent ever carries the reviewer's prose either.
-const FB_RECORD_NOTE = 'Then record your review yourself, once, after cleanup: in the record block replace GP_REPLY with your whole reply (everything ' +
-  'this prompt asks you to report or return) as ONE strict JSON object conforming to the schema below, change nothing else, and run it as one ' +
-  'foreground Bash call. It is the only file you write. write-json.js writes the record once and atomically and prints { path, sha256 }: never run it ' +
-  'again and never edit the file. Your answer is then ONLY record_path and record_sha256, exactly the path and sha256 it printed; the workflow reads ' +
-  'your review from the file. If setup or cleanup failed, or write-json.js refused the record, return blocked=true with the output in note and ' +
-  'record_path and record_sha256 null.'
+const FB_RECORD_NOTE = 'Then record your review yourself, once, after cleanup, in two steps. First, with the Write tool (never a shell command, ' +
+  'so no shell quoting touches it), write your whole reply (everything this prompt asks you to report or return) to the reply file named below as ONE ' +
+  'strict JSON object conforming to the schema below: the reply object itself, not wrapped in gate_kind, reviewer or reply. JSON escaping still ' +
+  'applies: inside every JSON string write each backslash as \\\\ and each double quote as \\" (the regex \\.web\\.app is written "\\\\.web\\\\.app"); ' +
+  'apostrophes and non-ASCII text such as Hebrew go in as they are. Then run the record block unchanged as one foreground Bash call: it wraps the ' +
+  'reply file into the record and pipes it to write-json.js. The reply file and the record are the only files you write. write-json.js writes the ' +
+  'record once and atomically and prints { path, sha256 }: never edit the record, and never run the record block again, with one exception: if ' +
+  'write-json.js refused with "stdin is not strict JSON" (it then wrote nothing), correct the reply file with the Write tool and run the record ' +
+  'block one more time, unchanged. Never retry after it printed { path, sha256 }, after any other refusal, or a second time. Your answer is then ' +
+  'ONLY record_path and record_sha256, exactly the path and sha256 it printed; the workflow reads your review from the record. If setup or cleanup ' +
+  'failed, or write-json.js refused the record and no retry is left, return blocked=true with the output in note and record_path and record_sha256 null.'
 const FB_ACK = { type: 'object', properties: { record_path: NULLABLE, record_sha256: NULLABLE, blocked: { type: 'boolean' }, note: { type: 'string' } },
   required: ['record_path', 'record_sha256'] }
 const fbRecordSchema = (gate, schema) => ({ type: 'object', additionalProperties: false, required: ['gate_kind', 'reviewer', 'reply'],
   properties: { gate_kind: { const: gate }, reviewer: { const: OPUS_LABEL }, reply: schema } })
-const fbRecord = (writeJson, file, gate, schema) => ({ schema, body: `node ${q(writeJson)} --out ${q(file)} <<'GP_JSON'\n` +
-  `${JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1)},"reply":GP_REPLY}\nGP_JSON` })
+// The reviewer writes only the reply file (Write tool, no shell quoting); the record block wraps it in the fixed
+// { gate_kind, reviewer, reply } prefix and pipes those bytes to write-json.js, which writes and hashes exactly them.
+const fbRecord = (writeJson, file, gate, schema) => {
+  const reply = file.replace(/[^/]*$/, 'fallback-reply.json')
+  const head = JSON.stringify({ gate_kind: gate, reviewer: OPUS_LABEL }).slice(0, -1) + ',"reply":'
+  return { schema, reply, body: `{ printf '%s' ${q(head)}; cat ${q(reply)}; printf '}'; } | node ${q(writeJson)} --out ${q(file)}` }
+}
 const fbCheck = (writeJson, file, sha, gate, schema) => `node ${q(writeJson)} --check ${q(file)} --sha256 ${sha} 2>&1 <<'GP_JSON'\n` +
   `${JSON.stringify(fbRecordSchema(gate, schema))}\nGP_JSON`
 // Windows tools print the path node resolved (drive letter, backslashes) while run_dir is the Git Bash spelling
