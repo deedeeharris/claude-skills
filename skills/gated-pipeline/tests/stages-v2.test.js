@@ -1978,6 +1978,115 @@ describe('contract 2 stages', { concurrency: 3 }, () => {
       assert.equal(v2.result.completion.passed, true);
     });
 
+    // ---- a relay that reports the frozen command's own exit as the block's (Q634; live twice, 2026-11-18) -----------------
+    // run-frozen.js exits 0 when it ran and recorded, whatever the frozen command exited; a low-effort relay sometimes
+    // returns the command's exit 1 as the block's exit_code. A printed record line for the expected record (64-hex hash)
+    // with no `run-frozen: ` refusal line shows the block completed, so the step goes on to its record checks. A refusal
+    // line or a missing record line still BLOCKS as before.
+    let k = null // a frozen repo whose suite exits 1 on a manifest known failure
+    after(() => k && fs.rmSync(k.root, { recursive: true, force: true }));
+    const knownRepo = () => k || (k = frozenRepo(null, {
+      pipelineYaml: '# synthetic pipeline config\ntests:\n  known_failures: ["test/known.js"]\n  clean_ignore: []\nstate:\n  paths: []\n',
+      baseFiles: { 'test/known.js': "console.log('not ok test/known.js');\nprocess.exit(1);\n" },
+      feature: withSuite('node test/hello.test.js && node test/known.js', ['test/known.js']) }));
+    const buildKnown = opts => { const kc = knownRepo(); return buildV2(kc, { ...(kc.built ? { implement: noChange(kc) } : {}), ...opts }).then(x => { kc.built = true; return x; }); };
+    // The real block runs (run-frozen.js exits 0), then the relay returns its stdout (edited) with its own exit code.
+    // `add` goes where run-frozen.js's own stderr lands: before the gp-state lines verify's EXIT trap prints last.
+    const relayed = (exitCode, { add = '', extra = {} } = {}) => scriptStep(r => {
+      assert.equal(r.exit_code, 0, r.stdout);
+      const at = r.stdout.indexOf('gp-state head: ');
+      return { stdout: at < 0 ? r.stdout + add : r.stdout.slice(0, at) + add + r.stdout.slice(at), exit_code: exitCode, ...extra };
+    });
+    const REFUSAL = 'run-frozen: the checkout moved or got dirty during the run: synthetic\n';
+    const KNOWN = { failures: ['test/known.js'], other_failures: [] };
+
+    test('build suite: run-frozen exits 0 on a known failure, the relay reports exit_code 1 with the record line printed -> not BLOCKED: build PASSES, no readback', async () => {
+      const b2 = await buildKnown({ suite: relayed(1, { extra: KNOWN }) });
+      const r = b2.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.suite.exit_code, 1);
+      assert.deepEqual(r.known_failures_seen, ['test/known.js']);
+      assert.deepEqual(r.readback, []);
+      assert.ok(!labels(b2.calls).some(l => l.startsWith('readback')), labels(b2.calls).join(', '));
+    });
+
+    test('build suite: the reply shows a run-frozen: refusal line with exit_code 1 -> still BLOCKED at suite, no readback', async () => {
+      const b2 = await buildKnown({ suite: relayed(1, { add: REFUSAL, extra: KNOWN }) });
+      const r = b2.result;
+      assert.equal(r.status, 'BLOCKED', JSON.stringify(r).slice(0, 2000));
+      assert.equal(r.stage, 'suite');
+      assert.match(r.reason, /^run-frozen\.js refused or the checkout moved or got dirty during the suite$/);
+      assert.ok(!labels(b2.calls).some(l => l.startsWith('readback')), labels(b2.calls).join(', '));
+    });
+
+    test('build suite: exit_code 1 and no valid record line (missing, or a hash that is not 64 hex), nothing on disk -> still BLOCKED at suite after the readback', async () => {
+      for (const stdout of ['suite: 1 known failure\n', JSON.stringify({ record_path: '/nowhere/suite.record.json', record_sha256: 'a'.repeat(63), exit_code: 1 }) + '\n']) {
+        const b2 = await buildKnown({ suite: { stdout, exit_code: 1, ...KNOWN }, table: { 'readback suite 1': stub() } });
+        const r = b2.result;
+        assert.equal(r.status, 'BLOCKED', JSON.stringify(r).slice(0, 2000));
+        assert.equal(r.stage, 'suite');
+        assert.match(r.reason, /^run-frozen\.js refused or the checkout moved or got dirty during the suite \(no printed record line with record_path .*readback: .*no record file/);
+        assert.deepEqual(labels(b2.calls).slice(-2), ['suite 1', 'readback suite 1']);
+      }
+    });
+
+    test('build test-first red: run-frozen exits 0 on the failing focused tests, the relay reports exit_code 1 with the record line printed -> not BLOCKED: build PASSES', async () => {
+      const b2 = await buildKnown({ red: relayed(1), suite: relayed(0, { extra: KNOWN }) });
+      const r = b2.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 2000));
+      const rec = path.join(b2.runDir, 'test-first', 'red.record.json');
+      assert.deepEqual(r.test_first, { red_commit: k.redCommit, record_path: rec, record_sha256: sha256(fs.readFileSync(rec)) });
+      assert.deepEqual(r.readback, []);
+    });
+
+    test('build test-first red: a run-frozen: refusal line, or no record line with nothing on disk, with exit_code 1 -> still BLOCKED at test-first', async () => {
+      const refused = await buildKnown({ red: relayed(1, { add: 'run-frozen: synthetic refusal\n' }) });
+      testFirstBlocked(refused, /^run-frozen\.js refused the red run: synthetic refusal$/);
+      assert.ok(!labels(refused.calls).some(l => l.startsWith('readback')));
+      const missing = await buildKnown({ red: { stdout: 'red: 1 failing test\n', exit_code: 1 }, table: { 'readback test-first': stub() } });
+      testFirstBlocked(missing, /^the red run failed, or its worktree moved or got dirty \(no printed record line with record_path .*readback: .*no record file/);
+    });
+
+    test('verify check: the relay reports exit_code 1 for a check run-frozen ran and recorded (record line printed, no refusal) -> not BLOCKED: verify PASSES, no readback', async () => {
+      const v = await verifyV2(c, b, { table: { 'check CHECK-LINT': relayed(1) } });
+      const r = v.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
+      assert.equal(r.checks.find(x => x.check_id === 'CHECK-LINT').status, 'PASS');
+      assert.deepEqual(r.readback, []);
+    });
+
+    test('verify check: a run-frozen: refusal line, or no record line with nothing on disk, with exit_code 1 -> still BLOCKED at the check', async () => {
+      const refused = await verifyV2(c, b, { table: { 'check CHECK-LINT': relayed(1, { add: REFUSAL }) } });
+      assert.equal(refused.result.status, 'BLOCKED', JSON.stringify(refused.result).slice(0, 2000));
+      assert.equal(refused.result.stage, 'check CHECK-LINT');
+      assert.equal(refused.result.reason, 'run-frozen.js refused the check');
+      assert.ok(!labels(refused.calls).some(l => l.startsWith('readback')));
+      const missing = await verifyV2(c, b, { table: { 'check CHECK-LINT': { stdout: 'lint failed\n', exit_code: 1 }, 'readback check CHECK-LINT': stub() } });
+      assert.equal(missing.result.status, 'BLOCKED', JSON.stringify(missing.result).slice(0, 2000));
+      assert.equal(missing.result.stage, 'check CHECK-LINT');
+      assert.match(missing.result.reason, /^run-frozen\.js refused the check \(no printed record line .*readback: .*no record file/);
+    });
+
+    test('verify proof batch: the relay reports exit_code 1 for a batch run-frozen ran and recorded (every record line and the ledger hash printed, no refusal) -> not BLOCKED: verify PASSES', async () => {
+      const v = await verifyV2(c, b, { table: { 'acceptance proofs 1': relayed(1) } });
+      const r = v.result;
+      assert.equal(r.status, 'PASS', JSON.stringify(r).slice(0, 3000));
+      assert.deepEqual(r.readback, []);
+      assert.equal(r.completion.passed, true);
+    });
+
+    test('verify proof batch: a run-frozen: refusal line, or no record line with nothing on disk, with exit_code 1 -> still BLOCKED at acceptance proofs', async () => {
+      const refused = await verifyV2(c, b, { table: { 'acceptance proofs 1': relayed(1, { add: REFUSAL }) } });
+      assert.equal(refused.result.status, 'BLOCKED', JSON.stringify(refused.result).slice(0, 2000));
+      assert.equal(refused.result.stage, 'acceptance proofs');
+      assert.equal(refused.result.reason, 'run-frozen.js refused a proof or live link (batch 1 of 1)');
+      assert.ok(!labels(refused.calls).some(l => l.startsWith('readback')));
+      const missing = await verifyV2(c, b, { table: { 'acceptance proofs 1': { stdout: 'proofs failed\n', exit_code: 1 }, 'readback acceptance proofs 1': stub() } });
+      assert.equal(missing.result.status, 'BLOCKED', JSON.stringify(missing.result).slice(0, 2000));
+      assert.equal(missing.result.stage, 'acceptance proofs');
+      assert.match(missing.result.reason, /^run-frozen\.js refused a proof or live link \(batch 1 of 1\) \(batch 1: no printed record line .*readback: .*no record file/);
+    });
+
     // ---- a negative control is decided from its record, never from the block's exit code (design 6.4) ----------------------
     // Live: three features whose control record showed a correct red (baseline 0, mutated 1, no timeout, clean pinned
     // checkout) came back INCOMPLETE "did not run" because the relay reported the block's exit code 1.
