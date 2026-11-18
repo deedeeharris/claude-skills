@@ -738,7 +738,8 @@ async function testFirst(w) {
     }
   }
   const why = rb && rb.error ? ` (no printed record line with record_path ${rec}; readback: ${rb.error})` : ''
-  if (rep.exit_code !== 0 && !(rb && !rb.error)) {
+  // A relay may report the red run's own exit as the block's: a printed record line and no run-frozen: refusal show run-frozen.js completed.
+  if (rep.exit_code !== 0 && !(rb && !rb.error) && !(printed && !rbRefused(rep))) {
     const refusal = (String(rep.stdout || '').match(/^run-frozen: .*$/m) || [])[0]
     return fail((refusal ? `run-frozen.js refused the red run: ${refusal.slice('run-frozen: '.length)}` : 'the red run failed, or its worktree moved or got dirty') + why, rep)
   }
@@ -877,7 +878,8 @@ async function suiteV2(round) {
     }
   }
   const why = rb && rb.error ? ` (no printed record line with record_path ${rec}; readback: ${rb.error})` : ''
-  if (rep.exit_code !== 0 && !(rb && !rb.error)) return { blocked: true, reason: 'run-frozen.js refused or the checkout moved or got dirty during the suite' + why, report: rep }
+  // A relay may report the suite's own exit as the block's: a printed record line and no run-frozen: refusal show run-frozen.js completed.
+  if (rep.exit_code !== 0 && !(rb && !rb.error) && !(printed && !rbRefused(rep))) return { blocked: true, reason: 'run-frozen.js refused or the checkout moved or got dirty during the suite' + why, report: rep }
   if (!printed || !record || !HEX64.test(printed.record_sha256 || '') || record.exit_code !== printed.exit_code || record.head_before !== reviewedSha || record.head_after !== reviewedSha) {
     return { blocked: true, reason: 'the suite record was not printed for the reviewed commit' + why, report: rep }
   }
