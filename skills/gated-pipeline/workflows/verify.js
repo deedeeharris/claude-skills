@@ -732,7 +732,8 @@ if (C2) {
       { label: `check ${c.id}`, phase: 'Checks', schema: EXEC, effort: c.effort })
     if (!r || r.blocked) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check', { check: r, checks })
     const got = await recordLine(r, { step: `check ${c.id}`, ph: 'Checks', records: recordNames(frozenRuns, `check:${c.id}`), target: `check:${c.id}` })
-    if (r.exit_code !== 0 && !got.recovered) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check' + (got.why ? ` (${got.why})` : ''), { check: r, checks })
+    // A relay may report the check's own exit as the block's: a printed record line, no run-frozen: refusal and no drift show run-frozen.js completed.
+    if (r.exit_code !== 0 && !got.recovered && !(got.relayed && !rbRefused(r) && !(stateDrift(r.stdout) || []).length)) return refusedStatus(r, `check ${c.id}`, 'run-frozen.js refused the check' + (got.why ? ` (${got.why})` : ''), { check: r, checks })
     if (!got.printed) return disclose({ status: 'BLOCKED', stage: `check ${c.id}`, reason: `the check record was not printed (${got.why})`, check: r, checks })
     const printed = got.printed
     checks.push({ check_id: c.id, name: c.name, record_path: printed.record_path, record_sha256: printed.record_sha256, exit_code: printed.exit_code, timed_out: printed.timed_out,
@@ -798,7 +799,8 @@ if (C2) {
       }
     }
     const recovered = !!rb && !rb.error
-    if (proofs.exit_code !== 0 && !recovered) {
+    // A relay may report a proof's own exit as the block's: every record line printed, no run-frozen: refusal and no drift show run-frozen.js completed.
+    if (proofs.exit_code !== 0 && !recovered && !(!lost.length && !rbRefused(proofs) && !(stateDrift(proofs.stdout) || []).length)) {
       return refusedStatus(proofs, 'acceptance proofs', `run-frozen.js refused a proof or live link (batch ${i + 1} of ${batches.length})${rb ? ` (${rbErrors[rbErrors.length - 1]})` : ''}`, { proofs, proof_batches: proofRuns, checks })
     }
     proofRuns.push(proofs)
