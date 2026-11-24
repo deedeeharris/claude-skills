@@ -107,8 +107,38 @@ test('when the opus fallback ran the compliance trace, completion has no codex f
   const { calls } = await run('verify', { ...verifyArgs, review_fallback: 'opus-high' },
     [preflight, proofs, finalReview, { codex_available: false, ...pinned }, compliance, gate]);
   assert.equal(calls.length, 6);
-  assert.ok(!calls[5].prompt.includes('merge-compliance.js'));
+  assert.ok(!calls[5].prompt.includes('--compliance '));
+  assert.ok(!calls[5].prompt.includes('/state/verify/compliance/compliance.json'));
   assert.ok(calls[5].prompt.includes("node '/skill/scripts/check-completion.js'"));
+});
+
+// The Opus trace is relayed as the stage's structured output (no compliance.json); a large frozen plan can come back
+// with null runtime commands. Completion restores them from the acceptance ledger first, under the exact-match rules.
+const relayedMerge = "node '/skill/scripts/merge-compliance.js' --mode relayed --verify-result '/state/verify/verify-result.json' " +
+  "--manifest '/state/execution-plan.json' --ledger '/state/verify/acceptance-ledger.json' --checkout '/state/verify/compliance-opus/wt'";
+test('when reviewer is opus-high, completion restores the relayed evidence commands from the ledger before the validator', async () => {
+  const { result, calls } = await run('verify', { ...verifyArgs, reviewer: 'opus-high' }, [preflight, proofs, finalReview, compliance, gate]);
+  assert.equal(result.status, 'PASS');
+  assert.equal(calls.length, 5);
+  const prompt = calls[4].prompt;
+  assert.ok(prompt.includes(relayedMerge), prompt);
+  assert.ok(!prompt.includes('--compliance '));
+  assert.ok(prompt.indexOf('merge-compliance.js') < prompt.indexOf("node '/skill/scripts/check-completion.js'"));
+  assert.match(prompt, /exit 1 means refused: return passed=false/);
+});
+
+test('when the opus fallback ran the compliance trace, completion restores the relayed evidence commands too', async () => {
+  const { calls } = await run('verify', { ...verifyArgs, review_fallback: 'opus-high' },
+    [preflight, proofs, finalReview, { codex_available: false, ...pinned }, compliance, gate]);
+  const prompt = calls[5].prompt;
+  assert.ok(prompt.includes(relayedMerge), prompt);
+  assert.ok(prompt.indexOf('merge-compliance.js') < prompt.indexOf("node '/skill/scripts/check-completion.js'"));
+});
+
+test('when the relayed merge refuses under opus-high, verify is INCOMPLETE, never PASS', async () => {
+  const { result } = await run('verify', { ...verifyArgs, reviewer: 'opus-high' },
+    [preflight, proofs, finalReview, compliance, { ...gate, passed: false, reason: 'REFUSED R1 would have no evidence left' }]);
+  assert.equal(result.status, 'INCOMPLETE');
 });
 
 test('unproven acceptance prevents verify PASS despite clean reviews', async () => {
