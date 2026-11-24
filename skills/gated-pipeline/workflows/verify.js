@@ -1118,12 +1118,17 @@ phase('Completion')
 const reportPath = `${A.run_dir}/verify-result.json`
 const proofPath = `${A.run_dir}/completion-proof.json`
 // The compliance relay can flatten codex's evidence records to strings; put codex's own records back first.
+// An Opus trace (opus-high, or the fallback) has no compliance.json: its relayed runtime commands can come back null
+// or re-escaped on a large frozen plan, so the merger restores them from the acceptance ledger on an exact match only.
 const merger = A.completion_runner.replace(/check-completion\.js$/, 'merge-compliance.js')
-const mergeStep = comp.reviewer === 'codex' && merger !== A.completion_runner
-  ? `Then restore codex's own compliance evidence (exit 1 means refused: return passed=false with its printed reason):\n` +
-    `node ${q(merger)} --verify-result ${q(reportPath)} --compliance ${q(cout + '/compliance.json')} --manifest ${q(A.manifest_path)} ` +
-    `--ledger ${q(ledger)} --checkout ${q(cout + '/wt')}\n`
-  : ''
+const mergeStep = merger === A.completion_runner ? ''
+  : comp.reviewer === 'codex'
+    ? `Then restore codex's own compliance evidence (exit 1 means refused: return passed=false with its printed reason):\n` +
+      `node ${q(merger)} --verify-result ${q(reportPath)} --compliance ${q(cout + '/compliance.json')} --manifest ${q(A.manifest_path)} ` +
+      `--ledger ${q(ledger)} --checkout ${q(cout + '/wt')}\n`
+    : `Then restore the relayed compliance evidence commands from the acceptance ledger (exit 1 means refused: return passed=false with its printed reason):\n` +
+      `node ${q(merger)} --mode relayed --verify-result ${q(reportPath)} --manifest ${q(A.manifest_path)} ` +
+      `--ledger ${q(ledger)} --checkout ${q(compFb + '/wt')}\n`
 const completion = await agent(
   `Write this exact Workflow result JSON atomically to ${reportPath}, without changing fields:\n${JSON.stringify(report)}\n` +
   mergeStep +

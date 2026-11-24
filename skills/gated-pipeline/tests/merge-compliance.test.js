@@ -212,3 +212,140 @@ test('when a required flag is missing, exits 2 with usage', t => {
   assert.equal(r.status, 2)
   assert.match(r.stderr, /usage/)
 })
+
+// ---- relayed mode: the Opus compliance trace (reviewer opus-high, or the codex-unavailable fallback) ----------------
+// Opus returns its trace as the stage's structured output; there is no compliance.json. A large frozen plan can come
+// back with every runtime command null (relay truncation), and check-completion then refuses. --mode relayed checks
+// the relayed records in verify-result.json in place and restores such a command from the acceptance ledger under the
+// codex path's exact-match rules, with the log bytes re-hashed from disk. These cases run the real v1 validator.
+const { fixture: completionFixture } = require('./helpers/v1-completion-cases.js');
+const { cleanEnv } = require('./helpers/v2-repo.js');
+const checker = path.resolve(__dirname, '../scripts/check-completion.js');
+const crypto = require('node:crypto');
+const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+
+function relayed(t, { relay = r => ({ ...r, command: null }), ledgerRec = r => r } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-relayed-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const f = completionFixture(root);
+  const runtime = { ...f.verify.compliance.requirements[0].evidence[0] };
+  f.ledgerPath = path.join(f.artifacts, 'acceptance-ledger.json');
+  writeJson(f.ledgerPath, { records: [{ id: 'R1', status: 'PASS', evidence: [ledgerRec(runtime)] }] });
+  f.verify.compliance.requirements[0].evidence = [relay(runtime)];
+  f.save();
+  f.runtime = runtime;
+  f.complete = () => spawnSync(process.execPath, [checker, ...f.argv()], { encoding: 'utf8', env: cleanEnv() });
+  f.merge = (extra = []) => spawnSync(process.execPath, [merger, '--mode', 'relayed', '--verify-result', f.verifyPath, '--manifest', f.manifestPath,
+    '--ledger', f.ledgerPath, '--checkout', path.join(root, 'compliance-opus', 'wt'), ...extra], { encoding: 'utf8' });
+  return f;
+}
+const refusesFrozen = r => {
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.match(r.stdout + r.stderr, /R1 evidence must use the frozen proof command/);
+};
+
+test('relayed: an Opus trace whose runtime commands came back null fails completion until the merger restores them from the ledger', t => {
+  const f = relayed(t);
+  refusesFrozen(f.complete());
+  const before = fs.readFileSync(f.verifyPath, 'utf8');
+  const m = f.merge();
+  assert.equal(m.status, 0, m.stdout + m.stderr);
+  assert.match(m.stdout, /MERGED requirements=2/);
+  const vr = readJson(f.verifyPath);
+  assert.deepEqual(vr.compliance.requirements[0].evidence, [f.runtime]);
+  assert.equal(vr.compliance.verdict, 'PASS');
+  assert.match(vr.compliance.note, /runtime command taken from the acceptance ledger/);
+  assert.equal(fs.readFileSync(f.verifyPath.replace(/\.json$/, '.relay.json'), 'utf8'), before);
+  const c = f.complete();
+  assert.equal(c.status, 0, c.stdout + c.stderr);
+  assert.equal(JSON.parse(c.stdout).status, 'PASS');
+})
+
+test('relayed: a re-escaped (flattened) command is restored the same way', t => {
+  const f = relayed(t, { relay: r => ({ ...r, command: JSON.stringify(r.command) }) });
+  refusesFrozen(f.complete());
+  assert.equal(f.merge().status, 0);
+  assert.equal(f.complete().status, 0);
+})
+
+test('relayed: records that already carry the frozen command merge unchanged and completion passes', t => {
+  const f = relayed(t, { relay: r => r });
+  const m = f.merge();
+  assert.equal(m.status, 0, m.stdout);
+  assert.deepEqual(readJson(f.verifyPath).compliance.requirements[0].evidence, [f.runtime]);
+  assert.equal(f.complete().status, 0);
+})
+
+test('relayed: no refill when the log hash, the log bytes on disk, the exit code, the head, the kind or the command text differ; completion still refuses', t => {
+  const cases = [
+    ['log hash differs from the ledger', { relay: r => ({ ...r, command: null, log_sha256: 'c'.repeat(64) }) }],
+    ['log path differs from the ledger', { relay: r => ({ ...r, command: null, log_path: r.log_path + '.other' }) }],
+    ['log bytes on disk no longer hash to the record', { after: f => fs.appendFileSync(f.runtime.log_path, 'tampered\n') }],
+    ['ledger exit code differs', { ledgerRec: r => ({ ...r, exit_code: 1 }) }],
+    ['relayed exit code differs', { relay: r => ({ ...r, command: null, exit_code: 1 }) }],
+    ['ledger head differs', { ledgerRec: r => ({ ...r, head_sha: 'e'.repeat(40) }) }],
+    ['relayed head differs', { relay: r => ({ ...r, command: null, head_sha: 'e'.repeat(40) }) }],
+    ['ledger kind is not runtime', { ledgerRec: r => ({ ...r, kind: 'static' }) }],
+    ['ledger command text is not the frozen proof_command', { ledgerRec: r => ({ ...r, command: r.command + ' --other' }) }],
+    ['ledger command is the frozen text re-escaped', { ledgerRec: r => ({ ...r, command: JSON.stringify(r.command) }) }],
+  ]
+  for (const [name, opts] of cases) {
+    const f = relayed(t, opts)
+    if (opts.after) opts.after(f)
+    const before = fs.readFileSync(f.verifyPath, 'utf8')
+    const m = f.merge()
+    assert.equal(m.status, 1, name + ': ' + m.stdout)
+    assert.match(m.stdout, /REFUSED R1 would have no evidence left/, name)
+    assert.equal(fs.readFileSync(f.verifyPath, 'utf8'), before, name + ': a refused merge leaves the verify result untouched')
+    const c = f.complete()
+    assert.notEqual(c.status, 0, name + ': completion must still refuse')
+    assert.equal(fs.existsSync(f.out), false, name)
+  }
+})
+
+test('relayed: a relative log path is never re-hashed or refilled', t => {
+  const f = relayed(t)
+  const rel = path.relative(process.cwd(), f.runtime.log_path)
+  writeJson(f.ledgerPath, { records: [{ id: 'R1', status: 'PASS', evidence: [{ ...f.runtime, log_path: rel }] }] })
+  f.verify.compliance.requirements[0].evidence = [{ ...f.runtime, command: null, log_path: rel }]
+  f.save()
+  const m = f.merge()
+  assert.equal(m.status, 1, m.stdout)
+  assert.match(m.stdout, /REFUSED R1 would have no evidence left/)
+})
+
+test('relayed: refuses unless the relayed trace is PASS with no blocking item and every ID passed, and never changes a verdict', t => {
+  const edits = [
+    [vr => { vr.compliance.verdict = 'FAIL' }, /relayed compliance is not PASS with zero blocking items/],
+    [vr => { vr.compliance.blocking = [{ severity: 'high', title: 'missing' }] }, /relayed compliance is not PASS with zero blocking items/],
+    [vr => { vr.compliance.requirements[1].status = 'NOT_RUN' }, /a relayed requirement is not PASS/],
+    [vr => { vr.compliance.requirements.push({ ...vr.compliance.requirements[1] }) }, /duplicate requirement ID in the verify result/],
+    [vr => { vr.compliance.requirements.push({ id: 'R9', status: 'PASS', evidence: [] }) }, /requirement not in the frozen manifest: R9/],
+    [vr => { vr.compliance.requirements[1].evidence = ['app.js:2'] }, /R2 evidence in the verify result is not a record/],
+  ]
+  for (const [edit, why] of edits) {
+    const f = relayed(t)
+    edit(f.verify)
+    f.save()
+    const before = fs.readFileSync(f.verifyPath, 'utf8')
+    const m = f.merge()
+    assert.equal(m.status, 1, m.stdout)
+    assert.match(m.stdout, why)
+    assert.equal(fs.readFileSync(f.verifyPath, 'utf8'), before)
+    assert.equal(fs.existsSync(f.verifyPath.replace(/\.json$/, '.relay.json')), false)
+  }
+})
+
+test('relayed: --mode relayed takes no --compliance file and needs the ledger; an unknown mode is a usage error', t => {
+  const f = relayed(t)
+  for (const argv of [
+    ['--mode', 'relayed', '--verify-result', f.verifyPath, '--manifest', f.manifestPath, '--ledger', f.ledgerPath, '--compliance', f.verifyPath],
+    ['--mode', 'relayed', '--verify-result', f.verifyPath, '--manifest', f.manifestPath],
+    ['--mode', 'other', '--verify-result', f.verifyPath, '--manifest', f.manifestPath, '--ledger', f.ledgerPath],
+    ['--verify-result', f.verifyPath, '--manifest', f.manifestPath, '--ledger', f.ledgerPath],
+  ]) {
+    const r = spawnSync(process.execPath, [merger, ...argv], { encoding: 'utf8' })
+    assert.equal(r.status, 2, argv.join(' ') + ': ' + r.stdout)
+    assert.match(r.stderr, /usage/)
+  }
+})

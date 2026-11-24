@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
-const { makeRepo, completeRun, baseFeature, featureBytes, cleanEnv, sha256, clone, FALLBACK_REVIEWER, REPO_PATH, SCRIPTS } = require('./helpers/v2-repo.js');
+const { makeRepo, completeRun, baseFeature, featureBytes, cleanEnv, sha256, clone, FALLBACK_REVIEWER, CONFIGURED_REVIEWER, REPO_PATH, SCRIPTS } = require('./helpers/v2-repo.js');
 const { fixture, CASES } = require('./helpers/v1-completion-cases.js');
 
 const CHECKER = path.join(SCRIPTS, 'check-completion.js');
@@ -1022,6 +1022,29 @@ test('proofs: a fallback compliance trace with a re-escaped command still certif
   const proof = JSON.parse(fs.readFileSync(c.out, 'utf8'));
   assert.deepEqual(proof.requirements[0].evidence.map(x => x.command), ['node test/hello.test.js']);
   assert.equal(proof.cross_family, false);
+});
+
+// The opus-high relay of a large frozen plan can return every runtime command null (bruach7 #37, contract 1). Under
+// contract 2 the trace's runtime records decide nothing: completion takes runtime proof from the ledger's run-frozen
+// records, so no merge step is needed and the null command never reaches the proof.
+test('proofs: an opus-high compliance trace with null runtime commands still certifies only through the ledger record', t => {
+  for (const reviewer of [CONFIGURED_REVIEWER, FALLBACK_REVIEWER]) {
+    const c = completeRun(t, { complianceRequirements: head => [
+      { id: 'HELLO-001-AC1', status: 'PASS', evidence: [{ kind: 'runtime', head_sha: head, command: null, exit_code: 0, log_path: '/nowhere', log_sha256: '0'.repeat(64), file: null, line: null }] },
+      { id: 'HELLO-001-AC2', status: 'PASS', evidence: [{ kind: 'runtime', head_sha: head, command: null, exit_code: null, log_path: null, log_sha256: null, file: null, line: null }] },
+      { id: 'HELLO-001-AC3', status: 'PASS', evidence: [{ kind: 'static', head_sha: head, command: null, exit_code: null, log_path: null, log_sha256: null, file: 'src/hello.js', line: 1 }] },
+    ] });
+    const e = entryOf(c.verify.review_files, 'compliance');
+    const raw = JSON.parse(fs.readFileSync(e.raw_path, 'utf8'));
+    fs.unlinkSync(e.raw_path);
+    const wrapped = c.writeJson(e.raw_path, { gate_kind: 'compliance', reviewer, reply: { verdict: 'PASS', blocking: [], requirements: raw.requirements } });
+    Object.assign(e, { reviewer, raw_sha256: wrapped.sha256 });
+    c.verify.fallback_used = reviewer === FALLBACK_REVIEWER;
+    passed(c.completion());
+    const proof = JSON.parse(fs.readFileSync(c.out, 'utf8'));
+    assert.deepEqual(proof.requirements[0].evidence.map(x => x.command), ['node test/hello.test.js'], reviewer);
+    assert.ok(proof.requirements.every(r => r.evidence.every(x => x.command !== null || x.kind === 'static')), reviewer);
+  }
 });
 
 test('proofs: static evidence outside the frozen evidence_paths is exit 1', t => {
