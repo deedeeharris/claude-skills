@@ -11,13 +11,21 @@
 //   - any other runtime record off the frozen command, or static record outside the repo, is left out.
 // Everything left out stays in compliance.json and is listed in the compliance note.
 // It never changes a verdict: it refuses unless codex said PASS with no findings and every ID passed.
+// --mode relayed is for an Opus compliance trace (reviewer opus-high, or the codex-unavailable fallback), which has
+// no compliance.json: the stage relays it as structured output, and a large frozen plan can come back with runtime
+// commands null or re-escaped. It applies the same rules to the requirements already in verify-result.json, in place,
+// and refuses unless the relayed trace is PASS with no blocking item and every ID passed. It needs the ledger, and a
+// runtime command is restored only when, beyond the rules above, the record's kind is runtime on both records and
+// log_path is absolute and its bytes on disk still hash to log_sha256.
 // usage: merge-compliance.js --verify-result F --compliance F --manifest F [--ledger F] [--checkout DIR]
+//        merge-compliance.js --mode relayed --verify-result F --manifest F --ledger F [--checkout DIR]
 // exit: 0 merged | 1 refused (the reason is printed) | 2 usage error
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const FLAGS = ['verify-result', 'compliance', 'manifest', 'ledger', 'checkout'];
-const REQUIRED = FLAGS.slice(0, 3);
+const FLAGS = ['mode', 'verify-result', 'compliance', 'manifest', 'ledger', 'checkout'];
+const MODES = ['codex', 'relayed'];
 function ensure(ok, reason) { if (!ok) throw new Error(reason); }
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 // Codex writes Windows paths in either slash style and case; compare by form, not by spelling.
@@ -32,7 +40,17 @@ function parseArgs(argv) {
     if (!FLAGS.includes(flag) || !argv[i + 1] || argv[i + 1].startsWith('--') || Object.hasOwn(args, flag)) return null;
     args[flag] = argv[i + 1];
   }
-  return REQUIRED.every(f => args[f]) ? args : null;
+  args.mode = args.mode || 'codex';
+  if (!MODES.includes(args.mode) || !args['verify-result'] || !args.manifest) return null;
+  // codex mode reads codex's own compliance.json; relayed mode has none and repairs only from the ledger.
+  if (args.mode === 'codex' ? !args.compliance : (Object.hasOwn(args, 'compliance') || !args.ledger)) return null;
+  return args;
+}
+
+// The sha256 of the log bytes on disk now, or null for a relative, missing or unreadable path.
+function diskHash(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  try { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); } catch { return null; }
 }
 
 // The acceptance ledger holds per-ID records ({id, status, evidence}), as a bare list or under `records`.
@@ -51,36 +69,52 @@ function ledgerIndex(file, notes) {
 }
 
 function merge(args) {
+  const relayed = args.mode === 'relayed';
   const vr = readJson(args['verify-result']);
-  const cj = readJson(args.compliance);
   const frozen = new Map(readJson(args.manifest).requirements.map(r => [r.id, r.proof_command || '']));
   const notes = [];
   const ledger = ledgerIndex(args.ledger, notes);
   const checkout = args.checkout || null;
 
   ensure(vr.compliance && Array.isArray(vr.compliance.requirements), 'verify result has no compliance requirements');
-  ensure(cj.verdict === 'PASS' && !(cj.findings || []).length, 'codex compliance is not PASS with zero findings');
-  ensure(cj.requirements.every(r => r.status === 'PASS'), 'a codex requirement is not PASS');
   // Same IDs, each once; the order may differ.
   const ids = (list, label) => {
     const out = list.map(r => r.id);
     ensure(new Set(out).size === out.length, 'duplicate requirement ID in ' + label);
     return JSON.stringify([...out].sort());
   };
-  ensure(ids(vr.compliance.requirements, 'the verify result') === ids(cj.requirements, 'compliance.json'),
-    'requirement IDs differ between verify result and compliance.json');
+  let source, sourceLabel;
+  if (relayed) {
+    const vc = vr.compliance;
+    ensure(vc.verdict === 'PASS' && !(vc.blocking || []).length && !(vc.findings || []).length, 'relayed compliance is not PASS with zero blocking items');
+    ensure(vc.requirements.every(r => r && r.status === 'PASS'), 'a relayed requirement is not PASS');
+    ids(vc.requirements, 'the verify result');
+    source = JSON.parse(JSON.stringify(vc.requirements));
+    sourceLabel = 'the verify result';
+  } else {
+    const cj = readJson(args.compliance);
+    ensure(cj.verdict === 'PASS' && !(cj.findings || []).length, 'codex compliance is not PASS with zero findings');
+    ensure(cj.requirements.every(r => r.status === 'PASS'), 'a codex requirement is not PASS');
+    ensure(ids(vr.compliance.requirements, 'the verify result') === ids(cj.requirements, 'compliance.json'),
+      'requirement IDs differ between verify result and compliance.json');
+    source = cj.requirements;
+    sourceLabel = 'compliance.json';
+  }
 
-  const requirements = cj.requirements.map(r => {
+  const requirements = source.map(r => {
     ensure(frozen.has(r.id), 'requirement not in the frozen manifest: ' + r.id);
     const keep = [];
     for (let e of [].concat(r.evidence || [])) {
-      ensure(e && typeof e === 'object', r.id + ' evidence in compliance.json is not a record');
+      ensure(e && typeof e === 'object', r.id + ' evidence in ' + sourceLabel + ' is not a record');
       if (e.kind === 'runtime' && e.command !== frozen.get(r.id)) {
         const src = ledger.get(JSON.stringify([r.id, e.log_path, e.log_sha256]));
         // Borrow only from the same run: same log, exit code and reviewed commit on both records.
         const sameRun = src && src.exit_code === e.exit_code && vr.reviewed_sha &&
           src.head_sha === vr.reviewed_sha && e.head_sha === vr.reviewed_sha;
-        if (sameRun && src.command === frozen.get(r.id)) {
+        // A relayed record was carried by an agent, not written by the reviewer: it must also be a runtime record on
+        // both sides, and the log it names must still hash, from disk, to the hash both records carry.
+        const sameBytes = !relayed || (src && src.kind === 'runtime' && diskHash(e.log_path) === e.log_sha256);
+        if (sameRun && sameBytes && src.command === frozen.get(r.id)) {
           notes.push([r.id, 'runtime command taken from the acceptance ledger', e.command]);
           e = { ...e, command: src.command };
         } else {
@@ -120,7 +154,8 @@ function merge(args) {
   const relay = vrPath.replace(/\.json$/, '') + '.relay.json';
   if (!fs.existsSync(relay)) fs.copyFileSync(vrPath, relay);
   vr.compliance.requirements = requirements;
-  vr.compliance.note = (vr.compliance.note || '') + ' [merge-compliance: requirements copied from ' + args.compliance +
+  vr.compliance.note = (vr.compliance.note || '') + ' [merge-compliance: requirements ' +
+    (relayed ? 'checked in place (relayed mode)' : 'copied from ' + args.compliance) +
     '; relay copy kept at ' + relay + '; changes: ' + JSON.stringify(notes) + ']';
   fs.writeFileSync(vrPath + '.tmp', JSON.stringify(vr));
   fs.renameSync(vrPath + '.tmp', vrPath);
@@ -130,7 +165,8 @@ function merge(args) {
 if (require.main === module) {
   const args = parseArgs(process.argv.slice(2));
   if (!args) {
-    console.error('usage: merge-compliance.js --verify-result F --compliance F --manifest F [--ledger F] [--checkout DIR]');
+    console.error('usage: merge-compliance.js --verify-result F --compliance F --manifest F [--ledger F] [--checkout DIR]\n' +
+      '       merge-compliance.js --mode relayed --verify-result F --manifest F --ledger F [--checkout DIR]');
     process.exit(2);
   }
   try {
